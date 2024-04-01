@@ -42,7 +42,7 @@ The ICN is committed to openness and collaboration, licensed under the GNU Affer
 
 Interested in joining the ICN project? We welcome cooperatives, developers, activists, and anyone passionate about the cooperative movement to contribute to this groundbreaking initiative. 
 
-For more information on how to get involved, please reach out to us through [GitHub issues](https://github.com/faherty/InterCooperative-Network/issues) or stay tuned for updates on communication channels.
+For more information on how to get involved, please reach out to us through [GitHub issues](https://github.com/fahertym/InterCooperative-Network/issues) or stay tuned for updates on communication channels.
 
 ## Acknowledgments
 
