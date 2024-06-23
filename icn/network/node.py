@@ -8,6 +8,7 @@ import time
 
 from ..blockchain.chain import Blockchain
 from ..blockchain.block import Block
+from ..blockchain.transaction import Transaction
 from ..storage.file_storage import FileStorage
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
