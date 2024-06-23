@@ -5,7 +5,6 @@ from aiohttp import web
 import random
 import logging
 
-from ..blockchain.transaction import Transaction
 from ..blockchain.chain import Blockchain
 from ..blockchain.block import Block
 from ..storage.file_storage import FileStorage
@@ -44,6 +43,9 @@ class Node:
         self.is_running = True
         asyncio.create_task(self.periodic_tasks())
 
+        # Immediate peer discovery
+        await self.discover_peers()
+
     async def stop(self):
         self.is_running = False
         if self.site:
@@ -60,18 +62,18 @@ class Node:
 
     async def discover_peers(self):
         all_peers = set(self.peers) | set(self.bootstrap_nodes)
+        all_peers.discard(self.address)  # Remove self from peers
         if not all_peers:
             return
 
         async with aiohttp.ClientSession() as session:
             for peer in all_peers:
-                if peer == self.address:
-                    continue
                 try:
                     async with session.get(f'{peer}/nodes/peers') as response:
                         if response.status == 200:
                             new_peers = await response.json()
                             self.peers.update(new_peers)
+                            self.peers.discard(self.address)  # Ensure self is not in peers
                             self.logger.info(f"Discovered new peers: {new_peers}")
                     # Register ourselves with the peer
                     await self.register_with_node(session, peer)
@@ -175,9 +177,6 @@ class Node:
 
         return False
 
-
-    async def get_peers(self, request):
-        return web.json_response(list(self.peers))
 
     async def get_status(self, request):
         status = {
