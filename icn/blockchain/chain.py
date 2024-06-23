@@ -1,3 +1,4 @@
+import time
 from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
@@ -15,7 +16,7 @@ class Blockchain:
         self.dao_manager = DAOManager(self)
 
     def create_genesis_block(self):
-        return Block(0, [], 0, "0")
+        return Block(0, [], int(time.time()), "0")
 
     def get_latest_block(self):
         return self.chain[-1]
@@ -51,7 +52,7 @@ class Blockchain:
             print("Miner is not a valid validator")
             return False
 
-        block = Block(len(self.chain), self.pending_transactions, self.get_latest_block().hash)
+        block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
         if self.consensus.mine_block(block, miner_did):
             if self.add_block(block):
                 self.pending_transactions = [
