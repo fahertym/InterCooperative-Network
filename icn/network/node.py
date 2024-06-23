@@ -9,7 +9,7 @@ from ..blockchain.chain import Blockchain
 from ..blockchain.block import Block
 from ..storage.file_storage import FileStorage
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 class Node:
     def __init__(self, host, port, blockchain, storage, bootstrap_nodes=None):
@@ -20,6 +20,8 @@ class Node:
         self.peers = self.storage.load_peers()
         self.bootstrap_nodes = bootstrap_nodes or []
         self.logger = logging.getLogger(f"Node:{port}")
+        self.runner = None
+        self.site = None
 
     async def start(self):
         app = web.Application()
@@ -30,13 +32,20 @@ class Node:
         app.router.add_get('/nodes/peers', self.get_peers)
         app.router.add_get('/status', self.get_status)
 
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, self.host, self.port)
-        await site.start()
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        self.site = web.TCPSite(self.runner, self.host, self.port)
+        await self.site.start()
         self.logger.info(f"Node started on http://{self.host}:{self.port}")
 
         asyncio.create_task(self.periodic_tasks())
+
+    async def stop(self):
+        if self.site:
+            await self.site.stop()
+        if self.runner:
+            await self.runner.cleanup()
+        self.logger.info(f"Node stopped on http://{self.host}:{self.port}")
 
     async def periodic_tasks(self):
         while True:
