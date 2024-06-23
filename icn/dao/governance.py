@@ -15,15 +15,15 @@ class Proposal:
     def is_active(self):
         return time.time() < self.start_time + self.voting_period
 
-    def add_vote(self, voter, vote, voting_power):
+    def add_vote(self, voter, vote):
         if self.is_active():
-            self.votes[voter] = {'vote': vote, 'power': voting_power}
+            self.votes[voter] = vote
             return True
         return False
 
     def get_result(self):
-        yes_votes = sum(v['power'] for v in self.votes.values() if v['vote'])
-        total_votes = sum(v['power'] for v in self.votes.values())
+        yes_votes = sum(1 for vote in self.votes.values() if vote)
+        total_votes = len(self.votes)
         if total_votes == 0:
             return False
         return (yes_votes / total_votes) > self.required_majority
@@ -56,8 +56,7 @@ class DAO:
             return False
         proposal = self.proposals.get(proposal_id)
         if proposal:
-            voting_power = self.get_member_voting_power(voter)
-            return proposal.add_vote(voter, vote, voting_power)
+            return proposal.add_vote(voter, vote)
         return False
 
     def execute_proposal(self, proposal_id):
@@ -77,10 +76,6 @@ class DAO:
                 proposal.executed = True
                 return True
         return False
-
-    def get_member_voting_power(self, member):
-        # In a real implementation, this could be based on token balance or other factors
-        return self.blockchain.get_balance(member) + 1  # Add 1 to ensure positive voting power
 
 class DAOManager:
     def __init__(self, blockchain):
