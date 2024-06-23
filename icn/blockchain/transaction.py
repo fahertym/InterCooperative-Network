@@ -32,7 +32,12 @@ class Transaction:
             return True
         
         if not self.signature:
+            print("Transaction is invalid: No signature")
             return False
 
         transaction_hash = self.calculate_hash()
-        return did_manager.verify_message(self.sender_did, transaction_hash, self.signature)
+        if not did_manager.verify_message(self.sender_did, transaction_hash, self.signature):
+            print("Transaction is invalid: Signature verification failed")
+            return False
+
+        return True

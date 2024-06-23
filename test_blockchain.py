@@ -10,6 +10,10 @@ def test_blockchain():
     bob_did = bc.create_did()
     charlie_did = bc.create_did()
 
+    print(f"Alice DID: {alice_did}")
+    print(f"Bob DID: {bob_did}")
+    print(f"Charlie DID: {charlie_did}")
+
     # Add validators
     bc.add_validator(alice_did, 200)
     bc.add_validator(bob_did, 150)
@@ -17,10 +21,12 @@ def test_blockchain():
     # Create and add transactions
     tx1 = Transaction(alice_did, bob_did, 50)
     tx1.sign_transaction(bc.did_manager)
+    print(f"Transaction 1: {tx1.to_dict()}")
     bc.add_transaction(tx1)
 
     tx2 = Transaction(bob_did, charlie_did, 30)
     tx2.sign_transaction(bc.did_manager)
+    print(f"Transaction 2: {tx2.to_dict()}")
     bc.add_transaction(tx2)
 
     # Mine a block
@@ -36,6 +42,7 @@ def test_blockchain():
 
     # Try to add an invalid transaction
     invalid_tx = Transaction(alice_did, bob_did, 1000)
+    print(f"Invalid transaction: {invalid_tx.to_dict()}")
     try:
         bc.add_transaction(invalid_tx)
     except ValueError as e:

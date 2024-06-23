@@ -44,7 +44,7 @@ class Blockchain:
             raise ValueError("Transaction must include sender and recipient DIDs")
         
         if not transaction.is_valid(self.did_manager):
-            raise ValueError("Cannot add invalid transaction to chain")
+            raise ValueError(f"Cannot add invalid transaction to chain: {transaction.to_dict()}")
         
         self.pending_transactions.append(transaction)
 
