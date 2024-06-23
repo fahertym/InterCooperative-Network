@@ -2,8 +2,6 @@ import asyncio
 import sys
 import aiohttp
 import argparse
-import os
-import signal
 import psutil
 from icn.blockchain.chain import Blockchain
 from icn.network.node import Node
@@ -32,17 +30,15 @@ async def main(port):
     bootstrap_nodes = [node for node in BOOTSTRAP_NODES if f":{port}" not in node]
     node = Node("localhost", port, blockchain, storage, bootstrap_nodes)
     
-    def signal_handler(sig, frame):
-        print(f"Stopping node on port {port}")
-        asyncio.create_task(node.stop())
-
-    signal.signal(signal.SIGINT, signal_handler)
-    
     await node.start()
 
     # Keep the main coroutine running
-    while True:
-        await asyncio.sleep(1)
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        print(f"Stopping node on port {port}")
+        await node.stop()
 
 async def check_status(port):
     if not is_port_in_use(port):
@@ -59,6 +55,7 @@ async def check_status(port):
                     print(f"  Connected Peers: {len(status['peers'])}")
                     print(f"  Blockchain Length: {status['blockchain_length']}")
                     print(f"  Pending Transactions: {status['pending_transactions']}")
+                    print(f"  Peers: {', '.join(status['peers'])}")
                 else:
                     print(f"Failed to get status from node on port {port}. Status code: {response.status}")
         except aiohttp.ClientError as e:
@@ -73,7 +70,4 @@ if __name__ == "__main__":
     if args.status:
         asyncio.run(check_status(args.port))
     else:
-        try:
-            asyncio.run(main(args.port))
-        except KeyboardInterrupt:
-            print(f"Stopping node on port {args.port}")
+        asyncio.run(main(args.port))

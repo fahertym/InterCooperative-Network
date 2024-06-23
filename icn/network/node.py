@@ -22,6 +22,7 @@ class Node:
         self.logger = logging.getLogger(f"Node:{port}")
         self.runner = None
         self.site = None
+        self.is_running = False
 
     async def start(self):
         app = web.Application()
@@ -38,9 +39,11 @@ class Node:
         await self.site.start()
         self.logger.info(f"Node started on http://{self.host}:{self.port}")
 
+        self.is_running = True
         asyncio.create_task(self.periodic_tasks())
 
     async def stop(self):
+        self.is_running = False
         if self.site:
             await self.site.stop()
         if self.runner:
@@ -48,20 +51,18 @@ class Node:
         self.logger.info(f"Node stopped on http://{self.host}:{self.port}")
 
     async def periodic_tasks(self):
-        while True:
+        while self.is_running:
             await self.discover_peers()
             await self.sync_blockchain()
-            await asyncio.sleep(300)  # Run every 5 minutes
+            await asyncio.sleep(60)  # Run every minute for testing purposes
 
     async def discover_peers(self):
         all_peers = list(set(self.peers) | set(self.bootstrap_nodes))
         if not all_peers:
             return
 
-        sample_peers = random.sample(all_peers, min(3, len(all_peers)))
-        
         async with aiohttp.ClientSession() as session:
-            for peer in sample_peers:
+            for peer in all_peers:
                 try:
                     async with session.get(f'{peer}/nodes/peers') as response:
                         if response.status == 200:
@@ -137,15 +138,18 @@ class Node:
 
         async with aiohttp.ClientSession() as session:
             for node in neighbours:
-                async with session.get(f'{node}/blocks') as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        length = len(data)
-                        chain = [Block.from_dict(block) for block in data]
+                try:
+                    async with session.get(f'{node}/blocks') as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            length = len(data)
+                            chain = [Block.from_dict(block) for block in data]
 
-                        if length > max_length and self.blockchain.is_chain_valid(chain):
-                            max_length = length
-                            new_chain = chain
+                            if length > max_length and self.blockchain.is_chain_valid(chain):
+                                max_length = length
+                                new_chain = chain
+                except aiohttp.ClientError:
+                    self.logger.warning(f"Failed to connect to peer: {node}")
 
         if new_chain:
             self.blockchain.chain = new_chain
