@@ -65,13 +65,49 @@ async def check_status(port):
         except aiohttp.ClientError as e:
             print(f"Error connecting to node on port {port}: {str(e)}")
 
+async def create_transaction(port, sender_did, recipient_did, amount):
+    async with aiohttp.ClientSession() as session:
+        try:
+            data = {
+                "sender_did": sender_did,
+                "recipient_did": recipient_did,
+                "amount": float(amount)
+            }
+            async with session.post(f"http://localhost:{port}/transactions/new", json=data, timeout=5) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    print(f"Transaction created: {result['message']}")
+                else:
+                    print(f"Failed to create transaction. Status code: {response.status}")
+        except aiohttp.ClientError as e:
+            print(f"Error creating transaction: {str(e)}")
+
+async def mine_block(port, miner_did):
+    async with aiohttp.ClientSession() as session:
+        try:
+            data = {"miner_did": miner_did}
+            async with session.post(f"http://localhost:{port}/mine", json=data, timeout=5) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    print(f"Block mined: {result['message']}")
+                else:
+                    print(f"Failed to mine block. Status code: {response.status}")
+        except aiohttp.ClientError as e:
+            print(f"Error mining block: {str(e)}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ICN Node")
     parser.add_argument("port", type=int, help="Port to run the node on")
     parser.add_argument("--status", action="store_true", help="Check node status")
+    parser.add_argument("--create-transaction", nargs=3, metavar=("SENDER_DID", "RECIPIENT_DID", "AMOUNT"), help="Create a new transaction")
+    parser.add_argument("--mine", metavar="MINER_DID", help="Mine a new block")
     args = parser.parse_args()
 
     if args.status:
         asyncio.run(check_status(args.port))
+    elif args.create_transaction:
+        asyncio.run(create_transaction(args.port, *args.create_transaction))
+    elif args.mine:
+        asyncio.run(mine_block(args.port, args.mine))
     else:
         asyncio.run(main(args.port))

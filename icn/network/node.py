@@ -37,6 +37,8 @@ class Node:
         app.router.add_get('/nodes/resolve', self.consensus)
         app.router.add_get('/nodes/peers', self.get_peers)
         app.router.add_get('/status', self.get_status)
+        app.router.add_post('/mine', self.mine)
+        app.router.add_post('/blocks/new', self.receive_new_block)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -147,10 +149,8 @@ class Node:
             if not all(k in data for k in required):
                 return web.json_response({"message": "Missing values"}, status=400)
 
-            transaction = self.blockchain.create_transaction(data['sender_did'], data['recipient_did'], data['amount'])
-            self.blockchain.add_transaction(transaction)
-
-            return web.json_response({"message": "Transaction added to pool"})
+            transaction = await self.create_transaction(data['sender_did'], data['recipient_did'], data['amount'])
+            return web.json_response({"message": "Transaction added to pool", "transaction": transaction.to_dict()})
         except Exception as e:
             self.logger.error(f"Error processing new transaction: {str(e)}")
             return web.json_response({"message": "Error processing transaction"}, status=500)
@@ -238,3 +238,69 @@ class Node:
             "last_peer_cleanup": self.last_peer_cleanup
         }
         return web.json_response(status)
+
+    async def create_transaction(self, sender_did, recipient_did, amount):
+        transaction = self.blockchain.create_transaction(sender_did, recipient_did, amount)
+        self.blockchain.add_transaction(transaction)
+        await self.broadcast_transaction(transaction)
+        return transaction
+
+    async def broadcast_transaction(self, transaction):
+        async with aiohttp.ClientSession() as session:
+            for peer in self.peers:
+                try:
+                    async with session.post(f'{peer}/transactions/new', json=transaction.to_dict(), timeout=5) as response:
+                        if response.status == 200:
+                            self.logger.info(f"Transaction broadcast to {peer} successful")
+                        else:
+                            self.logger.warning(f"Failed to broadcast transaction to {peer}. Status: {response.status}")
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    self.logger.warning(f"Error broadcasting transaction to {peer}: {str(e)}")
+
+    async def mine(self, request):
+        try:
+            data = await request.json()
+            miner_did = data.get('miner_did')
+            if not miner_did:
+                return web.json_response({"message": "Miner DID is required"}, status=400)
+
+            success = await self.mine_block(miner_did)
+            if success:
+                return web.json_response({"message": "New block mined and broadcast successfully"})
+            else:
+                return web.json_response({"message": "Failed to mine new block"}, status=500)
+        except Exception as e:
+            self.logger.error(f"Error mining new block: {str(e)}")
+            return web.json_response({"message": "Error mining new block"}, status=500)
+
+    async def mine_block(self, miner_did):
+        success = self.blockchain.mine_pending_transactions(miner_did)
+        if success:
+            await self.broadcast_new_block()
+        return success
+
+    async def broadcast_new_block(self):
+        latest_block = self.blockchain.get_latest_block()
+        async with aiohttp.ClientSession() as session:
+            for peer in self.peers:
+                try:
+                    async with session.post(f'{peer}/blocks/new', json=latest_block.to_dict(), timeout=5) as response:
+                        if response.status == 200:
+                            self.logger.info(f"New block broadcast to {peer} successful")
+                        else:
+                            self.logger.warning(f"Failed to broadcast new block to {peer}. Status: {response.status}")
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    self.logger.warning(f"Error broadcasting new block to {peer}: {str(e)}")
+
+    async def receive_new_block(self, request):
+        try:
+            block_data = await request.json()
+            new_block = Block.from_dict(block_data)
+            if self.blockchain.add_block(new_block):
+                self.logger.info(f"Received and added new block: {new_block.index}")
+                return web.json_response({"message": "New block added successfully"})
+            else:
+                return web.json_response({"message": "Failed to add new block"}, status=400)
+        except Exception as e:
+            self.logger.error(f"Error processing new block: {str(e)}")
+            return web.json_response({"message": "Error processing new block"}, status=500)
