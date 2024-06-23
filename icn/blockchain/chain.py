@@ -1,5 +1,6 @@
 from .block import Block
 from .transaction import Transaction
+from ..consensus.pocos import PoCoS
 import time
 
 class Blockchain:
@@ -8,6 +9,7 @@ class Blockchain:
         self.difficulty = 4
         self.pending_transactions = []
         self.mining_reward = 10
+        self.consensus = PoCoS(self)
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -15,16 +17,23 @@ class Blockchain:
     def get_latest_block(self):
         return self.chain[-1]
 
-    def mine_pending_transactions(self, miner_reward_address):
+    def mine_pending_transactions(self, miner_address):
+        if not self.consensus.is_validator(miner_address):
+            print("Miner is not a valid validator")
+            return False
+
         block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
         block.mine_block(self.difficulty)
 
-        print("Block successfully mined!")
-        self.chain.append(block)
-
-        self.pending_transactions = [
-            Transaction("0", miner_reward_address, self.mining_reward)
-        ]
+        if self.consensus.validate_block(block):
+            print("Block successfully mined and validated!")
+            self.chain.append(block)
+            self.consensus.distribute_rewards(miner_address)
+            self.pending_transactions = []
+            return True
+        else:
+            print("Block validation failed")
+            return False
 
     def add_transaction(self, transaction):
         if not transaction.sender or not transaction.recipient:
@@ -56,4 +65,19 @@ class Blockchain:
             if current_block.previous_hash != previous_block.hash:
                 return False
 
+            if not self.consensus.validate_block(current_block):
+                return False
+
         return True
+
+    def add_validator(self, address, stake):
+        return self.consensus.add_validator(address, stake)
+
+    def remove_validator(self, address):
+        return self.consensus.remove_validator(address)
+
+    def update_validator_stake(self, address, stake):
+        return self.consensus.update_stake(address, stake)
+
+    def update_validator_cooperation_score(self, address, score):
+        return self.consensus.update_cooperation_score(address, score)
