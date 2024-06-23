@@ -15,6 +15,7 @@ class Node:
     def __init__(self, host, port, blockchain, storage, bootstrap_nodes=None):
         self.host = host
         self.port = port
+        self.address = f"http://{host}:{port}"
         self.blockchain = blockchain
         self.storage = storage
         self.peers = self.storage.load_peers()
@@ -37,7 +38,7 @@ class Node:
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
-        self.logger.info(f"Node started on http://{self.host}:{self.port}")
+        self.logger.info(f"Node started on {self.address}")
 
         self.is_running = True
         asyncio.create_task(self.periodic_tasks())
@@ -48,33 +49,47 @@ class Node:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
-        self.logger.info(f"Node stopped on http://{self.host}:{self.port}")
+        self.logger.info(f"Node stopped on {self.address}")
 
     async def periodic_tasks(self):
         while self.is_running:
             await self.discover_peers()
             await self.sync_blockchain()
-            await asyncio.sleep(60)  # Run every minute for testing purposes
+            await asyncio.sleep(60)  # Run every minute
 
     async def discover_peers(self):
-        all_peers = list(set(self.peers) | set(self.bootstrap_nodes))
+        all_peers = set(self.peers) | set(self.bootstrap_nodes)
         if not all_peers:
             return
 
         async with aiohttp.ClientSession() as session:
             for peer in all_peers:
+                if peer == self.address:
+                    continue
                 try:
                     async with session.get(f'{peer}/nodes/peers') as response:
                         if response.status == 200:
                             new_peers = await response.json()
                             self.peers.update(new_peers)
                             self.logger.info(f"Discovered new peers: {new_peers}")
+                    # Register ourselves with the peer
+                    await self.register_with_node(session, peer)
                 except aiohttp.ClientError:
                     if peer in self.peers:
                         self.peers.remove(peer)
                         self.logger.warning(f"Removed unresponsive peer: {peer}")
 
         self.storage.save_peers(self.peers)
+
+    async def register_with_node(self, session, node_address):
+        try:
+            async with session.post(f'{node_address}/nodes/register', json={'nodes': [self.address]}) as response:
+                if response.status == 200:
+                    self.logger.info(f"Successfully registered with node: {node_address}")
+                else:
+                    self.logger.warning(f"Failed to register with node: {node_address}")
+        except aiohttp.ClientError:
+            self.logger.warning(f"Failed to connect to node: {node_address}")
 
     async def sync_blockchain(self):
         replaced = await self.resolve_conflicts()
@@ -105,7 +120,8 @@ class Node:
             return web.json_response({"message": "Error: Please supply a valid list of nodes"}, status=400)
 
         for node in nodes:
-            self.peers.add(node)
+            if node != self.address:
+                self.peers.add(node)
 
         self.storage.save_peers(self.peers)
 
@@ -163,7 +179,7 @@ class Node:
 
     async def get_status(self, request):
         status = {
-            "node_address": f"http://{self.host}:{self.port}",
+            "node_address": self.address,
             "peers": list(self.peers),
             "blockchain_length": len(self.blockchain.chain),
             "pending_transactions": len(self.blockchain.pending_transactions)
