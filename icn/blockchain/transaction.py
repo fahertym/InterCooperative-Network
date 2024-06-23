@@ -20,7 +20,14 @@ class Transaction:
         }
 
     def calculate_hash(self):
-        transaction_string = json.dumps(self.to_dict(), sort_keys=True)
+        # Create a copy of the transaction data without the signature
+        transaction_data = {
+            "sender_did": self.sender_did,
+            "recipient_did": self.recipient_did,
+            "amount": self.amount,
+            "timestamp": self.timestamp
+        }
+        transaction_string = json.dumps(transaction_data, sort_keys=True)
         return hashlib.sha256(transaction_string.encode()).hexdigest()
 
     def sign_transaction(self, did_manager):

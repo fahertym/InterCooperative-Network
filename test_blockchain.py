@@ -21,12 +21,12 @@ def test_blockchain():
     # Create and add transactions
     tx1 = Transaction(alice_did, bob_did, 50)
     tx1.sign_transaction(bc.did_manager)
-    print(f"Transaction 1: {tx1.to_dict()}")
+    print(f"Transaction 1 hash before adding: {tx1.calculate_hash()}")
     bc.add_transaction(tx1)
 
     tx2 = Transaction(bob_did, charlie_did, 30)
     tx2.sign_transaction(bc.did_manager)
-    print(f"Transaction 2: {tx2.to_dict()}")
+    print(f"Transaction 2 hash before adding: {tx2.calculate_hash()}")
     bc.add_transaction(tx2)
 
     # Mine a block
@@ -42,7 +42,7 @@ def test_blockchain():
 
     # Try to add an invalid transaction
     invalid_tx = Transaction(alice_did, bob_did, 1000)
-    print(f"Invalid transaction: {invalid_tx.to_dict()}")
+    print(f"Invalid transaction hash: {invalid_tx.calculate_hash()}")
     try:
         bc.add_transaction(invalid_tx)
     except ValueError as e:

@@ -2,6 +2,7 @@ import uuid
 import json
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.exceptions import InvalidSignature
 
 class DID:
     def __init__(self):
@@ -35,6 +36,9 @@ class DID:
                 hashes.SHA256()
             )
             return True
+        except InvalidSignature:
+            print(f"Invalid signature for message: {message}")
+            return False
         except Exception as e:
             print(f"Signature verification failed: {str(e)}")
             return False
