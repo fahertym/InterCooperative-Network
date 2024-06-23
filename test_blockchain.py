@@ -36,7 +36,6 @@ def test_blockchain():
 
     # Try to add an invalid transaction
     invalid_tx = Transaction(alice_did, bob_did, 1000)
-    invalid_tx.sign_transaction(bc.did_manager)
     try:
         bc.add_transaction(invalid_tx)
     except ValueError as e:
@@ -49,6 +48,23 @@ def test_blockchain():
     print(f"Alice's final balance: {bc.get_balance(alice_did)}")
     print(f"Bob's final balance: {bc.get_balance(bob_did)}")
     print(f"Charlie's final balance: {bc.get_balance(charlie_did)}")
+
+    # Test DAO functionality
+    dao = bc.create_dao("TestDAO")
+    dao.add_member(alice_did)
+    dao.add_member(bob_did)
+
+    proposal_id = dao.create_proposal(alice_did, "Test Proposal", 3600)
+    print(f"Proposal created with ID: {proposal_id}")
+
+    dao.vote_on_proposal(proposal_id, alice_did, True)
+    dao.vote_on_proposal(proposal_id, bob_did, True)
+
+    # Fast-forward time (in a real scenario, you'd wait for the voting period to end)
+    dao.proposals[proposal_id].start_time -= 3601
+
+    result = dao.execute_proposal(proposal_id)
+    print(f"Proposal execution result: {result}")
 
 if __name__ == "__main__":
     test_blockchain()

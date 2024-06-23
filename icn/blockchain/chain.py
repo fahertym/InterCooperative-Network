@@ -2,6 +2,7 @@ from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
+from ..dao.governance import DAOManager
 import time
 
 class Blockchain:
@@ -12,6 +13,7 @@ class Blockchain:
         self.mining_reward = 10
         self.consensus = PoCoS(self)
         self.did_manager = DIDManager()
+        self.dao_manager = DAOManager(self)
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -90,3 +92,9 @@ class Blockchain:
 
     def create_did(self):
         return self.did_manager.create_did()
+
+    def create_dao(self, name):
+        return self.dao_manager.create_dao(name)
+
+    def get_dao(self, name):
+        return self.dao_manager.get_dao(name)
