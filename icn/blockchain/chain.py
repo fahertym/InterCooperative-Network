@@ -1,5 +1,3 @@
-# icn/blockchain/chain.py
-
 import time
 from .block import Block
 from .transaction import Transaction
@@ -143,3 +141,22 @@ class Blockchain:
         if dao:
             return self.federation_manager.remove_dao_from_federation(federation_name, dao)
         return False
+
+    def create_transaction(self, sender_did, recipient_did, amount):
+        transaction = Transaction(sender_did, recipient_did, amount)
+        transaction.sign_transaction(self.did_manager)
+        return transaction
+
+    @classmethod
+    def is_chain_valid(cls, chain):
+        for i in range(1, len(chain)):
+            current_block = chain[i]
+            previous_block = chain[i-1]
+
+            if current_block.hash != current_block.calculate_hash():
+                return False
+
+            if current_block.previous_hash != previous_block.hash:
+                return False
+
+        return True
