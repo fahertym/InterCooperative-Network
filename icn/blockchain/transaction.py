@@ -21,8 +21,16 @@ class Transaction:
             "recipient_did": self.recipient_did,
             "amount": self.amount,
             "timestamp": self.timestamp,
+            "signature": self.signature.hex() if self.signature else None,
             "is_mining_reward": self.is_mining_reward
         }
+
+    @classmethod
+    def from_dict(cls, tx_dict):
+        tx = cls(tx_dict['sender_did'], tx_dict['recipient_did'], tx_dict['amount'], tx_dict['is_mining_reward'])
+        tx.timestamp = tx_dict['timestamp']
+        tx.signature = bytes.fromhex(tx_dict['signature']) if tx_dict['signature'] else None
+        return tx
 
     def calculate_hash(self):
         transaction_string = json.dumps(self.to_dict(), sort_keys=True)

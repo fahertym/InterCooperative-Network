@@ -12,13 +12,7 @@ class Block:
         self.hash = self.calculate_hash()
 
     def calculate_hash(self):
-        block_string = json.dumps({
-            "index": self.index,
-            "transactions": [tx.to_dict() for tx in self.transactions],
-            "timestamp": self.timestamp,
-            "previous_hash": self.previous_hash,
-            "nonce": self.nonce
-        }, sort_keys=True)
+        block_string = json.dumps(self.to_dict(), sort_keys=True)
         return hashlib.sha256(block_string.encode()).hexdigest()
 
     def mine_block(self, difficulty):
@@ -37,3 +31,15 @@ class Block:
             "nonce": self.nonce,
             "hash": self.hash
         }
+
+    @classmethod
+    def from_dict(cls, block_dict):
+        block = cls(
+            block_dict['index'],
+            [Transaction.from_dict(tx) for tx in block_dict['transactions']],
+            block_dict['timestamp'],
+            block_dict['previous_hash']
+        )
+        block.nonce = block_dict['nonce']
+        block.hash = block_dict['hash']
+        return block

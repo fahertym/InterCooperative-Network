@@ -5,6 +5,7 @@ from aiohttp import web
 import random
 import logging
 
+from ..blockchain.transaction import Transaction
 from ..blockchain.chain import Blockchain
 from ..blockchain.block import Block
 from ..storage.file_storage import FileStorage
@@ -173,6 +174,7 @@ class Node:
             return True
 
         return False
+
 
     async def get_peers(self, request):
         return web.json_response(list(self.peers))
