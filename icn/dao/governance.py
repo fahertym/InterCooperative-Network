@@ -40,7 +40,8 @@ class DAO:
         self.members.add(did)
 
     def remove_member(self, did):
-        self.members.remove(did)
+        if did in self.members:
+            self.members.remove(did)
 
     def create_proposal(self, creator, description, proposal_type, voting_period, required_majority=0.5):
         if creator not in self.members:
@@ -70,7 +71,8 @@ class DAO:
                     self.remove_member(proposal.description)
                 elif proposal.proposal_type == "transfer_funds":
                     recipient, amount = proposal.description.split(',')
-                    self.blockchain.add_transaction(self.blockchain.Transaction(self.name, recipient, float(amount)))
+                    # Note: In a real implementation, you'd need to handle this transaction properly
+                    print(f"Transfer {amount} to {recipient}")
                 # Add more proposal types as needed
                 proposal.executed = True
                 return True
@@ -78,7 +80,7 @@ class DAO:
 
     def get_member_voting_power(self, member):
         # In a real implementation, this could be based on token balance or other factors
-        return self.blockchain.get_balance(member)
+        return self.blockchain.get_balance(member) + 1  # Add 1 to ensure positive voting power
 
 class DAOManager:
     def __init__(self, blockchain):

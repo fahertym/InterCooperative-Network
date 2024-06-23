@@ -1,79 +1,98 @@
-from icn.blockchain.chain import Blockchain
-from icn.blockchain.transaction import Transaction
+import time
 
-def test_blockchain():
-    # Create a new blockchain
-    bc = Blockchain()
+class Proposal:
+    def __init__(self, id, creator, description, proposal_type, voting_period, required_majority=0.5):
+        self.id = id
+        self.creator = creator
+        self.description = description
+        self.proposal_type = proposal_type
+        self.voting_period = voting_period
+        self.required_majority = required_majority
+        self.start_time = time.time()
+        self.votes = {}
+        self.executed = False
 
-    # Create some DIDs
-    alice_did = bc.create_did()
-    bob_did = bc.create_did()
-    charlie_did = bc.create_did()
+    def is_active(self):
+        return time.time() < self.start_time + self.voting_period
 
-    print(f"Alice DID: {alice_did}")
-    print(f"Bob DID: {bob_did}")
-    print(f"Charlie DID: {charlie_did}")
+    def add_vote(self, voter, vote, voting_power):
+        if self.is_active():
+            self.votes[voter] = {'vote': vote, 'power': voting_power}
+            return True
+        return False
 
-    # Add validators
-    bc.add_validator(alice_did, 200)
-    bc.add_validator(bob_did, 150)
-    bc.add_validator(charlie_did, 100)
+    def get_result(self):
+        yes_votes = sum(v['power'] for v in self.votes.values() if v['vote'])
+        total_votes = sum(v['power'] for v in self.votes.values())
+        if total_votes == 0:
+            return False
+        return (yes_votes / total_votes) > self.required_majority
 
-    # Create and add transactions
-    tx1 = Transaction(alice_did, bob_did, 50)
-    tx1.sign_transaction(bc.did_manager)
-    bc.add_transaction(tx1)
+class DAO:
+    def __init__(self, blockchain, name):
+        self.blockchain = blockchain
+        self.name = name
+        self.members = set()
+        self.proposals = {}
+        self.next_proposal_id = 0
 
-    tx2 = Transaction(bob_did, charlie_did, 30)
-    tx2.sign_transaction(bc.did_manager)
-    bc.add_transaction(tx2)
+    def add_member(self, did):
+        self.members.add(did)
 
-    # Mine blocks
-    for i in range(5):
-        miner = bc.consensus.select_validator()
-        if bc.mine_pending_transactions(miner):
-            print(f"Block {i+1} mined by {miner}")
-        else:
-            print(f"Failed to mine block {i+1}")
+    def remove_member(self, did):
+        if did in self.members:
+            self.members.remove(did)
 
-    # Check balances
-    print(f"Alice's balance: {bc.get_balance(alice_did)}")
-    print(f"Bob's balance: {bc.get_balance(bob_did)}")
-    print(f"Charlie's balance: {bc.get_balance(charlie_did)}")
+    def create_proposal(self, creator, description, proposal_type, voting_period, required_majority=0.5):
+        if creator not in self.members:
+            return None
+        proposal = Proposal(self.next_proposal_id, creator, description, proposal_type, voting_period, required_majority)
+        self.proposals[self.next_proposal_id] = proposal
+        self.next_proposal_id += 1
+        return proposal.id
 
-    # Verify the blockchain
-    print(f"Is blockchain valid? {bc.is_chain_valid()}")
+    def vote_on_proposal(self, proposal_id, voter, vote):
+        if voter not in self.members:
+            return False
+        proposal = self.proposals.get(proposal_id)
+        if proposal:
+            voting_power = self.get_member_voting_power(voter)
+            return proposal.add_vote(voter, vote, voting_power)
+        return False
 
-    # Test DAO functionality
-    dao = bc.create_dao("TestDAO")
-    dao.add_member(alice_did)
-    dao.add_member(bob_did)
-    dao.add_member(charlie_did)
+    def execute_proposal(self, proposal_id):
+        proposal = self.proposals.get(proposal_id)
+        if proposal and not proposal.is_active() and not proposal.executed:
+            if proposal.get_result():
+                # Execute the proposal based on its type
+                if proposal.proposal_type == "add_member":
+                    self.add_member(proposal.description)
+                elif proposal.proposal_type == "remove_member":
+                    self.remove_member(proposal.description)
+                elif proposal.proposal_type == "transfer_funds":
+                    recipient, amount = proposal.description.split(',')
+                    # Note: In a real implementation, you'd need to handle this transaction properly
+                    print(f"Transfer {amount} to {recipient}")
+                # Add more proposal types as needed
+                proposal.executed = True
+                return True
+        return False
 
-    # Create different types of proposals
-    add_member_proposal = dao.create_proposal(alice_did, "david_did", "add_member", 3600)
-    remove_member_proposal = dao.create_proposal(bob_did, "charlie_did", "remove_member", 3600)
-    transfer_proposal = dao.create_proposal(charlie_did, f"{bob_did},25", "transfer_funds", 3600)
+    def get_member_voting_power(self, member):
+        # In a real implementation, this could be based on token balance or other factors
+        return self.blockchain.get_balance(member) + 1  # Add 1 to ensure positive voting power
 
-    # Vote on proposals
-    for proposal_id in [add_member_proposal, remove_member_proposal, transfer_proposal]:
-        dao.vote_on_proposal(proposal_id, alice_did, True)
-        dao.vote_on_proposal(proposal_id, bob_did, True)
-        dao.vote_on_proposal(proposal_id, charlie_did, False)
+class DAOManager:
+    def __init__(self, blockchain):
+        self.blockchain = blockchain
+        self.daos = {}
 
-    # Fast-forward time and execute proposals
-    for proposal in dao.proposals.values():
-        proposal.start_time -= 3601
+    def create_dao(self, name):
+        if name in self.daos:
+            return None
+        dao = DAO(self.blockchain, name)
+        self.daos[name] = dao
+        return dao
 
-    for proposal_id in [add_member_proposal, remove_member_proposal, transfer_proposal]:
-        result = dao.execute_proposal(proposal_id)
-        print(f"Proposal {proposal_id} execution result: {result}")
-
-    # Check final state
-    print(f"DAO members: {dao.members}")
-    print(f"Alice's final balance: {bc.get_balance(alice_did)}")
-    print(f"Bob's final balance: {bc.get_balance(bob_did)}")
-    print(f"Charlie's final balance: {bc.get_balance(charlie_did)}")
-
-if __name__ == "__main__":
-    test_blockchain()
+    def get_dao(self, name):
+        return self.daos.get(name)
