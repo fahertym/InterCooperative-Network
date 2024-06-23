@@ -29,10 +29,9 @@ class Proposal:
         return (yes_votes / total_votes) > self.required_majority
 
 class DAO:
-    def __init__(self, blockchain, name, token_address):
+    def __init__(self, blockchain, name):
         self.blockchain = blockchain
         self.name = name
-        self.token_address = token_address
         self.members = set()
         self.proposals = {}
         self.next_proposal_id = 0
@@ -71,7 +70,7 @@ class DAO:
                     self.remove_member(proposal.description)
                 elif proposal.proposal_type == "transfer_funds":
                     recipient, amount = proposal.description.split(',')
-                    self.blockchain.add_transaction(Transaction(self.token_address, recipient, float(amount)))
+                    self.blockchain.add_transaction(self.blockchain.Transaction(self.name, recipient, float(amount)))
                 # Add more proposal types as needed
                 proposal.executed = True
                 return True
@@ -86,10 +85,10 @@ class DAOManager:
         self.blockchain = blockchain
         self.daos = {}
 
-    def create_dao(self, name, token_address):
+    def create_dao(self, name):
         if name in self.daos:
             return None
-        dao = DAO(self.blockchain, name, token_address)
+        dao = DAO(self.blockchain, name)
         self.daos[name] = dao
         return dao
 
