@@ -9,17 +9,26 @@ class Block:
         self.timestamp = timestamp
         self.previous_hash = previous_hash
         self.nonce = 0
-        self.hash = self.calculate_hash()
+        self.hash = None
+        self.calculate_hash()
 
     def calculate_hash(self):
-        block_string = json.dumps(self.to_dict(), sort_keys=True)
-        return hashlib.sha256(block_string.encode()).hexdigest()
+        block_dict = {
+            "index": self.index,
+            "transactions": [tx.to_dict() for tx in self.transactions],
+            "timestamp": self.timestamp,
+            "previous_hash": self.previous_hash,
+            "nonce": self.nonce
+        }
+        block_string = json.dumps(block_dict, sort_keys=True)
+        self.hash = hashlib.sha256(block_string.encode()).hexdigest()
+        return self.hash
 
     def mine_block(self, difficulty):
         target = "0" * difficulty
         while self.hash[:difficulty] != target:
             self.nonce += 1
-            self.hash = self.calculate_hash()
+            self.calculate_hash()
         print(f"Block mined: {self.hash}")
 
     def to_dict(self):
@@ -34,6 +43,7 @@ class Block:
 
     @classmethod
     def from_dict(cls, block_dict):
+        from ..blockchain.transaction import Transaction  # Import here to avoid circular import
         block = cls(
             block_dict['index'],
             [Transaction.from_dict(tx) for tx in block_dict['transactions']],

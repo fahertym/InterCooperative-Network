@@ -20,6 +20,7 @@ class Blockchain:
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
 
+
     def get_latest_block(self):
         return self.chain[-1]
 
