@@ -1,5 +1,9 @@
+# test_blockchain.py
+
 from icn.blockchain.chain import Blockchain
 from icn.blockchain.transaction import Transaction
+from cli import ICNCLI
+import sys
 
 def test_blockchain():
     # Create a new blockchain
@@ -88,5 +92,11 @@ def test_blockchain():
     print(f"Bob's final balance: {bc.get_balance(bob_did)}")
     print(f"Charlie's final balance: {bc.get_balance(charlie_did)}")
 
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "cli":
+        ICNCLI().cmdloop()
+    else:
+        test_blockchain()
+
 if __name__ == "__main__":
-    test_blockchain()
+    main()
