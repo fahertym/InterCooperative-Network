@@ -1,6 +1,7 @@
 from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
+from ..identity.did import DIDManager
 import time
 
 class Blockchain:
@@ -10,6 +11,7 @@ class Blockchain:
         self.pending_transactions = []
         self.mining_reward = 10
         self.consensus = PoCoS(self)
+        self.did_manager = DIDManager()
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -17,8 +19,8 @@ class Blockchain:
     def get_latest_block(self):
         return self.chain[-1]
 
-    def mine_pending_transactions(self, miner_address):
-        if not self.consensus.is_validator(miner_address):
+    def mine_pending_transactions(self, miner_did):
+        if not self.consensus.is_validator(miner_did):
             print("Miner is not a valid validator")
             return False
 
@@ -28,7 +30,7 @@ class Blockchain:
         if self.consensus.validate_block(block):
             print("Block successfully mined and validated!")
             self.chain.append(block)
-            self.consensus.distribute_rewards(miner_address)
+            self.consensus.distribute_rewards(miner_did)
             self.pending_transactions = []
             return True
         else:
@@ -36,21 +38,21 @@ class Blockchain:
             return False
 
     def add_transaction(self, transaction):
-        if not transaction.sender or not transaction.recipient:
-            raise ValueError("Transaction must include sender and recipient")
+        if not transaction.sender_did or not transaction.recipient_did:
+            raise ValueError("Transaction must include sender and recipient DIDs")
         
-        if not transaction.is_valid():
+        if not transaction.is_valid(self.did_manager):
             raise ValueError("Cannot add invalid transaction to chain")
         
         self.pending_transactions.append(transaction)
 
-    def get_balance(self, address):
+    def get_balance(self, did):
         balance = 0
         for block in self.chain:
             for tx in block.transactions:
-                if tx.sender == address:
+                if tx.sender_did == did:
                     balance -= tx.amount
-                if tx.recipient == address:
+                if tx.recipient_did == did:
                     balance += tx.amount
         return balance
 
@@ -68,16 +70,23 @@ class Blockchain:
             if not self.consensus.validate_block(current_block):
                 return False
 
+            for transaction in current_block.transactions:
+                if not transaction.is_valid(self.did_manager):
+                    return False
+
         return True
 
-    def add_validator(self, address, stake):
-        return self.consensus.add_validator(address, stake)
+    def add_validator(self, did, stake):
+        return self.consensus.add_validator(did, stake)
 
-    def remove_validator(self, address):
-        return self.consensus.remove_validator(address)
+    def remove_validator(self, did):
+        return self.consensus.remove_validator(did)
 
-    def update_validator_stake(self, address, stake):
-        return self.consensus.update_stake(address, stake)
+    def update_validator_stake(self, did, stake):
+        return self.consensus.update_stake(did, stake)
 
-    def update_validator_cooperation_score(self, address, score):
-        return self.consensus.update_cooperation_score(address, score)
+    def update_validator_cooperation_score(self, did, score):
+        return self.consensus.update_cooperation_score(did, score)
+
+    def create_did(self):
+        return self.did_manager.create_did()
