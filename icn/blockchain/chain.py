@@ -104,6 +104,9 @@ class Blockchain:
     def update_validator_stake(self, did, stake):
         return self.consensus.update_stake(did, stake)
 
+    def get_validator_info(self, did):
+        return self.consensus.get_validator_info(did)
+
     def create_did(self):
         return self.did_manager.create_did()
 

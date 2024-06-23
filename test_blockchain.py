@@ -29,7 +29,7 @@ def test_blockchain():
     bc.add_transaction(tx2)
 
     # Mine blocks
-    for i in range(5):
+    for i in range(10):
         miner = bc.consensus.select_validator()
         if bc.mine_pending_transactions(miner):
             print(f"Block {i+1} mined by {miner}")
@@ -43,6 +43,15 @@ def test_blockchain():
 
     # Verify the blockchain
     print(f"Is blockchain valid? {bc.is_chain_valid()}")
+
+    # Print validator info
+    for did in [alice_did, bob_did, charlie_did]:
+        info = bc.get_validator_info(did)
+        print(f"Validator {did} info:")
+        print(f"  Stake: {info['stake']}")
+        print(f"  Cooperation score: {info['cooperation_score']:.2f}")
+        print(f"  Blocks created: {info['blocks_created']}")
+        print(f"  Total uptime: {info['total_uptime']:.2f} seconds")
 
     # Test DAO functionality
     dao = bc.create_dao("TestDAO")

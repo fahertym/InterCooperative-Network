@@ -1,5 +1,6 @@
 import random
 import time
+import math
 
 class PoCoS:
     def __init__(self, blockchain):
@@ -8,15 +9,16 @@ class PoCoS:
         self.stake_threshold = 100
         self.cooperation_score_threshold = 50
         self.last_active_time = {}
+        self.total_blocks_created = 0
 
     def add_validator(self, did, stake):
         if stake >= self.stake_threshold:
             self.validators[did] = {
                 'stake': stake,
                 'cooperation_score': 100,
-                'successful_validations': 0,
-                'total_validations': 0,
-                'last_validation_time': time.time()
+                'blocks_created': 0,
+                'last_active_time': time.time(),
+                'total_uptime': 0
             }
             return True
         return False
@@ -36,7 +38,7 @@ class PoCoS:
     def mine_block(self, block, miner_did):
         if self.is_validator(miner_did):
             block.mine_block(self.blockchain.difficulty)
-            self.update_cooperation_score(miner_did, True)
+            self.update_validator_metrics(miner_did)
             return True
         return False
 
@@ -51,32 +53,60 @@ class PoCoS:
         if not eligible_validators:
             return None
         
-        total_stake = sum(self.validators[v]['stake'] for v in eligible_validators)
-        selection = random.uniform(0, total_stake)
+        total_weight = sum(self.calculate_validator_weight(v) for v in eligible_validators)
+        selection = random.uniform(0, total_weight)
         
-        current_stake = 0
+        current_weight = 0
         for validator in eligible_validators:
-            current_stake += self.validators[validator]['stake']
-            if current_stake > selection:
+            current_weight += self.calculate_validator_weight(validator)
+            if current_weight > selection:
                 return validator
         
         return None
 
-    def update_cooperation_score(self, did, success):
+    def calculate_validator_weight(self, did):
+        validator = self.validators[did]
+        stake_weight = validator['stake']
+        cooperation_weight = validator['cooperation_score']
+        activity_weight = self.calculate_activity_weight(did)
+        return stake_weight * cooperation_weight * activity_weight
+
+    def calculate_activity_weight(self, did):
+        validator = self.validators[did]
+        time_since_last_active = time.time() - validator['last_active_time']
+        activity_decay = math.exp(-time_since_last_active / (24 * 60 * 60))  # Decay over 24 hours
+        return 1 + (validator['total_uptime'] / (24 * 60 * 60)) * activity_decay
+
+    def update_validator_metrics(self, did):
         if did in self.validators:
             validator = self.validators[did]
-            validator['total_validations'] += 1
-            if success:
-                validator['successful_validations'] += 1
+            current_time = time.time()
             
-            # Calculate cooperation score based on successful validations and activity
-            success_ratio = validator['successful_validations'] / validator['total_validations']
-            time_since_last_validation = time.time() - validator['last_validation_time']
-            activity_factor = max(0, 1 - (time_since_last_validation / (24 * 60 * 60)))  # Decays over 24 hours
-            
-            validator['cooperation_score'] = (success_ratio * 70 + activity_factor * 30)
-            validator['last_validation_time'] = time.time()
+            # Update blocks created
+            validator['blocks_created'] += 1
+            self.total_blocks_created += 1
+
+            # Update uptime
+            time_since_last_active = current_time - validator['last_active_time']
+            validator['total_uptime'] += time_since_last_active
+            validator['last_active_time'] = current_time
+
+            # Update cooperation score
+            expected_blocks = self.total_blocks_created * (validator['stake'] / sum(v['stake'] for v in self.validators.values()))
+            cooperation_ratio = validator['blocks_created'] / max(expected_blocks, 1)
+            validator['cooperation_score'] = min(100, max(0, cooperation_ratio * 100))
 
     def validate_block(self, block):
         # Implement block validation logic here
         return True  # Placeholder implementation
+
+    def get_validator_info(self, did):
+        if did in self.validators:
+            validator = self.validators[did]
+            return {
+                'stake': validator['stake'],
+                'cooperation_score': validator['cooperation_score'],
+                'blocks_created': validator['blocks_created'],
+                'total_uptime': validator['total_uptime']
+            }
+        return None
