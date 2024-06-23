@@ -26,13 +26,16 @@ class Blockchain:
             print("Miner is not a valid validator")
             return False
 
+        # Add mining reward transaction
+        reward_tx = Transaction("0", miner_did, self.mining_reward)
+        self.pending_transactions.append(reward_tx)
+
         block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
         block.mine_block(self.difficulty)
 
         if self.consensus.validate_block(block):
             print("Block successfully mined and validated!")
             self.chain.append(block)
-            self.consensus.distribute_rewards(miner_did)
             self.pending_transactions = []
             return True
         else:
@@ -64,16 +67,20 @@ class Blockchain:
             previous_block = self.chain[i-1]
 
             if current_block.hash != current_block.calculate_hash():
+                print(f"Invalid hash for block {i}")
                 return False
 
             if current_block.previous_hash != previous_block.hash:
+                print(f"Invalid previous hash for block {i}")
                 return False
 
             if not self.consensus.validate_block(current_block):
+                print(f"Consensus validation failed for block {i}")
                 return False
 
             for transaction in current_block.transactions:
                 if not transaction.is_valid(self.did_manager):
+                    print(f"Invalid transaction in block {i}")
                     return False
 
         return True
