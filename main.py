@@ -4,6 +4,7 @@ import aiohttp
 import argparse
 import os
 import signal
+import psutil
 from icn.blockchain.chain import Blockchain
 from icn.network.node import Node
 from icn.storage.file_storage import FileStorage
@@ -13,34 +14,16 @@ BOOTSTRAP_NODES = [
     "http://localhost:8001",
 ]
 
-def write_pid(port):
-    pid = os.getpid()
-    with open(f"node_{port}.pid", "w") as f:
-        f.write(str(pid))
-
-def read_pid(port):
-    try:
-        with open(f"node_{port}.pid", "r") as f:
-            return int(f.read().strip())
-    except FileNotFoundError:
-        return None
-
 def is_port_in_use(port):
-    pid = read_pid(port)
-    if pid:
-        try:
-            os.kill(pid, 0)
+    for conn in psutil.net_connections():
+        if conn.laddr.port == port:
             return True
-        except OSError:
-            return False
     return False
 
 async def main(port):
     if is_port_in_use(port):
-        print(f"Error: A node is already running on port {port}")
+        print(f"Error: Port {port} is already in use")
         return
-
-    write_pid(port)
 
     storage = FileStorage(f"./data_{port}")
     blockchain = Blockchain()
@@ -51,12 +34,15 @@ async def main(port):
     
     def signal_handler(sig, frame):
         print(f"Stopping node on port {port}")
-        os.remove(f"node_{port}.pid")
-        sys.exit(0)
+        asyncio.create_task(node.stop())
 
     signal.signal(signal.SIGINT, signal_handler)
     
     await node.start()
+
+    # Keep the main coroutine running
+    while True:
+        await asyncio.sleep(1)
 
 async def check_status(port):
     if not is_port_in_use(port):
@@ -91,4 +77,3 @@ if __name__ == "__main__":
             asyncio.run(main(args.port))
         except KeyboardInterrupt:
             print(f"Stopping node on port {args.port}")
-            os.remove(f"node_{args.port}.pid")
