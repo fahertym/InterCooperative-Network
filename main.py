@@ -56,6 +56,9 @@ async def check_status(port):
                     print(f"  Blockchain Length: {status['blockchain_length']}")
                     print(f"  Pending Transactions: {status['pending_transactions']}")
                     print(f"  Peers: {', '.join(status['peers'])}")
+                    print(f"  Last Peer Discovery: {time.ctime(status['last_peer_discovery'])}")
+                    print(f"  Last Blockchain Sync: {time.ctime(status['last_blockchain_sync'])}")
+                    print(f"  Last Peer Cleanup: {time.ctime(status['last_peer_cleanup'])}")
                 else:
                     print(f"Failed to get status from node on port {port}. Status code: {response.status}")
         except aiohttp.ClientError as e:

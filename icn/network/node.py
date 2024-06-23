@@ -25,7 +25,9 @@ class Node:
         self.runner = None
         self.site = None
         self.is_running = False
-        self.last_peer_cleanup = time.time()
+        self.last_peer_discovery = 0
+        self.last_blockchain_sync = 0
+        self.last_peer_cleanup = 0
 
     async def start(self):
         app = web.Application()
@@ -65,6 +67,7 @@ class Node:
             await asyncio.sleep(60)  # Run every minute
 
     async def discover_peers(self):
+        self.last_peer_discovery = time.time()
         all_peers = set(self.peers) | set(self.bootstrap_nodes)
         all_peers.discard(self.address)  # Remove self from peers
         if not all_peers:
@@ -100,6 +103,7 @@ class Node:
             self.logger.warning(f"Failed to connect to node: {node_address}. Error: {str(e)}")
 
     async def sync_blockchain(self):
+        self.last_blockchain_sync = time.time()
         try:
             replaced = await self.resolve_conflicts()
             if replaced:
@@ -228,6 +232,9 @@ class Node:
             "node_address": self.address,
             "peers": list(self.peers),
             "blockchain_length": len(self.blockchain.chain),
-            "pending_transactions": len(self.blockchain.pending_transactions)
+            "pending_transactions": len(self.blockchain.pending_transactions),
+            "last_peer_discovery": self.last_peer_discovery,
+            "last_blockchain_sync": self.last_blockchain_sync,
+            "last_peer_cleanup": self.last_peer_cleanup
         }
         return web.json_response(status)
