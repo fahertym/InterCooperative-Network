@@ -1,5 +1,5 @@
 import random
-from ..blockchain.transaction import Transaction
+import time
 
 class PoCoS:
     def __init__(self, blockchain):
@@ -7,55 +7,76 @@ class PoCoS:
         self.validators = {}
         self.stake_threshold = 100
         self.cooperation_score_threshold = 50
+        self.last_active_time = {}
 
-    def add_validator(self, address, stake):
+    def add_validator(self, did, stake):
         if stake >= self.stake_threshold:
-            self.validators[address] = {
+            self.validators[did] = {
                 'stake': stake,
-                'cooperation_score': 100  # Initial perfect score
+                'cooperation_score': 100,
+                'successful_validations': 0,
+                'total_validations': 0,
+                'last_validation_time': time.time()
             }
             return True
         return False
 
-    def remove_validator(self, address):
-        if address in self.validators:
-            del self.validators[address]
+    def remove_validator(self, did):
+        if did in self.validators:
+            del self.validators[did]
             return True
         return False
 
-    def update_stake(self, address, stake):
-        if address in self.validators:
-            self.validators[address]['stake'] = stake
+    def update_stake(self, did, stake):
+        if did in self.validators:
+            self.validators[did]['stake'] = stake
             return True
         return False
 
-    def update_cooperation_score(self, address, score):
-        if address in self.validators:
-            self.validators[address]['cooperation_score'] = max(0, min(100, score))
+    def mine_block(self, block, miner_did):
+        if self.is_validator(miner_did):
+            block.mine_block(self.blockchain.difficulty)
+            self.update_cooperation_score(miner_did, True)
             return True
         return False
 
-    def is_validator(self, address):
-        return address in self.validators and \
-               self.validators[address]['stake'] >= self.stake_threshold and \
-               self.validators[address]['cooperation_score'] >= self.cooperation_score_threshold
+    def is_validator(self, did):
+        if did in self.validators:
+            return (self.validators[did]['stake'] >= self.stake_threshold and
+                    self.validators[did]['cooperation_score'] >= self.cooperation_score_threshold)
+        return False
 
     def select_validator(self):
         eligible_validators = [v for v in self.validators if self.is_validator(v)]
         if not eligible_validators:
             return None
         
-        # Weight by stake and cooperation score
-        weights = [self.validators[v]['stake'] * self.validators[v]['cooperation_score'] for v in eligible_validators]
-        return random.choices(eligible_validators, weights=weights)[0]
+        total_stake = sum(self.validators[v]['stake'] for v in eligible_validators)
+        selection = random.uniform(0, total_stake)
+        
+        current_stake = 0
+        for validator in eligible_validators:
+            current_stake += self.validators[validator]['stake']
+            if current_stake > selection:
+                return validator
+        
+        return None
+
+    def update_cooperation_score(self, did, success):
+        if did in self.validators:
+            validator = self.validators[did]
+            validator['total_validations'] += 1
+            if success:
+                validator['successful_validations'] += 1
+            
+            # Calculate cooperation score based on successful validations and activity
+            success_ratio = validator['successful_validations'] / validator['total_validations']
+            time_since_last_validation = time.time() - validator['last_validation_time']
+            activity_factor = max(0, 1 - (time_since_last_validation / (24 * 60 * 60)))  # Decays over 24 hours
+            
+            validator['cooperation_score'] = (success_ratio * 70 + activity_factor * 30)
+            validator['last_validation_time'] = time.time()
 
     def validate_block(self, block):
-        # Simple validation for now. We'll expand this later.
-        return block.hash.startswith('0' * self.blockchain.difficulty)
-
-    def distribute_rewards(self, miner_address):
-        if self.is_validator(miner_address):
-            reward = Transaction("0", miner_address, self.blockchain.mining_reward)
-            self.blockchain.add_transaction(reward)
-            return True
-        return False
+        # Implement block validation logic here
+        return True  # Placeholder implementation
