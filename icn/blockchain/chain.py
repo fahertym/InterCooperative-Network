@@ -1,9 +1,12 @@
+# icn/blockchain/chain.py
+
 import time
 from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
 from ..dao.governance import DAOManager
+from ..federation.federation import FederationManager
 
 class Blockchain:
     def __init__(self):
@@ -14,6 +17,7 @@ class Blockchain:
         self.consensus = PoCoS(self)
         self.did_manager = DIDManager()
         self.dao_manager = DAOManager(self)
+        self.federation_manager = FederationManager()
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -115,3 +119,27 @@ class Blockchain:
 
     def get_dao(self, name):
         return self.dao_manager.get_dao(name)
+
+    def create_federation(self, name, dao_names):
+        daos = [self.get_dao(dao_name) for dao_name in dao_names]
+        if all(daos):
+            return self.federation_manager.create_federation(name, daos)
+        return None
+
+    def get_federation(self, name):
+        return self.federation_manager.get_federation(name)
+
+    def list_federations(self):
+        return self.federation_manager.list_federations()
+
+    def add_dao_to_federation(self, federation_name, dao_name):
+        dao = self.get_dao(dao_name)
+        if dao:
+            return self.federation_manager.add_dao_to_federation(federation_name, dao)
+        return False
+
+    def remove_dao_from_federation(self, federation_name, dao_name):
+        dao = self.get_dao(dao_name)
+        if dao:
+            return self.federation_manager.remove_dao_from_federation(federation_name, dao)
+        return False

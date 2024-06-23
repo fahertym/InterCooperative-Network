@@ -259,27 +259,66 @@ class ICNCLI(cmd.Cmd):
         else:
             print(f"Cooperative (DAO) '{arg}' not found.")
 
-    def do_add_federation(self, arg):
-        """Add a new federation: ADD_FEDERATION <federation_name> <dao1_name> <dao2_name> ..."""
+    def do_create_federation(self, arg):
+        """Create a new federation: CREATE_FEDERATION <federation_name> <dao1_name> <dao2_name> ..."""
         args = arg.split()
         if len(args) < 3:
             print("Please provide a federation name and at least two DAO names.")
             return
         federation_name = args[0]
         dao_names = args[1:]
-        daos = [self.blockchain.get_dao(name) for name in dao_names]
-        if all(daos):
-            # Here you would implement the logic to create a federation
-            # For now, we'll just print a success message
+        federation = self.blockchain.create_federation(federation_name, dao_names)
+        if federation:
             print(f"Federation '{federation_name}' created with DAOs: {', '.join(dao_names)}")
         else:
-            print("One or more DAOs not found. Please check the DAO names and try again.")
+            print("Failed to create federation. Please check the DAO names and try again.")
 
     def do_list_federations(self, arg):
         """List all federations"""
-        # Here you would implement the logic to list federations
-        # For now, we'll just print a placeholder message
-        print("Federation listing not yet implemented.")
+        federations = self.blockchain.list_federations()
+        if federations:
+            print("List of Federations:")
+            for name in federations:
+                print(f"- {name}")
+        else:
+            print("No federations found.")
+
+    def do_federation_info(self, arg):
+        """Display information about a federation: FEDERATION_INFO <federation_name>"""
+        if not arg:
+            print("Please specify a federation name.")
+            return
+        federation = self.blockchain.get_federation(arg)
+        if federation:
+            print(f"Federation Information for '{arg}':")
+            print(f"  Total member DAOs: {len(federation.member_daos)}")
+            print("  Member DAOs:")
+            for dao in federation.get_members():
+                print(f"    - {dao.name}")
+        else:
+            print(f"Federation '{arg}' not found.")
+
+    def do_add_dao_to_federation(self, arg):
+        """Add a DAO to a federation: ADD_DAO_TO_FEDERATION <federation_name> <dao_name>"""
+        try:
+            federation_name, dao_name = arg.split()
+            if self.blockchain.add_dao_to_federation(federation_name, dao_name):
+                print(f"Added DAO '{dao_name}' to federation '{federation_name}'.")
+            else:
+                print("Failed to add DAO to federation.")
+        except ValueError:
+            print("Invalid input. Please use format: ADD_DAO_TO_FEDERATION <federation_name> <dao_name>")
+
+    def do_remove_dao_from_federation(self, arg):
+        """Remove a DAO from a federation: REMOVE_DAO_FROM_FEDERATION <federation_name> <dao_name>"""
+        try:
+            federation_name, dao_name = arg.split()
+            if self.blockchain.remove_dao_from_federation(federation_name, dao_name):
+                print(f"Removed DAO '{dao_name}' from federation '{federation_name}'.")
+            else:
+                print("Failed to remove DAO from federation.")
+        except ValueError:
+            print("Invalid input. Please use format: REMOVE_DAO_FROM_FEDERATION <federation_name> <dao_name>")
 
     def do_quit(self, arg):
         """Quit the CLI"""
