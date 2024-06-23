@@ -165,6 +165,59 @@ class ICNCLI(cmd.Cmd):
         except ValueError:
             print("Invalid input. Please use format: EXECUTE_PROPOSAL <dao_name> <proposal_id>")
 
+    def do_list_daos(self, arg):
+        """List all DAOs"""
+        daos = self.blockchain.dao_manager.daos
+        if daos:
+            print("List of DAOs:")
+            for name in daos:
+                print(f"- {name}")
+        else:
+            print("No DAOs found.")
+
+    def do_list_dao_members(self, arg):
+        """List members of a DAO: LIST_DAO_MEMBERS <dao_name>"""
+        if not arg:
+            print("Please specify a DAO name.")
+            return
+        dao = self.blockchain.get_dao(arg)
+        if dao:
+            print(f"Members of DAO '{arg}':")
+            for member in dao.members:
+                print(f"- {member}")
+        else:
+            print(f"DAO '{arg}' not found.")
+
+    def do_get_member_details(self, arg):
+        """Get details of a DAO member: GET_MEMBER_DETAILS <dao_name> <member_did>"""
+        try:
+            dao_name, member_did = arg.split()
+            dao = self.blockchain.get_dao(dao_name)
+            if dao:
+                if member_did in dao.members:
+                    balance = self.blockchain.get_balance(member_did)
+                    validator_info = self.blockchain.get_validator_info(member_did)
+                    print(f"Member details for {member_did} in DAO '{dao_name}':")
+                    print(f"  Balance: {balance}")
+                    if validator_info:
+                        print(f"  Stake: {validator_info['stake']}")
+                        print(f"  Cooperation score: {validator_info['cooperation_score']:.2f}")
+                        print(f"  Blocks created: {validator_info['blocks_created']}")
+                        print(f"  Total uptime: {validator_info['total_uptime']:.2f} seconds")
+                    else:
+                        print("  Not a validator")
+                else:
+                    print(f"{member_did} is not a member of DAO '{dao_name}'")
+            else:
+                print(f"DAO '{dao_name}' not found.")
+        except ValueError:
+            print("Invalid input. Please use format: GET_MEMBER_DETAILS <dao_name> <member_did>")
+
+    def do_run_test(self, arg):
+        """Run the blockchain test"""
+        from test_blockchain import test_blockchain
+        test_blockchain()
+
     def do_quit(self, arg):
         """Quit the CLI"""
         print("Thank you for using the InterCooperative Network CLI.")
