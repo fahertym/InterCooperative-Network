@@ -26,6 +26,7 @@ class Transaction:
     def sign_transaction(self, did_manager):
         transaction_hash = self.calculate_hash()
         self.signature = did_manager.sign_message(self.sender_did, transaction_hash)
+        print(f"Transaction signed. Hash: {transaction_hash}, Signature: {self.signature.hex()}")
 
     def is_valid(self, did_manager):
         if self.sender_did == "0":  # Mining reward transaction
@@ -36,6 +37,7 @@ class Transaction:
             return False
 
         transaction_hash = self.calculate_hash()
+        print(f"Verifying transaction. Hash: {transaction_hash}, Signature: {self.signature.hex()}")
         if not did_manager.verify_message(self.sender_did, transaction_hash, self.signature):
             print("Transaction is invalid: Signature verification failed")
             return False

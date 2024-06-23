@@ -1,9 +1,7 @@
 import uuid
 import json
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import hashes, serialization
 
 class DID:
     def __init__(self):
@@ -37,7 +35,8 @@ class DID:
                 hashes.SHA256()
             )
             return True
-        except:
+        except Exception as e:
+            print(f"Signature verification failed: {str(e)}")
             return False
 
     def to_dict(self):
