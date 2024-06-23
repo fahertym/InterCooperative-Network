@@ -14,7 +14,7 @@ class Blockchain:
         self.consensus = PoCoS(self)
         self.did_manager = DIDManager()
         self.dao_manager = DAOManager(self)
-
+        
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
 
@@ -24,6 +24,23 @@ class Blockchain:
     def mine_pending_transactions(self, miner_did):
         if not self.consensus.is_validator(miner_did):
             print("Miner is not a valid validator")
+            return False
+
+        # Add mining reward transaction
+        reward_tx = Transaction("NETWORK", miner_did, self.mining_reward)
+        self.pending_transactions.append(reward_tx)
+
+        block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
+        block.mine_block(self.difficulty)
+
+        if self.consensus.validate_block(block):
+            print("Block successfully mined and validated!")
+            self.chain.append(block)
+            self.pending_transactions = []
+            return True
+        else:
+            print("Block validation failed")
+            self.pending_transactions.pop()  # Remove the reward transaction if mining fails
             return False
 
         # Add mining reward transaction
