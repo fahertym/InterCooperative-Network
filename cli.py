@@ -2,6 +2,7 @@
 
 import cmd
 import sys
+import time
 from icn.blockchain.chain import Blockchain
 from icn.blockchain.transaction import Transaction
 
@@ -217,6 +218,68 @@ class ICNCLI(cmd.Cmd):
         """Run the blockchain test"""
         from test_blockchain import test_blockchain
         test_blockchain()
+
+    def do_network_health(self, arg):
+        """Display network health information"""
+        print("Network Health:")
+        print(f"  Total blocks: {len(self.blockchain.chain)}")
+        print(f"  Total transactions: {sum(len(block.transactions) for block in self.blockchain.chain)}")
+        print(f"  Total validators: {len(self.blockchain.consensus.validators)}")
+        print(f"  Total DAOs: {len(self.blockchain.dao_manager.daos)}")
+        print(f"  Current difficulty: {self.blockchain.difficulty}")
+        print(f"  Last block time: {time.ctime(self.blockchain.get_latest_block().timestamp)}")
+
+    def do_blockchain_info(self, arg):
+        """Display detailed blockchain information"""
+        print("Blockchain Information:")
+        print(f"  Chain length: {len(self.blockchain.chain)}")
+        print(f"  Latest block hash: {self.blockchain.get_latest_block().hash}")
+        print(f"  Total transactions: {sum(len(block.transactions) for block in self.blockchain.chain)}")
+        print(f"  Pending transactions: {len(self.blockchain.pending_transactions)}")
+        print(f"  Is chain valid: {self.blockchain.is_chain_valid()}")
+
+    def do_list_cooperatives(self, arg):
+        """List all cooperatives (DAOs)"""
+        self.do_list_daos(arg)
+
+    def do_cooperative_info(self, arg):
+        """Display detailed information about a cooperative (DAO): COOPERATIVE_INFO <dao_name>"""
+        if not arg:
+            print("Please specify a cooperative (DAO) name.")
+            return
+        dao = self.blockchain.get_dao(arg)
+        if dao:
+            print(f"Cooperative (DAO) Information for '{arg}':")
+            print(f"  Total members: {len(dao.members)}")
+            print(f"  Total proposals: {len(dao.proposals)}")
+            print("  Active proposals:")
+            for proposal_id, proposal in dao.proposals.items():
+                if proposal.is_active():
+                    print(f"    - Proposal {proposal_id}: {proposal.description}")
+        else:
+            print(f"Cooperative (DAO) '{arg}' not found.")
+
+    def do_add_federation(self, arg):
+        """Add a new federation: ADD_FEDERATION <federation_name> <dao1_name> <dao2_name> ..."""
+        args = arg.split()
+        if len(args) < 3:
+            print("Please provide a federation name and at least two DAO names.")
+            return
+        federation_name = args[0]
+        dao_names = args[1:]
+        daos = [self.blockchain.get_dao(name) for name in dao_names]
+        if all(daos):
+            # Here you would implement the logic to create a federation
+            # For now, we'll just print a success message
+            print(f"Federation '{federation_name}' created with DAOs: {', '.join(dao_names)}")
+        else:
+            print("One or more DAOs not found. Please check the DAO names and try again.")
+
+    def do_list_federations(self, arg):
+        """List all federations"""
+        # Here you would implement the logic to list federations
+        # For now, we'll just print a placeholder message
+        print("Federation listing not yet implemented.")
 
     def do_quit(self, arg):
         """Quit the CLI"""
