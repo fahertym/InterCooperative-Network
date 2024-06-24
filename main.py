@@ -78,7 +78,9 @@ async def create_transaction(port, sender_did, recipient_did, amount):
                     result = await response.json()
                     print(f"Transaction created: {result['message']}")
                 else:
+                    error_msg = await response.text()
                     print(f"Failed to create transaction. Status code: {response.status}")
+                    print(f"Error message: {error_msg}")
         except aiohttp.ClientError as e:
             print(f"Error creating transaction: {str(e)}")
 
@@ -91,7 +93,9 @@ async def mine_block(port, miner_did):
                     result = await response.json()
                     print(f"Block mined: {result['message']}")
                 else:
+                    error_msg = await response.text()
                     print(f"Failed to mine block. Status code: {response.status}")
+                    print(f"Error message: {error_msg}")
         except aiohttp.ClientError as e:
             print(f"Error mining block: {str(e)}")
 

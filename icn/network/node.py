@@ -5,6 +5,7 @@ from aiohttp import web
 import random
 import logging
 import time
+import traceback
 
 from ..blockchain.chain import Blockchain
 from ..blockchain.block import Block
@@ -154,7 +155,8 @@ class Node:
             return web.json_response({"message": "Transaction added to pool", "transaction": transaction.to_dict()})
         except Exception as e:
             self.logger.error(f"Error processing new transaction: {str(e)}")
-            return web.json_response({"message": "Error processing transaction"}, status=500)
+            self.logger.error(traceback.format_exc())
+            return web.json_response({"message": f"Error processing transaction: {str(e)}"}, status=500)
 
     async def register_nodes(self, request):
         try:
@@ -272,7 +274,8 @@ class Node:
                 return web.json_response({"message": "Failed to mine new block"}, status=500)
         except Exception as e:
             self.logger.error(f"Error mining new block: {str(e)}")
-            return web.json_response({"message": "Error mining new block"}, status=500)
+            self.logger.error(traceback.format_exc())
+            return web.json_response({"message": f"Error mining new block: {str(e)}"}, status=500)
 
     async def mine_block(self, miner_did):
         success = self.blockchain.mine_pending_transactions(miner_did)

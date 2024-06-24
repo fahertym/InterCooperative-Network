@@ -20,7 +20,6 @@ class Blockchain:
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
 
-
     def get_latest_block(self):
         return self.chain[-1]
 
@@ -41,6 +40,11 @@ class Blockchain:
             return False
         return True
 
+    def create_transaction(self, sender_did, recipient_did, amount):
+        transaction = Transaction(sender_did, recipient_did, amount)
+        transaction.sign_transaction(self.did_manager)
+        return transaction
+
     def add_transaction(self, transaction):
         if not transaction.sender_did or not transaction.recipient_did:
             raise ValueError("Transaction must include sender and recipient DIDs")
@@ -52,16 +56,16 @@ class Blockchain:
 
     def mine_pending_transactions(self, miner_did):
         if not self.consensus.is_validator(miner_did):
-            print("Miner is not a valid validator")
-            return False
+            raise ValueError("Miner is not a valid validator")
 
         block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
-        if self.consensus.mine_block(block, miner_did):
-            if self.add_block(block):
-                self.pending_transactions = [
-                    Transaction("NETWORK", miner_did, self.mining_reward, is_mining_reward=True)
-                ]
-                return True
+        block.mine_block(self.difficulty)
+
+        if self.add_block(block):
+            self.pending_transactions = [
+                Transaction("NETWORK", miner_did, self.mining_reward, is_mining_reward=True)
+            ]
+            return True
         return False
 
     def get_balance(self, did):
@@ -142,11 +146,6 @@ class Blockchain:
         if dao:
             return self.federation_manager.remove_dao_from_federation(federation_name, dao)
         return False
-
-    def create_transaction(self, sender_did, recipient_did, amount):
-        transaction = Transaction(sender_did, recipient_did, amount)
-        transaction.sign_transaction(self.did_manager)
-        return transaction
 
     @classmethod
     def is_chain_valid(cls, chain):
