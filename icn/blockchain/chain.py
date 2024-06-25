@@ -1,12 +1,12 @@
-import time
 from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
 from ..dao.governance import DAOManager
 from ..federation.federation import FederationManager
-from .contract import SmartContractParser
-from .simple_vm import SimpleVM
+from ..smartcontracts.contract import SmartContractParser
+from ..vm.simple_vm import SimpleVM
+
 
 class Blockchain:
     def __init__(self):

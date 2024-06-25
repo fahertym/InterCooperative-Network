@@ -308,7 +308,14 @@ class ICNCLI(cmd.Cmd):
             print("Invalid input. Please use format: ADD_DAO_TO_FEDERATION <federation_name> <dao_name>")
 
     def do_remove_dao_from_federation(self, arg):
-        """Remove a DAO from a federation: REMOVE_DAO_FROM_FEDERATION <federation_name> <dao_name>"""
+        """Remove a DAO from a federation: from .block import Block
+from .transaction import Transaction
+from ..consensus.pocos import PoCoS
+from ..identity.did import DIDManager
+from ..dao.governance import DAOManager
+from ..federation.federation import FederationManager
+from ..smartcontracts.contract import SmartContractParser
+from ..vm.simple_vm import SimpleVMREMOVE_DAO_FROM_FEDERATION <federation_name> <dao_name>"""
         try:
             federation_name, dao_name = arg.split()
             if self.blockchain.remove_dao_from_federation(federation_name, dao_name):
