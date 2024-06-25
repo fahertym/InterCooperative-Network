@@ -19,6 +19,7 @@ class Blockchain:
         self.dao_manager = DAOManager(self)
         self.federation_manager = FederationManager()
         self.contracts = {}
+        self.contract_states = {}
         self.vm = SimpleVM(self)
 
     def create_genesis_block(self):
@@ -156,13 +157,17 @@ class Blockchain:
         if contract.validate():
             contract_id = f"contract_{len(self.contracts)}"
             self.contracts[contract_id] = contract
+            self.contract_states[contract_id] = {}
             return contract_id
         return None
 
     def execute_contract(self, contract_id, *args):
         contract = self.contracts.get(contract_id)
         if contract:
-            return self.vm.execute(contract)
+            self.vm.variables = self.contract_states[contract_id]
+            result = self.vm.execute(contract)
+            self.contract_states[contract_id] = self.vm.variables
+            return result
         return False
 
     @classmethod
