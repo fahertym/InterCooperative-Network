@@ -41,6 +41,8 @@ class Node:
         app.router.add_get('/status', self.get_status)
         app.router.add_post('/mine', self.mine)
         app.router.add_post('/blocks/new', self.receive_new_block)
+        app.router.add_post('/contracts/deploy', self.deploy_contract)
+        app.router.add_post('/contracts/execute', self.execute_contract)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -308,3 +310,31 @@ class Node:
         except Exception as e:
             self.logger.error(f"Error processing new block: {str(e)}")
             return web.json_response({"message": "Error processing new block"}, status=500)
+
+    async def deploy_contract(self, request):
+        try:
+            data = await request.json()
+            code = data.get('code')
+            if code:
+                contract_id = self.blockchain.deploy_contract(code)
+                if contract_id:
+                    return web.json_response({"success": True, "contract_id": contract_id})
+                else:
+                    return web.json_response({"success": False, "message": "Failed to deploy contract"}, status=400)
+            return web.json_response({"error": "No contract code provided"}, status=400)
+        except Exception as e:
+            self.logger.error(f"Error deploying contract: {str(e)}")
+            return web.json_response({"message": f"Error deploying contract: {str(e)}"}, status=500)
+
+    async def execute_contract(self, request):
+        try:
+            data = await request.json()
+            contract_id = data.get('contract_id')
+            args = data.get('args', [])
+            if contract_id:
+                result = self.blockchain.execute_contract(contract_id, *args)
+                return web.json_response({"success": True, "result": result})
+            return web.json_response({"error": "No contract ID provided"}, status=400)
+        except Exception as e:
+            self.logger.error(f"Error executing contract: {str(e)}")
+            return web.json_response({"message": f"Error executing contract: {str(e)}"}, status=500)

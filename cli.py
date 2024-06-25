@@ -1,5 +1,3 @@
-# cli.py
-
 import cmd
 import sys
 import time
@@ -319,6 +317,27 @@ class ICNCLI(cmd.Cmd):
                 print("Failed to remove DAO from federation.")
         except ValueError:
             print("Invalid input. Please use format: REMOVE_DAO_FROM_FEDERATION <federation_name> <dao_name>")
+
+    def do_deploy_contract(self, arg):
+        """Deploy a new smart contract: DEPLOY_CONTRACT <code>"""
+        if not arg:
+            print("Please provide the contract code.")
+            return
+        contract_id = self.blockchain.deploy_contract(arg)
+        if contract_id:
+            print(f"Contract deployed successfully. Contract ID: {contract_id}")
+        else:
+            print("Failed to deploy contract.")
+
+    def do_execute_contract(self, arg):
+        """Execute a smart contract: EXECUTE_CONTRACT <contract_id> [args...]"""
+        args = arg.split()
+        if len(args) < 1:
+            print("Please provide the contract ID and any necessary arguments.")
+            return
+        contract_id = args[0]
+        result = self.blockchain.execute_contract(contract_id, *args[1:])
+        print(f"Contract execution result: {result}")
 
     def do_quit(self, arg):
         """Quit the CLI"""

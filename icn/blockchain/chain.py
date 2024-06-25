@@ -5,6 +5,8 @@ from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
 from ..dao.governance import DAOManager
 from ..federation.federation import FederationManager
+from .contract import SmartContractParser
+from .simple_vm import SimpleVM
 
 class Blockchain:
     def __init__(self):
@@ -16,6 +18,8 @@ class Blockchain:
         self.did_manager = DIDManager()
         self.dao_manager = DAOManager(self)
         self.federation_manager = FederationManager()
+        self.contracts = {}
+        self.vm = SimpleVM(self)
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -145,6 +149,20 @@ class Blockchain:
         dao = self.get_dao(dao_name)
         if dao:
             return self.federation_manager.remove_dao_from_federation(federation_name, dao)
+        return False
+
+    def deploy_contract(self, code):
+        contract = SmartContractParser.parse(code)
+        if contract.validate():
+            contract_id = f"contract_{len(self.contracts)}"
+            self.contracts[contract_id] = contract
+            return contract_id
+        return None
+
+    def execute_contract(self, contract_id, *args):
+        contract = self.contracts.get(contract_id)
+        if contract:
+            return self.vm.execute(contract)
         return False
 
     @classmethod
