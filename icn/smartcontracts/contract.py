@@ -1,4 +1,4 @@
-# icn/blockchain/contract.py
+# icn/smartcontracts/contract.py
 
 import re
 
@@ -28,6 +28,10 @@ class SmartContract:
                 parsed.append(('else',))
             elif line == 'endif':
                 parsed.append(('endif',))
+            elif line.startswith('set'):
+                match = re.match(r'set\s+(\w+)\s+(\w+)', line)
+                if match:
+                    parsed.append(('set', match.group(1), match.group(2)))
         return parsed
 
     def validate(self):
