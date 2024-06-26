@@ -1,21 +1,26 @@
 # run_tests.py
 
 import unittest
-
-# Import your test modules here
-from tests.test_blockchain import TestBlockchain
-from tests.test_cooperative import TestCooperative
-from tests.test_federation import TestFederation
+from tests.test_all import (
+    TestBlockchain,
+    TestCooperative,
+    TestFederation,
+    TestConsensus,
+    TestDIDManager,
+    TestSmartContract
+)
 
 def run_tests():
     # Create a test suite
     test_suite = unittest.TestSuite()
 
     # Add test cases
-    loader = unittest.TestLoader()
-    test_suite.addTest(loader.loadTestsFromTestCase(TestBlockchain))
-    test_suite.addTest(loader.loadTestsFromTestCase(TestCooperative))
-    test_suite.addTest(loader.loadTestsFromTestCase(TestFederation))
+    test_suite.addTest(unittest.makeSuite(TestBlockchain))
+    test_suite.addTest(unittest.makeSuite(TestCooperative))
+    test_suite.addTest(unittest.makeSuite(TestFederation))
+    test_suite.addTest(unittest.makeSuite(TestConsensus))
+    test_suite.addTest(unittest.makeSuite(TestDIDManager))
+    test_suite.addTest(unittest.makeSuite(TestSmartContract))
 
     # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
