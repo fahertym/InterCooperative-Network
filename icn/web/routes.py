@@ -1,3 +1,5 @@
+# icn/web/routes.py
+
 from flask import render_template, request, redirect, url_for, flash, jsonify, session
 from . import app
 from ..blockchain import chain
@@ -108,12 +110,47 @@ def mine():
         flash("You must be logged in to mine.", 'error')
         return redirect(url_for('index'))
 
-    if blockchain.mine_pending_transactions(session['user_did']):
-        flash("Block mined successfully.", 'success')
-    else:
-        flash("Failed to mine block.", 'error')
+    try:
+        if blockchain.mine_pending_transactions(session['user_did']):
+            flash("Block mined successfully.", 'success')
+        else:
+            flash("Failed to mine block.", 'error')
+    except ValueError as e:
+        flash(str(e), 'error')
 
     return redirect(url_for('index'))
+
+@app.route('/cooperative/<coop_name>/deploy_contract', methods=['GET', 'POST'])
+def deploy_contract(coop_name):
+    coop = blockchain.get_cooperative(coop_name)
+    if not coop:
+        flash(f"Cooperative '{coop_name}' not found.", 'error')
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        code = request.form['code']
+        contract_id = blockchain.deploy_contract(code)
+        if contract_id:
+            flash(f"Contract deployed successfully. Contract ID: {contract_id}", 'success')
+            return redirect(url_for('cooperative_details', name=coop_name))
+        else:
+            flash("Failed to deploy contract.", 'error')
+
+    return render_template('deploy_contract.html', cooperative=coop)
+
+@app.route('/cooperative/<coop_name>/execute_contract/<contract_id>', methods=['POST'])
+def execute_contract(coop_name, contract_id):
+    coop = blockchain.get_cooperative(coop_name)
+    if not coop:
+        flash(f"Cooperative '{coop_name}' not found.", 'error')
+        return redirect(url_for('index'))
+
+    if blockchain.execute_contract(contract_id):
+        flash("Contract executed successfully.", 'success')
+    else:
+        flash("Failed to execute contract.", 'error')
+
+    return redirect(url_for('cooperative_details', name=coop_name))
 
 @app.route('/routes')
 def list_routes():
