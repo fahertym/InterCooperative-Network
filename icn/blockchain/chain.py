@@ -3,7 +3,7 @@ from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
-from ..dao.governance import CooperativeManager
+from ..dao import governance  # Changed this import
 from ..federation.federation import FederationManager
 from ..smartcontracts.contract import SmartContractParser
 from ..vm.simple_vm import SimpleVM
@@ -16,11 +16,13 @@ class Blockchain:
         self.mining_reward = 10
         self.consensus = PoCoS(self)
         self.did_manager = DIDManager()
-        self.cooperative_manager = CooperativeManager(self)
+        self.cooperative_manager = governance.CooperativeManager(self)  # Changed this line
         self.federation_manager = FederationManager()
         self.contracts = {}
         self.contract_states = {}
         self.vm = SimpleVM(self)
+
+    # ... (rest of the Blockchain class implementation remains the same)
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
