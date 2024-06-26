@@ -1,3 +1,5 @@
+# icn/dao/governance.py
+
 import time
 
 class Proposal:
@@ -28,7 +30,7 @@ class Proposal:
             return False
         return (yes_votes / total_votes) > self.required_majority
 
-class DAO:
+class Cooperative:
     def __init__(self, blockchain, name):
         self.blockchain = blockchain
         self.name = name
@@ -63,31 +65,55 @@ class DAO:
         proposal = self.proposals.get(proposal_id)
         if proposal and not proposal.is_active() and not proposal.executed:
             if proposal.get_result():
-                # Execute the proposal based on its type
                 if proposal.proposal_type == "add_member":
                     self.add_member(proposal.description)
                 elif proposal.proposal_type == "remove_member":
                     self.remove_member(proposal.description)
                 elif proposal.proposal_type == "transfer_funds":
                     recipient, amount = proposal.description.split(',')
-                    # Note: In a real implementation, you'd need to handle this transaction properly
-                    print(f"Transfer {amount} to {recipient}")
+                    amount = float(amount)
+                    tx = self.blockchain.create_transaction(self.name, recipient, amount)
+                    self.blockchain.add_transaction(tx)
                 # Add more proposal types as needed
                 proposal.executed = True
                 return True
         return False
 
-class DAOManager:
+    def get_member_info(self, did):
+        if did in self.members:
+            balance = self.blockchain.get_balance(did)
+            return {
+                "did": did,
+                "balance": balance,
+                "is_validator": self.blockchain.consensus.is_validator(did)
+            }
+        return None
+
+class CooperativeManager:
     def __init__(self, blockchain):
         self.blockchain = blockchain
-        self.daos = {}
+        self.cooperatives = {}
 
-    def create_dao(self, name):
-        if name in self.daos:
+    def create_cooperative(self, name):
+        if name in self.cooperatives:
             return None
-        dao = DAO(self.blockchain, name)
-        self.daos[name] = dao
-        return dao
+        cooperative = Cooperative(self.blockchain, name)
+        self.cooperatives[name] = cooperative
+        return cooperative
 
-    def get_dao(self, name):
-        return self.daos.get(name)
+    def get_cooperative(self, name):
+        return self.cooperatives.get(name)
+
+    def list_cooperatives(self):
+        return list(self.cooperatives.keys())
+
+    def get_cooperative_info(self, name):
+        coop = self.get_cooperative(name)
+        if coop:
+            return {
+                "name": coop.name,
+                "members": len(coop.members),
+                "proposals": len(coop.proposals),
+                "active_proposals": sum(1 for p in coop.proposals.values() if p.is_active())
+            }
+        return None
