@@ -12,9 +12,10 @@ def run_tests():
     test_suite = unittest.TestSuite()
 
     # Add test cases
-    test_suite.addTest(unittest.makeSuite(TestBlockchain))
-    test_suite.addTest(unittest.makeSuite(TestCooperative))
-    test_suite.addTest(unittest.makeSuite(TestFederation))
+    loader = unittest.TestLoader()
+    test_suite.addTest(loader.loadTestsFromTestCase(TestBlockchain))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestCooperative))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestFederation))
 
     # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
