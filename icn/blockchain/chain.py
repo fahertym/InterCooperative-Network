@@ -87,8 +87,11 @@ class Blockchain:
         yes_votes = sum(1 for v in votes.values() if v)
         return yes_votes / len(votes) if votes else 0
 
-    def create_transaction(self, sender, recipient, amount):
-        transaction = Transaction(sender, recipient, amount)
+    def create_transaction(self, sender, recipient, amount_or_message):
+        if isinstance(amount_or_message, (int, float)):
+            transaction = Transaction(sender, recipient, amount_or_message)
+        else:
+            transaction = Transaction(sender, recipient, 0, message=amount_or_message)
         transaction.sign_transaction(self.did_manager)
         return transaction
 

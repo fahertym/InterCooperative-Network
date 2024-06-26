@@ -98,7 +98,7 @@ class Cooperative:
         self.proposals[self.next_proposal_id] = proposal
         self.next_proposal_id += 1
         return proposal.id
-
+   
     def vote_on_proposal(self, proposal_id, voter, vote):
         if voter not in self.members:
             return False
@@ -107,7 +107,8 @@ class Cooperative:
             result = proposal.add_vote(voter, vote)
             if result:
                 # Create a blockchain transaction for this vote
-                tx = self.blockchain.create_transaction(voter, self.did, 0, f"Vote on proposal {proposal_id}")
+                # Remove the 0 amount and combine the message into the amount field
+                tx = self.blockchain.create_transaction(voter, self.did, f"Vote on proposal {proposal_id}")
                 self.blockchain.add_transaction(tx)
             return result
         return False

@@ -4,14 +4,17 @@ import time
 import json
 import hashlib
 
+
 class Transaction:
-    def __init__(self, sender_did, recipient_did, amount, is_mining_reward=False):
+    def __init__(self, sender_did, recipient_did, amount, is_mining_reward=False, message=None):
         self.sender_did = sender_did
         self.recipient_did = recipient_did
         self.amount = amount
         self.timestamp = time.time()
         self.signature = None
         self.is_mining_reward = is_mining_reward
+        self.message = message
+
 
     def to_dict(self):
         return {
@@ -19,7 +22,9 @@ class Transaction:
             "recipient_did": self.recipient_did,
             "amount": self.amount,
             "timestamp": self.timestamp,
-            "is_mining_reward": self.is_mining_reward
+            "signature": self.signature.hex() if self.signature else None,
+            "is_mining_reward": self.is_mining_reward,
+            "message": self.message
         }
 
     def calculate_hash(self):

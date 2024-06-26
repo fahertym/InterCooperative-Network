@@ -12,6 +12,7 @@ def index():
     cooperatives = blockchain.cooperative_manager.list_cooperatives()
     return render_template('index.html', cooperatives=cooperatives)
 
+
 @app.route('/create_cooperative', methods=['GET', 'POST'])
 def create_cooperative():
     if request.method == 'POST':
@@ -23,13 +24,16 @@ def create_cooperative():
                 if 'user_did' not in session:
                     session['user_did'] = blockchain.create_did()
                 coop.add_member(session['user_did'], is_admin=True)
-                flash(f"Cooperative '{name}' created successfully. You've been added as an admin member.", 'success')
+                # Add the user as a validator
+                blockchain.add_validator(session['user_did'], 100)  # Assuming an initial stake of 100
+                flash(f"Cooperative '{name}' created successfully. You've been added as an admin member and validator.", 'success')
                 return redirect(url_for('cooperative_details', name=name))
             else:
                 flash(f"Failed to create cooperative '{name}'.", 'error')
         except Exception as e:
             flash(f"Error creating cooperative: {str(e)}", 'error')
     return render_template('create_cooperative.html')
+
 
 @app.route('/cooperative/<name>')
 def cooperative_details(name):
