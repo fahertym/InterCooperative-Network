@@ -109,7 +109,7 @@ class Blockchain:
         return self.consensus.get_validator_info(did)
 
     def create_cooperative(self, name):
-        return self.cooperative_manager.create_cooperative(name)
+         return self.cooperative_manager.create_cooperative(name)
 
     def get_cooperative(self, name):
         return self.cooperative_manager.get_cooperative(name)

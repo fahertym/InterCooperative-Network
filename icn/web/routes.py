@@ -1,27 +1,30 @@
 from flask import render_template, request, redirect, url_for, flash
 from . import app
-from ..blockchain import chain  # Changed this import
+from ..blockchain import chain
 from ..dao.governance import VotingStrategy, ProposalType
 
-blockchain = chain.Blockchain()  # Changed this line
+blockchain = chain.Blockchain()
 
 @app.route('/')
 def index():
     cooperatives = blockchain.cooperative_manager.list_cooperatives()
     return render_template('index.html', cooperatives=cooperatives)
 
-# ... (rest of the routes remain the same)
 @app.route('/create_cooperative', methods=['GET', 'POST'])
 def create_cooperative():
     if request.method == 'POST':
         name = request.form['name']
-        coop = blockchain.create_cooperative(name)
-        if coop:
-            flash(f"Cooperative '{name}' created successfully.", 'success')
-            return redirect(url_for('index'))
-        else:
-            flash(f"Failed to create cooperative '{name}'.", 'error')
+        try:
+            coop = blockchain.create_cooperative(name)
+            if coop:
+                flash(f"Cooperative '{name}' created successfully.", 'success')
+                return redirect(url_for('index'))
+            else:
+                flash(f"Failed to create cooperative '{name}'.", 'error')
+        except Exception as e:
+            flash(f"Error creating cooperative: {str(e)}", 'error')
     return render_template('create_cooperative.html')
+
 
 @app.route('/cooperative/<name>')
 def cooperative_details(name):
