@@ -1,3 +1,5 @@
+# icn/consensus/pocos.py
+
 import random
 import time
 import math
@@ -32,13 +34,6 @@ class PoCoS:
     def update_stake(self, did, stake):
         if did in self.validators:
             self.validators[did]['stake'] = stake
-            return True
-        return False
-
-    def mine_block(self, block, miner_did):
-        if self.is_validator(miner_did):
-            block.mine_block(self.blockchain.difficulty)
-            self.update_validator_metrics(miner_did)
             return True
         return False
 
@@ -82,23 +77,21 @@ class PoCoS:
             validator = self.validators[did]
             current_time = time.time()
             
-            # Update blocks created
             validator['blocks_created'] += 1
             self.total_blocks_created += 1
 
-            # Update uptime
             time_since_last_active = current_time - validator['last_active_time']
             validator['total_uptime'] += time_since_last_active
             validator['last_active_time'] = current_time
 
-            # Update cooperation score
             expected_blocks = self.total_blocks_created * (validator['stake'] / sum(v['stake'] for v in self.validators.values()))
             cooperation_ratio = validator['blocks_created'] / max(expected_blocks, 1)
-            validator['cooperation_score'] = min(100, max(0, cooperation_ratio * 100))
+            validator['cooperation_score'] = min(100, max(0, int(cooperation_ratio * 100)))
 
     def validate_block(self, block):
         # Implement block validation logic here
-        return True  # Placeholder implementation
+        # This is a placeholder implementation
+        return True
 
     def get_validator_info(self, did):
         if did in self.validators:
