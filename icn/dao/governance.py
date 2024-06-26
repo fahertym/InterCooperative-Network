@@ -61,25 +61,23 @@ class Cooperative:
             return proposal.add_vote(voter, vote)
         return False
 
-# In the Cooperative class in icn/dao/governance.py
-
-def execute_proposal(self, proposal_id):
-    proposal = self.proposals.get(proposal_id)
-    if proposal and not proposal.is_active() and not proposal.executed:
-        if proposal.get_result():
-            if proposal.proposal_type == "add_member":
-                self.add_member(proposal.description)
-            elif proposal.proposal_type == "remove_member":
-                self.remove_member(proposal.description)
-            elif proposal.proposal_type == "transfer_funds":
-                recipient, amount = proposal.description.split(',')
-                amount = float(amount)
-                tx = self.blockchain.create_transaction(self.name, recipient, amount)
-                self.blockchain.add_transaction(tx)
-            # Add more proposal types as needed
-            proposal.executed = True
-            return True
-    return False
+    def execute_proposal(self, proposal_id):
+        proposal = self.proposals.get(proposal_id)
+        if proposal and not proposal.is_active() and not proposal.executed:
+            if proposal.get_result():
+                if proposal.proposal_type == "add_member":
+                    self.add_member(proposal.description)
+                elif proposal.proposal_type == "remove_member":
+                    self.remove_member(proposal.description)
+                elif proposal.proposal_type == "transfer_funds":
+                    recipient, amount = proposal.description.split(',')
+                    amount = float(amount)
+                    tx = self.blockchain.create_transaction(self.name, recipient, amount)
+                    self.blockchain.add_transaction(tx)
+                # Add more proposal types as needed
+                proposal.executed = True
+                return True
+        return False
 
     def get_member_info(self, did):
         if did in self.members:
@@ -91,7 +89,6 @@ def execute_proposal(self, proposal_id):
             }
         return None
 
-class CooperativeManager:
 class CooperativeManager:
     def __init__(self, blockchain):
         self.blockchain = blockchain
