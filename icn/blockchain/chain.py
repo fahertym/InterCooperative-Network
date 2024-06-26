@@ -47,10 +47,12 @@ class Blockchain:
             return False
         return True
 
-    def create_transaction(self, sender_did, recipient_did, amount):
-        transaction = Transaction(sender_did, recipient_did, amount)
-        transaction.sign_transaction(self.did_manager)
-        return transaction
+# In the Blockchain class in icn/blockchain/chain.py
+
+def create_transaction(self, sender_did, recipient_did, amount):
+    transaction = Transaction(sender_did, recipient_did, amount)
+    transaction.sign_transaction(self.did_manager)
+    return transaction
 
     def add_transaction(self, transaction):
         if not transaction.sender_did or not transaction.recipient_did:

@@ -61,6 +61,8 @@ class Cooperative:
             return proposal.add_vote(voter, vote)
         return False
 
+# In the Cooperative class in icn/dao/governance.py
+
 def execute_proposal(self, proposal_id):
     proposal = self.proposals.get(proposal_id)
     if proposal and not proposal.is_active() and not proposal.executed:
