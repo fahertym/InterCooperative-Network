@@ -17,8 +17,12 @@ def create_cooperative():
         try:
             coop = blockchain.create_cooperative(name)
             if coop:
-                flash(f"Cooperative '{name}' created successfully.", 'success')
-                return redirect(url_for('index'))
+                # Add the current user as a member and admin
+                if 'user_did' not in session:
+                    session['user_did'] = blockchain.create_did()
+                coop.add_member(session['user_did'], is_admin=True)
+                flash(f"Cooperative '{name}' created successfully. You've been added as an admin member.", 'success')
+                return redirect(url_for('cooperative_details', name=name))
             else:
                 flash(f"Failed to create cooperative '{name}'.", 'error')
         except Exception as e:
@@ -42,6 +46,28 @@ def create_proposal(coop_name):
 
     if 'user_did' not in session:
         session['user_did'] = blockchain.create_did()
+
+    if request.method == 'POST':
+        creator = request.form['creator']
+        description = request.form['description']
+        proposal_type = ProposalType[request.form['proposal_type']]
+        voting_period = int(request.form['voting_period'])
+        voting_strategy = VotingStrategy[request.form['voting_strategy']]
+        required_majority = float(request.form['required_majority'])
+
+        if creator not in coop.members:
+            flash("Creator must be a member of the cooperative.", 'error')
+        elif creator != session['user_did'] and not coop.is_admin(session['user_did']):
+            flash("You can only create proposals for yourself unless you're an admin.", 'error')
+        else:
+            proposal_id = coop.create_proposal(creator, description, proposal_type, voting_period, voting_strategy, required_majority)
+            if proposal_id is not None:
+                flash(f"Proposal created with ID: {proposal_id}", 'success')
+                return redirect(url_for('cooperative_details', name=coop_name))
+            else:
+                flash("Failed to create proposal.", 'error')
+
+    return render_template('create_proposal.html', cooperative=coop, proposal_types=ProposalType, voting_strategies=VotingStrategy, user_did=session['user_did'])
 
     if request.method == 'POST':
         creator = request.form['creator']

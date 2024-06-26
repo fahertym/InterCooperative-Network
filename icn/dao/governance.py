@@ -67,6 +67,9 @@ class Cooperative:
         if is_admin:
             self.admin_members.add(did)
 
+    def is_admin(self, did):
+        return did in self.admin_members
+
     def remove_member(self, did):
         if did in self.members:
             self.members.remove(did)
@@ -79,15 +82,6 @@ class Cooperative:
         return did in self.admin_members
 
     # ... (rest of the class remains the same)
-
-    def add_member(self, did):
-        self.members.add(did)
-
-    def remove_member(self, did):
-        if did in self.members:
-            self.members.remove(did)
-        if did in self.leadership:
-            self.leadership.remove(did)
 
     def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5):
         if creator not in self.members:
