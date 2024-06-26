@@ -57,3 +57,36 @@ def create_proposal(coop_name):
             flash("Failed to create proposal.", 'error')
 
     return render_template('create_proposal.html', cooperative=coop)
+
+
+@app.route('/cooperative/<name>')
+def cooperative_details(name):
+    coop = blockchain.get_cooperative(name)
+    if coop:
+        return render_template('cooperative_details.html', cooperative=coop)
+    flash(f"Cooperative '{name}' not found.", 'error')
+    return redirect(url_for('index'))
+
+@app.route('/cooperative/<coop_name>/create_proposal', methods=['GET', 'POST'])
+def create_proposal(coop_name):
+    coop = blockchain.get_cooperative(coop_name)
+    if not coop:
+        flash(f"Cooperative '{coop_name}' not found.", 'error')
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        creator = request.form['creator']
+        description = request.form['description']
+        proposal_type = ProposalType[request.form['proposal_type']]
+        voting_period = int(request.form['voting_period'])
+        voting_strategy = VotingStrategy[request.form['voting_strategy']]
+        required_majority = float(request.form['required_majority'])
+
+        proposal_id = coop.create_proposal(creator, description, proposal_type, voting_period, voting_strategy, required_majority)
+        if proposal_id is not None:
+            flash(f"Proposal created with ID: {proposal_id}", 'success')
+            return redirect(url_for('cooperative_details', name=coop_name))
+        else:
+            flash("Failed to create proposal.", 'error')
+
+    return render_template('create_proposal.html', cooperative=coop, proposal_types=ProposalType, voting_strategies=VotingStrategy)

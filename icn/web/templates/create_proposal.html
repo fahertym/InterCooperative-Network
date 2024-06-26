@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Create Proposal for {{ cooperative.name }}</h1>
+<form method="POST">
+    <div class="mb-3">
+        <label for="creator" class="form-label">Creator DID</label>
+        <input type="text" class="form-control" id="creator" name="creator" required>
+    </div>
+    <div class="mb-3">
+        <label for="description" class="form-label">Description</label>
+        <textarea class="form-control" id="description" name="description" required></textarea>
+    </div>
+    <div class="mb-3">
+        <label for="proposal_type" class="form-label">Proposal Type</label>
+        <select class="form-select" id="proposal_type" name="proposal_type" required>
+            {% for proposal_type in proposal_types %}
+                <option value="{{ proposal_type.name }}">{{ proposal_type.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="mb-3">
+        <label for="voting_period" class="form-label">Voting Period (seconds)</label>
+        <input type="number" class="form-control" id="voting_period" name="voting_period" required>
+    </div>
+    <div class="mb-3">
+        <label for="voting_strategy" class="form-label">Voting Strategy</label>
+        <select class="form-select" id="voting_strategy" name="voting_strategy" required>
+            {% for voting_strategy in voting_strategies %}
+                <option value="{{ voting_strategy.name }}">{{ voting_strategy.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="mb-3">
+        <label for="required_majority" class="form-label">Required Majority</label>
+        <input type="number" class="form-control" id="required_majority" name="required_majority" step="0.01" min="0" max="1" value="0.5" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Create Proposal</button>
+</form>
+{% endblock %}

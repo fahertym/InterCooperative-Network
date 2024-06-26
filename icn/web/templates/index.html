@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>InterCooperative Network</h1>
+<h2>Cooperatives</h2>
+{% if cooperatives %}
+    <ul class="list-group">
+        {% for cooperative in cooperatives %}
+            <li class="list-group-item">
+                <a href="{{ url_for('cooperative_details', name=cooperative) }}">{{ cooperative }}</a>
+            </li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No cooperatives have been created yet.</p>
+{% endif %}
+<a href="{{ url_for('create_cooperative') }}" class="btn btn-primary mt-3">Create New Cooperative</a>
+{% endblock %}

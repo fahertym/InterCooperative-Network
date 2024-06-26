@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>{{ cooperative.name }}</h1>
+<h2>Members</h2>
+<ul class="list-group">
+    {% for member in cooperative.members %}
+        <li class="list-group-item">{{ member }}</li>
+    {% endfor %}
+</ul>
+<h2>Proposals</h2>
+<ul class="list-group">
+    {% for proposal_id, proposal in cooperative.proposals.items() %}
+        <li class="list-group-item">
+            <strong>ID:</strong> {{ proposal_id }}<br>
+            <strong>Type:</strong> {{ proposal.proposal_type.name }}<br>
+            <strong>Description:</strong> {{ proposal.description }}<br>
+            <strong>Status:</strong> {% if proposal.is_active() %}Active{% else %}Inactive{% endif %}
+        </li>
+    {% endfor %}
+</ul>
+<a href="{{ url_for('create_proposal', coop_name=cooperative.name) }}" class="btn btn-primary mt-3">Create Proposal</a>
+{% endblock %}
