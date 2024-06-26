@@ -81,6 +81,14 @@ class Blockchain:
                     balance += tx.amount
                 if tx.sender_did == did and not tx.is_mining_reward:
                     balance -= tx.amount
+        
+        # Check pending transactions
+        for tx in self.pending_transactions:
+            if tx.recipient_did == did:
+                balance += tx.amount
+            if tx.sender_did == did and not tx.is_mining_reward:
+                balance -= tx.amount
+        
         return balance
 
     def create_did(self):

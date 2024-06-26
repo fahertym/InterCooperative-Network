@@ -72,7 +72,6 @@ class Cooperative:
                     amount = float(amount)
                     tx = self.blockchain.create_transaction(self.name, recipient, amount)
                     self.blockchain.add_transaction(tx)
-                # Add more proposal types as needed
                 proposal.executed = True
                 return True
         return False

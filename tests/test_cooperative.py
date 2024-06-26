@@ -40,11 +40,9 @@ class TestCooperative(unittest.TestCase):
         member1 = self.blockchain.create_did()
         member2 = self.blockchain.create_did()
         coop.add_member(member1)
-        coop.add_member(member2)
 
         proposal_id = coop.create_proposal(member1, member2, "add_member", 0)
         coop.vote_on_proposal(proposal_id, member1, True)
-        coop.vote_on_proposal(proposal_id, member2, True)
 
         self.assertTrue(coop.execute_proposal(proposal_id))
         self.assertIn(member2, coop.members)
