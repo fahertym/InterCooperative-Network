@@ -19,6 +19,7 @@ class TestCooperative(unittest.TestCase):
         coop.add_member(member_did)
         self.assertIn(member_did, coop.members)
 
+
     def test_create_and_vote_proposal(self):
         coop = self.coop_manager.create_cooperative("TestCoop")
         member1 = self.blockchain.create_did()
@@ -26,6 +27,26 @@ class TestCooperative(unittest.TestCase):
         coop.add_member(member1)
         coop.add_member(member2)
 
+        proposal_id = coop.create_proposal(member1, "Test Proposal", "general", 3600, "SIMPLE_MAJORITY")
+        self.assertIsNotNone(proposal_id)
+
+        self.assertTrue(coop.vote_on_proposal(proposal_id, member1, True))
+        self.assertTrue(coop.vote_on_proposal(proposal_id, member2, True))
+
+        proposal = coop.proposals[proposal_id]
+        self.assertTrue(proposal.get_result())
+
+    def test_execute_proposal(self):
+        coop = self.coop_manager.create_cooperative("TestCoop")
+        member1 = self.blockchain.create_did()
+        member2 = self.blockchain.create_did()
+        coop.add_member(member1)
+
+        proposal_id = coop.create_proposal(member1, member2, "add_member", 0, "SIMPLE_MAJORITY")
+        coop.vote_on_proposal(proposal_id, member1, True)
+
+        self.assertTrue(coop.execute_proposal(proposal_id))
+        self.assertIn(member2, coop.members)
         proposal_id = coop.create_proposal(member1, "Test Proposal", "general", 3600)
         self.assertIsNotNone(proposal_id)
 

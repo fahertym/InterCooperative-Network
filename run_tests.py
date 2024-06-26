@@ -11,18 +11,16 @@ from tests.test_all import (
 )
 
 def run_tests():
-    # Create a test suite
+    loader = unittest.TestLoader()
     test_suite = unittest.TestSuite()
 
-    # Add test cases
-    test_suite.addTest(unittest.makeSuite(TestBlockchain))
-    test_suite.addTest(unittest.makeSuite(TestCooperative))
-    test_suite.addTest(unittest.makeSuite(TestFederation))
-    test_suite.addTest(unittest.makeSuite(TestConsensus))
-    test_suite.addTest(unittest.makeSuite(TestDIDManager))
-    test_suite.addTest(unittest.makeSuite(TestSmartContract))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestBlockchain))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestCooperative))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestFederation))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestConsensus))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestDIDManager))
+    test_suite.addTest(loader.loadTestsFromTestCase(TestSmartContract))
 
-    # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(test_suite)
 

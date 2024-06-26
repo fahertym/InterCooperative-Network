@@ -35,7 +35,7 @@ class Transaction:
         if not self.is_mining_reward:
             transaction_hash = self.calculate_hash()
             self.signature = did_manager.sign_message(self.sender_did, transaction_hash)
-
+ 
     def is_valid(self, did_manager):
         if self.is_mining_reward:
             return self.sender_did == "NETWORK" and self.signature is None
@@ -46,5 +46,7 @@ class Transaction:
         transaction_hash = self.calculate_hash()
         return did_manager.verify_message(self.sender_did, transaction_hash, self.signature)
 
-    def __str__(self):
-        return f"Transaction(sender: {self.sender_did}, recipient: {self.recipient_did}, amount: {self.amount}, is_mining_reward: {self.is_mining_reward})"
+    def sign_transaction(self, did_manager):
+        if not self.is_mining_reward:
+            transaction_hash = self.calculate_hash()
+            self.signature = did_manager.sign_message(self.sender_did, transaction_hash)

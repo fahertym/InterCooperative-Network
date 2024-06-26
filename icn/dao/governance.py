@@ -91,7 +91,7 @@ class Cooperative:
     def is_admin(self, did):
         return did in self.admin_members
 
-    def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5):
+    def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy="SIMPLE_MAJORITY", required_majority=0.5):
         if creator not in self.members:
             return None
         proposal = Proposal(self.next_proposal_id, creator, description, proposal_type, voting_period, voting_strategy, required_majority)

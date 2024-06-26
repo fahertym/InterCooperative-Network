@@ -27,6 +27,10 @@ class Blockchain:
         self.balances = {}
         self.votes = {}
 
+    
+    def add_validator(self, did, stake):
+        return self.consensus.add_validator(did, stake)
+
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
 
