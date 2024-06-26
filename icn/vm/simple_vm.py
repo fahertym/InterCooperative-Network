@@ -1,9 +1,8 @@
-# icn/blockchain/simple_vm.py
+# icn/vm/simple_vm.py
 
 class SimpleVM:
     def __init__(self, blockchain):
         self.blockchain = blockchain
-        self.stack = []
         self.variables = {}
 
     def execute(self, contract):
@@ -19,23 +18,30 @@ class SimpleVM:
                     pc = self.find_matching_endif(contract.parsed_code, pc)
             elif op[0] == 'else':
                 pc = self.find_matching_endif(contract.parsed_code, pc)
+            elif op[0] == 'set':
+                self.variables[op[1]] = self.get_value(op[2])
             pc += 1
 
     def execute_transfer(self, from_did, to_did, amount):
+        from_did = self.get_value(from_did)
+        to_did = self.get_value(to_did)
+        amount = self.get_value(amount)
         if self.blockchain.get_balance(from_did) >= amount:
             self.blockchain.add_transaction(self.blockchain.create_transaction(from_did, to_did, amount))
             return True
         return False
 
     def execute_vote(self, voter_did, proposal_id):
+        voter_did = self.get_value(voter_did)
+        proposal_id = self.get_value(proposal_id)
         for dao in self.blockchain.dao_manager.daos.values():
             if proposal_id in dao.proposals and voter_did in dao.members:
                 return dao.vote_on_proposal(proposal_id, voter_did, True)
         return False
 
     def execute_condition(self, var1, op, var2):
-        val1 = self.variables.get(var1, 0)
-        val2 = self.variables.get(var2, 0)
+        val1 = self.get_value(var1)
+        val2 = self.get_value(var2)
         if op == '==':
             return val1 == val2
         elif op == '>':
@@ -54,3 +60,8 @@ class SimpleVM:
                 if count == 0:
                     return i
         return len(code) - 1
+
+    def get_value(self, key):
+        if isinstance(key, (int, float)):
+            return key
+        return self.variables.get(key, key)
