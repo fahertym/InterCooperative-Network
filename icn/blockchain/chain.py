@@ -5,7 +5,7 @@ from .block import Block
 from .transaction import Transaction
 from ..consensus.pocos import PoCoS
 from ..identity.did import DIDManager
-from ..dao.governance import DAOManager
+from ..dao.governance import CooperativeManager
 from ..federation.federation import FederationManager
 from ..smartcontracts.contract import SmartContractParser
 from ..vm.simple_vm import SimpleVM
@@ -18,7 +18,7 @@ class Blockchain:
         self.mining_reward = 10
         self.consensus = PoCoS(self)
         self.did_manager = DIDManager()
-        self.dao_manager = DAOManager(self)
+        self.cooperative_manager = CooperativeManager(self)
         self.federation_manager = FederationManager()
         self.contracts = {}
         self.contract_states = {}
@@ -124,16 +124,16 @@ class Blockchain:
     def create_did(self):
         return self.did_manager.create_did()
 
-    def create_dao(self, name):
-        return self.dao_manager.create_dao(name)
+    def create_cooperative(self, name):
+        return self.cooperative_manager.create_cooperative(name)
 
-    def get_dao(self, name):
-        return self.dao_manager.get_dao(name)
+    def get_cooperative(self, name):
+        return self.cooperative_manager.get_cooperative(name)
 
-    def create_federation(self, name, dao_names):
-        daos = [self.get_dao(dao_name) for dao_name in dao_names]
-        if all(daos):
-            return self.federation_manager.create_federation(name, daos)
+    def create_federation(self, name, cooperative_names):
+        cooperatives = [self.get_cooperative(coop_name) for coop_name in cooperative_names]
+        if all(cooperatives):
+            return self.federation_manager.create_federation(name, cooperatives)
         return None
 
     def get_federation(self, name):
@@ -142,16 +142,16 @@ class Blockchain:
     def list_federations(self):
         return self.federation_manager.list_federations()
 
-    def add_dao_to_federation(self, federation_name, dao_name):
-        dao = self.get_dao(dao_name)
-        if dao:
-            return self.federation_manager.add_dao_to_federation(federation_name, dao)
+    def add_cooperative_to_federation(self, federation_name, cooperative_name):
+        cooperative = self.get_cooperative(cooperative_name)
+        if cooperative:
+            return self.federation_manager.add_cooperative_to_federation(federation_name, cooperative)
         return False
 
-    def remove_dao_from_federation(self, federation_name, dao_name):
-        dao = self.get_dao(dao_name)
-        if dao:
-            return self.federation_manager.remove_dao_from_federation(federation_name, dao)
+    def remove_cooperative_from_federation(self, federation_name, cooperative_name):
+        cooperative = self.get_cooperative(cooperative_name)
+        if cooperative:
+            return self.federation_manager.remove_cooperative_from_federation(federation_name, cooperative)
         return False
 
     def deploy_contract(self, code):
