@@ -92,6 +92,7 @@ def execute_proposal(self, proposal_id):
         return None
 
 class CooperativeManager:
+class CooperativeManager:
     def __init__(self, blockchain):
         self.blockchain = blockchain
         self.cooperatives = {}
