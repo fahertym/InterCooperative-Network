@@ -2,12 +2,20 @@
 
 {% block content %}
 <h1>{{ cooperative.name }}</h1>
+<p><strong>Cooperative DID:</strong> {{ cooperative.did }}</p>
+
 <h2>Members</h2>
 <ul class="list-group">
     {% for member in cooperative.members %}
-        <li class="list-group-item">{{ member }}</li>
+        <li class="list-group-item">
+            {{ member }}
+            {% if member in cooperative.admin_members %}
+                <span class="badge bg-primary">Admin</span>
+            {% endif %}
+        </li>
     {% endfor %}
 </ul>
+
 <h2>Proposals</h2>
 <ul class="list-group">
     {% for proposal_id, proposal in cooperative.proposals.items() %}

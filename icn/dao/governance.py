@@ -55,11 +55,30 @@ class Cooperative:
     def __init__(self, blockchain, name):
         self.blockchain = blockchain
         self.name = name
-        self.did = DIDManager().create_did()  # Create a DID for the cooperative
+        self.did = DIDManager().create_did()
         self.members = set()
+        self.admin_members = set()
         self.proposals = {}
         self.next_proposal_id = 0
         self.leadership = set()
+
+    def add_member(self, did, is_admin=False):
+        self.members.add(did)
+        if is_admin:
+            self.admin_members.add(did)
+
+    def remove_member(self, did):
+        if did in self.members:
+            self.members.remove(did)
+        if did in self.admin_members:
+            self.admin_members.remove(did)
+        if did in self.leadership:
+            self.leadership.remove(did)
+
+    def is_admin(self, did):
+        return did in self.admin_members
+
+    # ... (rest of the class remains the same)
 
     def add_member(self, did):
         self.members.add(did)
