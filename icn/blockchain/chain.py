@@ -1,5 +1,3 @@
-# icn/blockchain/chain.py
-
 import time
 from .block import Block
 from .transaction import Transaction
@@ -47,12 +45,10 @@ class Blockchain:
             return False
         return True
 
-# In the Blockchain class in icn/blockchain/chain.py
-
-def create_transaction(self, sender_did, recipient_did, amount):
-    transaction = Transaction(sender_did, recipient_did, amount)
-    transaction.sign_transaction(self.did_manager)
-    return transaction
+    def create_transaction(self, sender_did, recipient_did, amount):
+        transaction = Transaction(sender_did, recipient_did, amount)
+        transaction.sign_transaction(self.did_manager)
+        return transaction
 
     def add_transaction(self, transaction):
         if not transaction.sender_did or not transaction.recipient_did:
@@ -87,29 +83,8 @@ def create_transaction(self, sender_did, recipient_did, amount):
                     balance -= tx.amount
         return balance
 
-    def is_chain_valid(self):
-        for i in range(1, len(self.chain)):
-            current_block = self.chain[i]
-            previous_block = self.chain[i-1]
-
-            if current_block.hash != current_block.calculate_hash():
-                print(f"Invalid hash for block {i}")
-                return False
-
-            if current_block.previous_hash != previous_block.hash:
-                print(f"Invalid previous hash for block {i}")
-                return False
-
-            if not self.consensus.validate_block(current_block):
-                print(f"Consensus validation failed for block {i}")
-                return False
-
-            for transaction in current_block.transactions:
-                if not transaction.is_valid(self.did_manager):
-                    print(f"Invalid transaction in block {i}: {transaction}")
-                    return False
-
-        return True
+    def create_did(self):
+        return self.did_manager.create_did()
 
     def add_validator(self, did, stake):
         return self.consensus.add_validator(did, stake)
@@ -122,9 +97,6 @@ def create_transaction(self, sender_did, recipient_did, amount):
 
     def get_validator_info(self, did):
         return self.consensus.get_validator_info(did)
-
-    def create_did(self):
-        return self.did_manager.create_did()
 
     def create_cooperative(self, name):
         return self.cooperative_manager.create_cooperative(name)

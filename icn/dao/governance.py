@@ -1,5 +1,3 @@
-# icn/dao/governance.py
-
 import time
 
 class Proposal:
