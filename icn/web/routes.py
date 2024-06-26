@@ -40,8 +40,6 @@ def create_proposal(coop_name):
         flash(f"Cooperative '{coop_name}' not found.", 'error')
         return redirect(url_for('index'))
 
-    # For now, we'll use a session variable to simulate a logged-in user
-    # In a real application, this would come from your authentication system
     if 'user_did' not in session:
         session['user_did'] = blockchain.create_did()
 
