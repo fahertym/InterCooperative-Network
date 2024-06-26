@@ -11,8 +11,12 @@
             </li>
         {% endfor %}
     </ul>
-{% else %}
+    {% else %}
     <p>No cooperatives have been created yet.</p>
 {% endif %}
 <a href="{{ url_for('create_cooperative') }}" class="btn btn-primary mt-3">Create New Cooperative</a>
+
+<form action="{{ url_for('mine') }}" method="POST" class="mt-3">
+    <button type="submit" class="btn btn-warning">Mine Block</button>
+</form>
 {% endblock %}

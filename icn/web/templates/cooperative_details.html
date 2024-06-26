@@ -23,7 +23,17 @@
             <strong>ID:</strong> {{ proposal_id }}<br>
             <strong>Type:</strong> {{ proposal.proposal_type.name }}<br>
             <strong>Description:</strong> {{ proposal.description }}<br>
-            <strong>Status:</strong> {% if proposal.is_active() %}Active{% else %}Inactive{% endif %}
+            <strong>Status:</strong> {{ proposal.status.name }}
+            {% if proposal.is_active() %}
+                <form action="{{ url_for('vote_on_proposal', coop_name=cooperative.name, proposal_id=proposal_id) }}" method="POST" class="mt-2">
+                    <button type="submit" name="vote" value="yes" class="btn btn-success btn-sm">Vote Yes</button>
+                    <button type="submit" name="vote" value="no" class="btn btn-danger btn-sm">Vote No</button>
+                </form>
+            {% elif proposal.status == ProposalStatus.PASSED %}
+                <form action="{{ url_for('execute_proposal', coop_name=cooperative.name, proposal_id=proposal_id) }}" method="POST" class="mt-2">
+                    <button type="submit" class="btn btn-primary btn-sm">Execute Proposal</button>
+                </form>
+            {% endif %}
         </li>
     {% endfor %}
 </ul>

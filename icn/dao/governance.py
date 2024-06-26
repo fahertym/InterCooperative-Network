@@ -14,6 +14,12 @@ class ProposalType(Enum):
     ALLOCATE_FUNDS = 4
     CHANGE_LEADERSHIP = 5
 
+class ProposalStatus(Enum):
+    ACTIVE = 1
+    PASSED = 2
+    FAILED = 3
+    EXECUTED = 4
+
 class Proposal:
     def __init__(self, id, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5):
         self.id = id
@@ -25,10 +31,10 @@ class Proposal:
         self.required_majority = required_majority
         self.start_time = time.time()
         self.votes = {}
-        self.executed = False
+        self.status = ProposalStatus.ACTIVE
 
     def is_active(self):
-        return time.time() < self.start_time + self.voting_period
+        return time.time() < self.start_time + self.voting_period and self.status == ProposalStatus.ACTIVE
 
     def add_vote(self, voter, vote):
         if self.is_active():
@@ -36,7 +42,7 @@ class Proposal:
             return True
         return False
 
-    def get_result(self):
+    def tally_votes(self):
         yes_votes = sum(1 for vote in self.votes.values() if vote)
         total_votes = len(self.votes)
         if total_votes == 0:
@@ -50,6 +56,13 @@ class Proposal:
             return yes_votes == total_votes
         
         return False
+
+    def finalize(self):
+        if not self.is_active():
+            if self.tally_votes():
+                self.status = ProposalStatus.PASSED
+            else:
+                self.status = ProposalStatus.FAILED
 
 class Cooperative:
     def __init__(self, blockchain, name):
@@ -67,9 +80,6 @@ class Cooperative:
         if is_admin:
             self.admin_members.add(did)
 
-    def is_admin(self, did):
-        return did in self.admin_members
-
     def remove_member(self, did):
         if did in self.members:
             self.members.remove(did)
@@ -80,8 +90,6 @@ class Cooperative:
 
     def is_admin(self, did):
         return did in self.admin_members
-
-    # ... (rest of the class remains the same)
 
     def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5):
         if creator not in self.members:
@@ -96,13 +104,20 @@ class Cooperative:
             return False
         proposal = self.proposals.get(proposal_id)
         if proposal:
-            return proposal.add_vote(voter, vote)
+            result = proposal.add_vote(voter, vote)
+            if result:
+                # Create a blockchain transaction for this vote
+                tx = self.blockchain.create_transaction(voter, self.did, 0, f"Vote on proposal {proposal_id}")
+                self.blockchain.add_transaction(tx)
+            return result
         return False
 
     def execute_proposal(self, proposal_id):
         proposal = self.proposals.get(proposal_id)
-        if proposal and not proposal.is_active() and not proposal.executed:
-            if proposal.get_result():
+        if proposal and not proposal.is_active():
+            proposal.finalize()
+            if proposal.status == ProposalStatus.PASSED:
+                # Execute the proposal based on its type
                 if proposal.proposal_type == ProposalType.ADD_MEMBER:
                     self.add_member(proposal.description)
                 elif proposal.proposal_type == ProposalType.REMOVE_MEMBER:
@@ -120,7 +135,10 @@ class Cooperative:
                     # For now, we'll just log that rules were changed
                     print(f"Rules changed for cooperative {self.name}: {proposal.description}")
                 
-                proposal.executed = True
+                proposal.status = ProposalStatus.EXECUTED
+                # Create a blockchain transaction for proposal execution
+                tx = self.blockchain.create_transaction(self.did, self.did, 0, f"Execute proposal {proposal_id}")
+                self.blockchain.add_transaction(tx)
                 return True
         return False
 
