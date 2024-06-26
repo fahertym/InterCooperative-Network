@@ -53,6 +53,23 @@ def create_proposal(coop_name):
             flash(f"Proposal created with ID: {proposal_id}", 'success')
             return redirect(url_for('cooperative_details', name=coop_name))
         else:
+            flash("Failed to create proposal. Ensure the creator is a member of the cooperative.", 'error')
+
+    return render_template('create_proposal.html', cooperative=coop, proposal_types=ProposalType, voting_strategies=VotingStrategy)
+
+    if request.method == 'POST':
+        creator = request.form['creator']
+        description = request.form['description']
+        proposal_type = ProposalType[request.form['proposal_type']]
+        voting_period = int(request.form['voting_period'])
+        voting_strategy = VotingStrategy[request.form['voting_strategy']]
+        required_majority = float(request.form['required_majority'])
+
+        proposal_id = coop.create_proposal(creator, description, proposal_type, voting_period, voting_strategy, required_majority)
+        if proposal_id is not None:
+            flash(f"Proposal created with ID: {proposal_id}", 'success')
+            return redirect(url_for('cooperative_details', name=coop_name))
+        else:
             flash("Failed to create proposal.", 'error')
 
     return render_template('create_proposal.html', cooperative=coop, proposal_types=ProposalType, voting_strategies=VotingStrategy)

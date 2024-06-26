@@ -1,7 +1,6 @@
-# icn/dao/governance.py
-
 import time
 from enum import Enum
+from ..identity.did import DIDManager
 
 class VotingStrategy(Enum):
     SIMPLE_MAJORITY = 1
@@ -56,10 +55,11 @@ class Cooperative:
     def __init__(self, blockchain, name):
         self.blockchain = blockchain
         self.name = name
+        self.did = DIDManager().create_did()  # Create a DID for the cooperative
         self.members = set()
         self.proposals = {}
         self.next_proposal_id = 0
-        self.leadership = set()  # New attribute for cooperative leadership
+        self.leadership = set()
 
     def add_member(self, did):
         self.members.add(did)
@@ -97,7 +97,7 @@ class Cooperative:
                 elif proposal.proposal_type == ProposalType.ALLOCATE_FUNDS:
                     recipient, amount = proposal.description.split(',')
                     amount = float(amount)
-                    tx = self.blockchain.create_transaction(self.name, recipient, amount)
+                    tx = self.blockchain.create_transaction(self.did, recipient, amount)
                     self.blockchain.add_transaction(tx)
                 elif proposal.proposal_type == ProposalType.CHANGE_LEADERSHIP:
                     new_leadership = set(proposal.description.split(','))
@@ -145,6 +145,7 @@ class CooperativeManager:
         if coop:
             return {
                 "name": coop.name,
+                "did": coop.did,
                 "members": len(coop.members),
                 "proposals": len(coop.proposals),
                 "active_proposals": sum(1 for p in coop.proposals.values() if p.is_active()),
