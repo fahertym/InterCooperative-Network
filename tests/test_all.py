@@ -3,7 +3,7 @@
 import unittest
 from icn.blockchain.chain import Blockchain
 from icn.blockchain.transaction import Transaction
-from icn.dao.governance import CooperativeManager, Cooperative
+from icn.dao.governance import CooperativeManager, Cooperative, ProposalType, VotingStrategy
 from icn.federation.federation import FederationManager
 from icn.consensus.pocos import PoCoS
 from icn.identity.did import DIDManager
@@ -85,7 +85,7 @@ class TestCooperative(unittest.TestCase):
         coop.add_member(member1)
         coop.add_member(member2)
 
-        proposal_id = coop.create_proposal(member1, "Test Proposal", "general", 3600)
+        proposal_id = coop.create_proposal(member1, "Test Proposal", "ADD_MEMBER", 3600)
         self.assertIsNotNone(proposal_id)
 
         self.assertTrue(coop.vote_on_proposal(proposal_id, member1, True))
@@ -100,8 +100,12 @@ class TestCooperative(unittest.TestCase):
         member2 = self.blockchain.create_did()
         coop.add_member(member1)
 
-        proposal_id = coop.create_proposal(member1, member2, "add_member", 0)
+        proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0)
         coop.vote_on_proposal(proposal_id, member1, True)
+
+        # Ensure the proposal is not active before execution
+        proposal = coop.proposals[proposal_id]
+        proposal.start_time = 0  # Set start_time to 0 to make sure the proposal is not active
 
         self.assertTrue(coop.execute_proposal(proposal_id))
         self.assertIn(member2, coop.members)
@@ -110,9 +114,9 @@ class TestCooperative(unittest.TestCase):
         coop = self.coop_manager.create_cooperative("TestCoop")
         member = self.blockchain.create_did()
         coop.add_member(member)
-        proposal_id = coop.create_proposal(member, "Test Proposal", "general", 3600, "SIMPLE_MAJORITY", 0.5)
+        proposal_id = coop.create_proposal(member, "Test Proposal", "ADD_MEMBER", 3600, "SIMPLE_MAJORITY", 0.5)
         self.assertIsNotNone(proposal_id)
-        self.assertEqual(coop.proposals[proposal_id].voting_strategy, "SIMPLE_MAJORITY")
+        self.assertEqual(coop.proposals[proposal_id].voting_strategy, VotingStrategy.SIMPLE_MAJORITY)
 
 class TestFederation(unittest.TestCase):
     def setUp(self):
