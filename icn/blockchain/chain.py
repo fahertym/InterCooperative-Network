@@ -12,46 +12,31 @@ from ..smartcontracts.vm import SmartContractVM
 
 class Blockchain:
     def __init__(self):
-        # Initialize the blockchain with a genesis block
         self.chain = [self.create_genesis_block()]
-        # Set the mining difficulty
         self.difficulty = 4
-        # List to store pending transactions
         self.pending_transactions = []
-        # Set the mining reward
         self.mining_reward = 10
-        # Initialize the consensus mechanism
         self.consensus = PoCoS(self)
-        # Initialize the DID manager
         self.did_manager = DIDManager()
-        # Initialize the cooperative manager
         self.cooperative_manager = CooperativeManager(self)
-        # Initialize the federation manager
         self.federation_manager = FederationManager()
-        # Dictionary to store smart contracts
         self.contracts = {}
-        # Dictionary to store smart contract states
         self.contract_states = {}
-        # Initialize the virtual machine for smart contracts
         self.vm = SmartContractVM(self)
 
     def create_genesis_block(self):
-        # Create the first block in the blockchain
         return Block(0, [], int(time.time()), "0")
 
     def get_latest_block(self):
-        # Return the most recent block in the chain
         return self.chain[-1]
 
     def add_block(self, block):
-        # Add a new block to the chain if it's valid
         if self.is_block_valid(block):
             self.chain.append(block)
             return True
         return False
 
     def is_block_valid(self, block):
-        # Check if a block is valid
         if block.index != len(self.chain):
             return False
         if block.previous_hash != self.get_latest_block().hash:
@@ -63,13 +48,11 @@ class Blockchain:
         return True
 
     def create_transaction(self, sender, recipient, amount, message=None):
-        # Create a new transaction
         transaction = Transaction(sender, recipient, amount, message=message)
         transaction.sign_transaction(self.did_manager)
         return transaction
 
     def add_transaction(self, transaction):
-        # Add a transaction to the pending transactions list
         if not transaction.sender_did or not transaction.recipient_did:
             raise ValueError("Transaction must include sender and recipient DIDs")
         
@@ -79,7 +62,6 @@ class Blockchain:
         self.pending_transactions.append(transaction)
 
     def mine_pending_transactions(self, miner_did):
-        # Mine pending transactions and create a new block
         if not self.consensus.is_validator(miner_did):
             raise ValueError("Miner is not a valid validator")
 
@@ -94,7 +76,6 @@ class Blockchain:
         return False
 
     def get_balance(self, did):
-        # Calculate the balance for a given DID
         balance = 0
         for block in self.chain:
             for tx in block.transactions:
@@ -103,7 +84,6 @@ class Blockchain:
                 if tx.sender_did == did and not tx.is_mining_reward:
                     balance -= tx.amount
         
-        # Consider pending transactions
         for tx in self.pending_transactions:
             if tx.recipient_did == did:
                 balance += tx.amount
@@ -112,74 +92,60 @@ class Blockchain:
         
         return balance
 
+    def set_balance(self, did, amount):
+        tx = Transaction("NETWORK", did, amount, is_mining_reward=True)
+        self.add_transaction(tx)
+        self.mine_pending_transactions("NETWORK")
+
     def create_did(self):
-        # Create a new Decentralized Identifier (DID)
         return self.did_manager.create_did()
 
     def add_validator(self, did, stake):
-    # Add a new validator to the consensus mechanism
-         if self.consensus.add_validator(did, stake):
-             self.set_balance(did, stake)
-             return True
-         return False
-
-def set_balance(self, did, amount):
-    # Set the balance for a given DID
-    tx = Transaction("NETWORK", did, amount, is_mining_reward=True)
-    self.add_transaction(tx)
-    self.mine_pending_transactions("NETWORK")
+        if self.consensus.add_validator(did, stake):
+            self.set_balance(did, stake)
+            return True
+        return False
 
     def remove_validator(self, did):
-        # Remove a validator from the consensus mechanism
         return self.consensus.remove_validator(did)
 
     def update_validator_stake(self, did, stake):
-        # Update the stake of a validator
         return self.consensus.update_stake(did, stake)
 
     def get_validator_info(self, did):
-        # Get information about a validator
         return self.consensus.get_validator_info(did)
 
     def create_cooperative(self, name):
-        # Create a new cooperative
         return self.cooperative_manager.create_cooperative(name)
 
     def get_cooperative(self, name):
-        # Get a cooperative by name
         return self.cooperative_manager.get_cooperative(name)
 
     def create_federation(self, name, cooperative_names):
-        # Create a new federation
         cooperatives = [self.get_cooperative(coop_name) for coop_name in cooperative_names]
         if all(cooperatives):
             return self.federation_manager.create_federation(name, cooperatives)
         return None
 
     def get_federation(self, name):
-        # Get a federation by name
         return self.federation_manager.get_federation(name)
 
     def list_federations(self):
-        # List all federations
         return self.federation_manager.list_federations()
 
     def add_cooperative_to_federation(self, federation_name, cooperative_name):
-        # Add a cooperative to a federation
         cooperative = self.get_cooperative(cooperative_name)
         if cooperative:
             return self.federation_manager.add_cooperative_to_federation(federation_name, cooperative)
         return False
 
     def remove_cooperative_from_federation(self, federation_name, cooperative_name):
-        # Remove a cooperative from a federation
         cooperative = self.get_cooperative(cooperative_name)
         if cooperative:
             return self.federation_manager.remove_cooperative_from_federation(federation_name, cooperative)
         return False
 
     def deploy_contract(self, code):
-        # Deploy a new smart contract
         contract = SmartContractLanguage.parse(code)
         if contract.validate():
             contract_id = f"contract_{len(self.contracts)}"
@@ -189,7 +155,6 @@ def set_balance(self, did, amount):
         return None
 
     def execute_contract(self, contract_id, *args):
-        # Execute a smart contract
         contract = self.contracts.get(contract_id)
         if contract:
             self.vm.execute(contract)
@@ -198,7 +163,6 @@ def set_balance(self, did, amount):
 
     @classmethod
     def is_chain_valid(cls, chain):
-        # Validate the entire blockchain
         for i in range(1, len(chain)):
             current_block = chain[i]
             previous_block = chain[i-1]

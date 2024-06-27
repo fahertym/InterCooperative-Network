@@ -45,7 +45,8 @@ class TestBlockchain(unittest.TestCase):
         self.blockchain.add_validator(sender_did, 100)
         
         tx = self.blockchain.create_transaction(sender_did, recipient_did, 50)
-        self.blockchain.add_transaction(tx)
+        # Continuing from tests/test_all.py
+
         self.blockchain.mine_pending_transactions(sender_did)
         
         self.assertEqual(self.blockchain.get_balance(sender_did), 60)  # 100 (initial) - 50 (sent) + 10 (mining reward)
@@ -100,17 +101,7 @@ class TestCooperative(unittest.TestCase):
         member2 = self.blockchain.create_did()
         coop.add_member(member1)
 
-    proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0, "SIMPLE_MAJORITY")
-    coop.vote_on_proposal(proposal_id, member1, True)
-
-    # Ensure the proposal is not active before execution
-    proposal = coop.proposals[proposal_id]
-    proposal.start_time = 0  # Set start_time to 0 to make sure the proposal is not active
-
-    self.assertTrue(coop.execute_proposal(proposal_id))
-    self.assertIn(member2, coop.members)
-
-        proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0)
+        proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0, "SIMPLE_MAJORITY")
         coop.vote_on_proposal(proposal_id, member1, True)
 
         # Ensure the proposal is not active before execution

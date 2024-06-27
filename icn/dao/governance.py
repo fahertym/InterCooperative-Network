@@ -118,24 +118,22 @@ class Cooperative:
             proposal.finalize()
             if proposal.status == ProposalStatus.PASSED:
                 if proposal.proposal_type == ProposalType.ADD_MEMBER:
-                    self.add_member(proposal.creator)
+                    self.add_member(proposal.description)
                 elif proposal.proposal_type == ProposalType.REMOVE_MEMBER:
-                    self.remove_member(proposal.creator)
+                    self.remove_member(proposal.description)
                 elif proposal.proposal_type == ProposalType.ALLOCATE_FUNDS:
                     recipient, amount = proposal.description.split(',')
                     amount = float(amount)
-                    tx = self.blockchain.create_transaction(proposal.creator, recipient, amount)
+                    tx = self.blockchain.create_transaction(self.did, recipient, amount)
                     self.blockchain.add_transaction(tx)
                 elif proposal.proposal_type == ProposalType.CHANGE_LEADERSHIP:
                     new_leadership = set(proposal.description.split(','))
-                    self.leadership.update(new_leadership)
+                    self.leadership = new_leadership
                 elif proposal.proposal_type == ProposalType.CHANGE_RULES:
-                    # This would require a more complex implementation
-                    # For now, we'll just log that rules were changed
                     print(f"Rules changed for cooperative {self.name}: {proposal.description}")
                 
                 proposal.status = ProposalStatus.EXECUTED
-                tx = self.blockchain.create_transaction(proposal.creator, self.did, 0, message=f"Execute proposal {proposal_id}")
+                tx = self.blockchain.create_transaction(self.did, self.did, 0, message=f"Execute proposal {proposal_id}")
                 self.blockchain.add_transaction(tx)
                 return True
         return False
