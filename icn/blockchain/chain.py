@@ -117,8 +117,17 @@ class Blockchain:
         return self.did_manager.create_did()
 
     def add_validator(self, did, stake):
-        # Add a new validator to the consensus mechanism
-        return self.consensus.add_validator(did, stake)
+    # Add a new validator to the consensus mechanism
+         if self.consensus.add_validator(did, stake):
+             self.set_balance(did, stake)
+             return True
+         return False
+
+def set_balance(self, did, amount):
+    # Set the balance for a given DID
+    tx = Transaction("NETWORK", did, amount, is_mining_reward=True)
+    self.add_transaction(tx)
+    self.mine_pending_transactions("NETWORK")
 
     def remove_validator(self, did):
         # Remove a validator from the consensus mechanism
