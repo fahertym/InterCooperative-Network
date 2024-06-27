@@ -1,6 +1,7 @@
+# icn/dao/governance.py
+
 import time
 from enum import Enum
-from ..identity.did import DIDManager
 
 class VotingStrategy(Enum):
     SIMPLE_MAJORITY = 1
@@ -42,7 +43,7 @@ class Proposal:
             return True
         return False
 
-    def tally_votes(self):
+    def get_result(self):
         yes_votes = sum(1 for vote in self.votes.values() if vote)
         total_votes = len(self.votes)
         if total_votes == 0:
@@ -59,7 +60,7 @@ class Proposal:
 
     def finalize(self):
         if not self.is_active():
-            if self.tally_votes():
+            if self.get_result():
                 self.status = ProposalStatus.PASSED
             else:
                 self.status = ProposalStatus.FAILED
@@ -68,7 +69,7 @@ class Cooperative:
     def __init__(self, blockchain, name):
         self.blockchain = blockchain
         self.name = name
-        self.did = DIDManager().create_did()
+        self.did = self.blockchain.create_did()
         self.members = set()
         self.admin_members = set()
         self.proposals = {}
@@ -94,11 +95,11 @@ class Cooperative:
     def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy="SIMPLE_MAJORITY", required_majority=0.5):
         if creator not in self.members:
             return None
-        proposal = Proposal(self.next_proposal_id, creator, description, proposal_type, voting_period, voting_strategy, required_majority)
+        proposal = Proposal(self.next_proposal_id, creator, description, ProposalType[proposal_type], voting_period, VotingStrategy[voting_strategy], required_majority)
         self.proposals[self.next_proposal_id] = proposal
         self.next_proposal_id += 1
         return proposal.id
-   
+
     def vote_on_proposal(self, proposal_id, voter, vote):
         if voter not in self.members:
             return False
@@ -106,9 +107,7 @@ class Cooperative:
         if proposal:
             result = proposal.add_vote(voter, vote)
             if result:
-                # Create a blockchain transaction for this vote
-                # Remove the 0 amount and combine the message into the amount field
-                tx = self.blockchain.create_transaction(voter, self.did, f"Vote on proposal {proposal_id}")
+                tx = self.blockchain.create_transaction(voter, self.did, 0, message=f"Vote on proposal {proposal_id}")
                 self.blockchain.add_transaction(tx)
             return result
         return False
@@ -118,7 +117,6 @@ class Cooperative:
         if proposal and not proposal.is_active():
             proposal.finalize()
             if proposal.status == ProposalStatus.PASSED:
-                # Execute the proposal based on its type
                 if proposal.proposal_type == ProposalType.ADD_MEMBER:
                     self.add_member(proposal.description)
                 elif proposal.proposal_type == ProposalType.REMOVE_MEMBER:
@@ -137,8 +135,7 @@ class Cooperative:
                     print(f"Rules changed for cooperative {self.name}: {proposal.description}")
                 
                 proposal.status = ProposalStatus.EXECUTED
-                # Create a blockchain transaction for proposal execution
-                tx = self.blockchain.create_transaction(self.did, self.did, 0, f"Execute proposal {proposal_id}")
+                tx = self.blockchain.create_transaction(self.did, self.did, 0, message=f"Execute proposal {proposal_id}")
                 self.blockchain.add_transaction(tx)
                 return True
         return False

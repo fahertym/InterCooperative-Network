@@ -23,13 +23,6 @@ class Blockchain:
         self.contracts = {}
         self.contract_states = {}
         self.vm = SmartContractVM(self)
-        self.prices = {}
-        self.balances = {}
-        self.votes = {}
-
-    
-    def add_validator(self, did, stake):
-        return self.consensus.add_validator(did, stake)
 
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
@@ -54,48 +47,8 @@ class Blockchain:
             return False
         return True
 
-    def set_price(self, item, price):
-        self.prices[item] = price
-
-    def get_price(self, item):
-        return self.prices.get(item, 0)
-
-    def trade(self, buyer, seller, item, quantity):
-        price = self.get_price(item)
-        total_cost = price * quantity
-        if self.balances.get(buyer, 0) >= total_cost:
-            self.balances[buyer] = self.balances.get(buyer, 0) - total_cost
-            self.balances[seller] = self.balances.get(seller, 0) + total_cost
-            return True
-        return False
-
-    def get_balance(self, account):
-        return self.balances.get(account, 0)
-
-    def transfer(self, from_account, to, amount):
-        if self.balances.get(from_account, 0) >= amount:
-            self.balances[from_account] = self.balances.get(from_account, 0) - amount
-            self.balances[to] = self.balances.get(to, 0) + amount
-            return True
-        return False
-
-    def vote(self, voter, proposal, vote):
-        if proposal not in self.votes:
-            self.votes[proposal] = {}
-        self.votes[proposal][voter] = vote
-
-    def get_vote_result(self, proposal):
-        if proposal not in self.votes:
-            return None
-        votes = self.votes[proposal]
-        yes_votes = sum(1 for v in votes.values() if v)
-        return yes_votes / len(votes) if votes else 0
-
-    def create_transaction(self, sender, recipient, amount_or_message):
-        if isinstance(amount_or_message, (int, float)):
-            transaction = Transaction(sender, recipient, amount_or_message)
-        else:
-            transaction = Transaction(sender, recipient, 0, message=amount_or_message)
+    def create_transaction(self, sender, recipient, amount, message=None):
+        transaction = Transaction(sender, recipient, amount, message=message)
         transaction.sign_transaction(self.did_manager)
         return transaction
 
@@ -122,8 +75,30 @@ class Blockchain:
             return True
         return False
 
+    def get_balance(self, did):
+        balance = 0
+        for block in self.chain:
+            for tx in block.transactions:
+                if tx.recipient_did == did:
+                    balance += tx.amount
+                if tx.sender_did == did and not tx.is_mining_reward:
+                    balance -= tx.amount
+        return balance
+
     def create_did(self):
         return self.did_manager.create_did()
+
+    def add_validator(self, did, stake):
+        return self.consensus.add_validator(did, stake)
+
+    def remove_validator(self, did):
+        return self.consensus.remove_validator(did)
+
+    def update_validator_stake(self, did, stake):
+        return self.consensus.update_stake(did, stake)
+
+    def get_validator_info(self, did):
+        return self.consensus.get_validator_info(did)
 
     def create_cooperative(self, name):
         return self.cooperative_manager.create_cooperative(name)
@@ -157,17 +132,19 @@ class Blockchain:
 
     def deploy_contract(self, code):
         contract = SmartContractLanguage.parse(code)
-        contract_id = f"contract_{len(self.contracts)}"
-        self.contracts[contract_id] = contract
-        self.contract_states[contract_id] = {}
-        return contract_id
+        if contract.validate():
+            contract_id = f"contract_{len(self.contracts)}"
+            self.contracts[contract_id] = contract
+            self.contract_states[contract_id] = {}
+            return contract_id
+        return None
 
     def execute_contract(self, contract_id, *args):
-        if contract_id not in self.contracts:
-            return False
-        contract = self.contracts[contract_id]
-        self.vm.execute(contract)
-        return True
+        contract = self.contracts.get(contract_id)
+        if contract:
+            self.vm.execute(contract)
+            return True
+        return False
 
     @classmethod
     def is_chain_valid(cls, chain):
