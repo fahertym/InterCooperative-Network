@@ -138,6 +138,7 @@ class Cooperative:
                 return True
         return False
 
+
     def get_member_info(self, did):
         if did in self.members:
             balance = self.blockchain.get_balance(did)

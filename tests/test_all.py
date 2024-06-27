@@ -195,10 +195,26 @@ class TestDIDManager(unittest.TestCase):
         signature = self.did_manager.sign_message(did, message)
         self.assertTrue(self.did_manager.verify_message(did, message, signature))
 
+def setUp(self):
+    self.blockchain = Blockchain()
+    self.coop_manager = CooperativeManager(self.blockchain)
+    self.federation_manager = FederationManager()
+    self.validator_did = self.blockchain.create_did()
+    self.assertTrue(self.blockchain.add_validator(self.validator_did, 100))  # Adjust this as needed
+
+def test_add_validator(self):
+    did = self.blockchain.create_did()
+    print(f"Adding validator: {did}")
+    self.assertTrue(self.blockchain.add_validator(did, 100))
+    print(f"Is {did} a valid validator? {self.blockchain.consensus.is_validator(did)}")
+    self.assertTrue(self.blockchain.consensus.is_validator(did))
+
 class TestSmartContract(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
-        self.vm = SmartContractVM(self.blockchain)
+        self.vm = SmartContractVM(self.blockchain)  # Ensure the VM is initialized
+
+
 
     def test_parse_and_execute_contract(self):
         contract_code = """

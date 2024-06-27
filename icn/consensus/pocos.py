@@ -25,6 +25,8 @@ class PoCoS:
             return True
         return False
 
+
+
     def remove_validator(self, did):
         if did in self.validators:
             del self.validators[did]

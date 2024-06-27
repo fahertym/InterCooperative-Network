@@ -24,6 +24,24 @@ class Blockchain:
         self.contract_states = {}
         self.vm = SmartContractVM(self)
 
+        self.validators = {}
+        self.stake_threshold = 100
+
+    def add_validator(self, did, stake):
+        if stake >= self.stake_threshold:
+            self.validators[did] = {
+                'stake': stake,
+                'cooperation_score': 100,
+                'blocks_created': 0,
+                'last_active_time': time.time(),
+                'total_uptime': 0
+            }
+            return True
+        return False
+
+
+
+
     def create_genesis_block(self):
         return Block(0, [], int(time.time()), "0")
 
@@ -101,8 +119,14 @@ class Blockchain:
         return self.did_manager.create_did()
 
     def add_validator(self, did, stake):
-        if self.consensus.add_validator(did, stake):
-            self.set_balance(did, stake)
+        if stake >= self.stake_threshold:
+            self.validators[did] = {
+                'stake': stake,
+                'cooperation_score': 100,
+                'blocks_created': 0,
+                'last_active_time': time.time(),
+                'total_uptime': 0
+            }
             return True
         return False
 
