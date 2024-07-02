@@ -2,6 +2,8 @@
 
 import time
 from enum import Enum
+from ..smartcontracts.language import SmartContractLanguage
+from ..smartcontracts.vm import SmartContractVM
 
 class VotingStrategy(Enum):
     SIMPLE_MAJORITY = 1
@@ -14,6 +16,7 @@ class ProposalType(Enum):
     CHANGE_RULES = 3
     ALLOCATE_FUNDS = 4
     CHANGE_LEADERSHIP = 5
+    DEPLOY_CONTRACT = 6
 
 class ProposalStatus(Enum):
     ACTIVE = 1
@@ -22,7 +25,7 @@ class ProposalStatus(Enum):
     EXECUTED = 4
 
 class Proposal:
-    def __init__(self, id, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5):
+    def __init__(self, id, creator, description, proposal_type, voting_period, voting_strategy, required_majority=0.5, contract_code=None):
         self.id = id
         self.creator = creator
         self.description = description
@@ -33,6 +36,7 @@ class Proposal:
         self.start_time = time.time()
         self.votes = {}
         self.status = ProposalStatus.ACTIVE
+        self.contract_code = contract_code
 
     def is_active(self):
         return time.time() < self.start_time + self.voting_period and self.status == ProposalStatus.ACTIVE
@@ -75,6 +79,8 @@ class Cooperative:
         self.proposals = {}
         self.next_proposal_id = 0
         self.leadership = set()
+        self.contracts = {}
+        self.vm = SmartContractVM(blockchain)
 
     def add_member(self, did, is_admin=False):
         self.members.add(did)
@@ -92,10 +98,10 @@ class Cooperative:
     def is_admin(self, did):
         return did in self.admin_members
 
-    def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy="SIMPLE_MAJORITY", required_majority=0.5):
+    def create_proposal(self, creator, description, proposal_type, voting_period, voting_strategy="SIMPLE_MAJORITY", required_majority=0.5, contract_code=None):
         if creator not in self.members:
             return None
-        proposal = Proposal(self.next_proposal_id, creator, description, ProposalType[proposal_type], voting_period, VotingStrategy[voting_strategy], required_majority)
+        proposal = Proposal(self.next_proposal_id, creator, description, ProposalType[proposal_type], voting_period, VotingStrategy[voting_strategy], required_majority, contract_code)
         self.proposals[self.next_proposal_id] = proposal
         self.next_proposal_id += 1
         return proposal.id
@@ -131,6 +137,9 @@ class Cooperative:
                     self.leadership = new_leadership
                 elif proposal.proposal_type == ProposalType.CHANGE_RULES:
                     print(f"Rules changed for cooperative {self.name}: {proposal.description}")
+                elif proposal.proposal_type == ProposalType.DEPLOY_CONTRACT:
+                    if proposal.contract_code:
+                        self.deploy_contract(proposal.contract_code)
                 
                 proposal.status = ProposalStatus.EXECUTED
                 tx = self.blockchain.create_transaction(self.did, self.did, 0, message=f"Execute proposal {proposal_id}")
@@ -138,6 +147,20 @@ class Cooperative:
                 return True
         return False
 
+    def deploy_contract(self, contract_code):
+        contract_id = f"contract_{len(self.contracts)}"
+        instructions = SmartContractLanguage.parse(contract_code)
+        if SmartContractLanguage.validate(instructions):
+            self.contracts[contract_id] = instructions
+            return contract_id
+        return None
+
+    def execute_contract(self, contract_id, *args):
+        instructions = self.contracts.get(contract_id)
+        if instructions:
+            self.vm.execute(instructions)
+            return True
+        return False
 
     def get_member_info(self, did):
         if did in self.members:
@@ -177,6 +200,7 @@ class CooperativeManager:
                 "members": len(coop.members),
                 "proposals": len(coop.proposals),
                 "active_proposals": sum(1 for p in coop.proposals.values() if p.is_active()),
-                "leadership": list(coop.leadership)
+                "leadership": list(coop.leadership),
+                "contracts": len(coop.contracts)
             }
         return None
