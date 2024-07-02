@@ -13,6 +13,7 @@ from icn.smartcontracts.vm import SmartContractVM
 class TestBlockchain(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
+        self.blockchain.initialize()
 
     def test_create_genesis_block(self):
         self.assertEqual(len(self.blockchain.chain), 1)
@@ -143,13 +144,14 @@ class TestFederation(unittest.TestCase):
 class TestConsensus(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
+        self.blockchain.initialize()
 
     def test_add_and_remove_validator(self):
         did = self.blockchain.create_did()
         self.assertTrue(self.blockchain.add_validator(did, 100))
-        self.assertTrue(self.blockchain.consensus.is_validator(did))
+        self.assertTrue(self.blockchain.is_validator(did))
         self.assertTrue(self.blockchain.remove_validator(did))
-        self.assertFalse(self.blockchain.consensus.is_validator(did))
+        self.assertFalse(self.blockchain.is_validator(did))
 
 class TestDIDManager(unittest.TestCase):
     def setUp(self):
