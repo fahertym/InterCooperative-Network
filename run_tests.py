@@ -9,6 +9,8 @@ from tests.test_all import (
     TestDIDManager,
     TestSmartContract
 )
+from tests.test_integration import test_integrated_operation
+from icn.blockchain.chain import Blockchain
 
 def run_tests():
     # Create a test suite
@@ -26,6 +28,12 @@ def run_tests():
     # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(test_suite)
+
+    # Run integration test
+    print("\nRunning Integration Test:")
+    blockchain = Blockchain()
+    blockchain.initialize()
+    test_integrated_operation(blockchain)
 
 if __name__ == '__main__':
     run_tests()
