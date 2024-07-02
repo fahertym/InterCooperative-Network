@@ -4,6 +4,7 @@ import time
 from enum import Enum
 from ..smartcontracts.language import SmartContractLanguage
 from ..smartcontracts.vm import SmartContractVM
+from ..smartcontracts.templates import SmartContractTemplates
 
 class VotingStrategy(Enum):
     SIMPLE_MAJORITY = 1
@@ -172,6 +173,18 @@ class Cooperative:
                 "is_leader": did in self.leadership
             }
         return None
+
+    def create_voting_contract(self, proposal_id, voting_period, required_majority):
+        contract_code = SmartContractTemplates.voting_contract(proposal_id, voting_period, required_majority)
+        return self.deploy_contract(contract_code)
+
+    def create_resource_sharing_contract(self, resource_id, total_amount, sharing_period):
+        contract_code = SmartContractTemplates.resource_sharing_contract(resource_id, total_amount, sharing_period)
+        return self.deploy_contract(contract_code)
+
+    def create_trading_contract(self, seller_did, buyer_did, resource_id, amount, price):
+        contract_code = SmartContractTemplates.trading_contract(seller_did, buyer_did, resource_id, amount, price)
+        return self.deploy_contract(contract_code)
 
 class CooperativeManager:
     def __init__(self, blockchain):

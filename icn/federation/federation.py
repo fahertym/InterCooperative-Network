@@ -2,6 +2,7 @@
 
 from ..smartcontracts.language import SmartContractLanguage
 from ..smartcontracts.vm import SmartContractVM
+from ..smartcontracts.templates import SmartContractTemplates
 
 class Federation:
     def __init__(self, name, member_cooperatives, blockchain):
@@ -56,6 +57,18 @@ class Federation:
             self.vm.execute(instructions)
             return True
         return False
+
+    def create_voting_contract(self, proposal_id, voting_period, required_majority):
+        contract_code = SmartContractTemplates.voting_contract(proposal_id, voting_period, required_majority)
+        return self.deploy_contract(contract_code)
+
+    def create_resource_sharing_contract(self, resource_id, total_amount, sharing_period):
+        contract_code = SmartContractTemplates.resource_sharing_contract(resource_id, total_amount, sharing_period)
+        return self.deploy_contract(contract_code)
+
+    def create_trading_contract(self, seller_did, buyer_did, resource_id, amount, price):
+        contract_code = SmartContractTemplates.trading_contract(seller_did, buyer_did, resource_id, amount, price)
+        return self.deploy_contract(contract_code)
 
 class FederationManager:
     def __init__(self, blockchain):
