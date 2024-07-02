@@ -42,3 +42,8 @@ class SmartContractLanguage:
             args = parts[1:] if len(parts) > 1 else []
             instructions.append(Instruction(opcode, args))
         return instructions
+
+    @staticmethod
+    def validate(instructions):
+        # Add validation logic here
+        return True
