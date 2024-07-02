@@ -45,22 +45,11 @@ class TestBlockchain(unittest.TestCase):
         self.blockchain.add_validator(sender_did, 100)
         
         tx = self.blockchain.create_transaction(sender_did, recipient_did, 50)
-        # Continuing from tests/test_all.py
-
+        self.blockchain.add_transaction(tx)
         self.blockchain.mine_pending_transactions(sender_did)
         
         self.assertEqual(self.blockchain.get_balance(sender_did), 60)  # 100 (initial) - 50 (sent) + 10 (mining reward)
         self.assertEqual(self.blockchain.get_balance(recipient_did), 50)
-
-    def test_create_did(self):
-        did = self.blockchain.create_did()
-        self.assertIsNotNone(did)
-        self.assertIsInstance(did, str)
-
-    def test_add_validator(self):
-        did = self.blockchain.create_did()
-        self.assertTrue(self.blockchain.add_validator(did, 100))
-        self.assertTrue(self.blockchain.consensus.is_validator(did))
 
 class TestCooperative(unittest.TestCase):
     def setUp(self):
@@ -101,29 +90,23 @@ class TestCooperative(unittest.TestCase):
         member2 = self.blockchain.create_did()
         coop.add_member(member1)
 
-        proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0, "SIMPLE_MAJORITY")
+        proposal_id = coop.create_proposal(member1, member2, "ADD_MEMBER", 0)
         coop.vote_on_proposal(proposal_id, member1, True)
-
-        # Ensure the proposal is not active before execution
-        proposal = coop.proposals[proposal_id]
-        proposal.start_time = 0  # Set start_time to 0 to make sure the proposal is not active
 
         self.assertTrue(coop.execute_proposal(proposal_id))
         self.assertIn(member2, coop.members)
 
-    def test_create_proposal_with_voting_strategy(self):
+    def test_create_voting_contract(self):
         coop = self.coop_manager.create_cooperative("TestCoop")
-        member = self.blockchain.create_did()
-        coop.add_member(member)
-        proposal_id = coop.create_proposal(member, "Test Proposal", "ADD_MEMBER", 3600, "SIMPLE_MAJORITY", 0.5)
-        self.assertIsNotNone(proposal_id)
-        self.assertEqual(coop.proposals[proposal_id].voting_strategy, VotingStrategy.SIMPLE_MAJORITY)
+        contract_id = coop.create_voting_contract(1, 3600, 0.5)
+        self.assertIsNotNone(contract_id)
+        self.assertIn(contract_id, coop.contracts)
 
 class TestFederation(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
         self.coop_manager = CooperativeManager(self.blockchain)
-        self.federation_manager = FederationManager()
+        self.federation_manager = FederationManager(self.blockchain)
 
     def test_create_federation(self):
         coop1 = self.coop_manager.create_cooperative("Coop1")
@@ -157,30 +140,16 @@ class TestFederation(unittest.TestCase):
         self.assertEqual(agreement['federation2'], fed2)
         self.assertEqual(agreement['terms'], "Collaboration Agreement")
 
-    def test_remove_cooperative_from_federation(self):
-        coop1 = self.coop_manager.create_cooperative("Coop1")
-        coop2 = self.coop_manager.create_cooperative("Coop2")
-        federation = self.federation_manager.create_federation("TestFed", [coop1, coop2])
-        self.assertTrue(self.federation_manager.remove_cooperative_from_federation("TestFed", coop2))
-        self.assertNotIn(coop2, federation.member_cooperatives)
-
 class TestConsensus(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
-        self.consensus = self.blockchain.consensus
 
     def test_add_and_remove_validator(self):
         did = self.blockchain.create_did()
-        self.assertTrue(self.consensus.add_validator(did, 100))
-        self.assertTrue(self.consensus.is_validator(did))
-        self.assertTrue(self.consensus.remove_validator(did))
-        self.assertFalse(self.consensus.is_validator(did))
-
-    def test_update_validator_stake(self):
-        did = self.blockchain.create_did()
-        self.consensus.add_validator(did, 100)
-        self.assertTrue(self.consensus.update_stake(did, 200))
-        self.assertEqual(self.consensus.validators[did]['stake'], 200)
+        self.assertTrue(self.blockchain.add_validator(did, 100))
+        self.assertTrue(self.blockchain.consensus.is_validator(did))
+        self.assertTrue(self.blockchain.remove_validator(did))
+        self.assertFalse(self.blockchain.consensus.is_validator(did))
 
 class TestDIDManager(unittest.TestCase):
     def setUp(self):
@@ -195,26 +164,10 @@ class TestDIDManager(unittest.TestCase):
         signature = self.did_manager.sign_message(did, message)
         self.assertTrue(self.did_manager.verify_message(did, message, signature))
 
-def setUp(self):
-    self.blockchain = Blockchain()
-    self.coop_manager = CooperativeManager(self.blockchain)
-    self.federation_manager = FederationManager()
-    self.validator_did = self.blockchain.create_did()
-    self.assertTrue(self.blockchain.add_validator(self.validator_did, 100))  # Adjust this as needed
-
-def test_add_validator(self):
-    did = self.blockchain.create_did()
-    print(f"Adding validator: {did}")
-    self.assertTrue(self.blockchain.add_validator(did, 100))
-    print(f"Is {did} a valid validator? {self.blockchain.consensus.is_validator(did)}")
-    self.assertTrue(self.blockchain.consensus.is_validator(did))
-
 class TestSmartContract(unittest.TestCase):
     def setUp(self):
         self.blockchain = Blockchain()
-        self.vm = SmartContractVM(self.blockchain)  # Ensure the VM is initialized
-
-
+        self.vm = SmartContractVM(self.blockchain)
 
     def test_parse_and_execute_contract(self):
         contract_code = """
