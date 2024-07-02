@@ -1,200 +1,178 @@
 # icn/blockchain/chain.py
 
-import time
-from .block import Block
-from .transaction import Transaction
+from ..layers.primary_layer import PrimaryLayer
+from ..layers.identity_layer import IdentityLayer
+from ..layers.data_layer import DataLayer
+from ..layers.contract_layer import ContractLayer
+from ..layers.governance_layer import GovernanceLayer
 from ..consensus.pocos import PoCoS
-from ..identity.did import DIDManager
-from ..dao.governance import CooperativeManager
-from ..federation.federation import FederationManager
-from ..smartcontracts.language import SmartContractLanguage
-from ..smartcontracts.vm import SmartContractVM
 
 class Blockchain:
     def __init__(self):
-        self.chain = [self.create_genesis_block()]
-        self.difficulty = 4
-        self.pending_transactions = []
-        self.mining_reward = 10
+        self.primary_layer = PrimaryLayer(self)
+        self.identity_layer = IdentityLayer(self)
+        self.data_layer = DataLayer(self)
+        self.contract_layer = ContractLayer(self)
+        self.governance_layer = GovernanceLayer(self)
+        
         self.consensus = PoCoS(self)
-        self.did_manager = DIDManager()
-        self.cooperative_manager = CooperativeManager(self)
-        self.federation_manager = FederationManager()
-        self.contracts = {}
-        self.contract_states = {}
-        self.vm = SmartContractVM(self)
+        self.difficulty = 4
+        self.mining_reward = 10
 
-        self.validators = {}
-        self.stake_threshold = 100
+    def initialize(self):
+        self.primary_layer.initialize()
+        self.identity_layer.initialize()
+        self.data_layer.initialize()
+        self.contract_layer.initialize()
+        self.governance_layer.initialize()
 
-    def add_validator(self, did, stake):
-        if stake >= self.stake_threshold:
-            self.validators[did] = {
-                'stake': stake,
-                'cooperation_score': 100,
-                'blocks_created': 0,
-                'last_active_time': time.time(),
-                'total_uptime': 0
-            }
-            return True
-        return False
+    def process_event(self, event):
+        layer = self.get_layer_for_event(event)
+        return layer.process_event(event)
 
-
-
-
-    def create_genesis_block(self):
-        return Block(0, [], int(time.time()), "0")
-
-    def get_latest_block(self):
-        return self.chain[-1]
-
-    def add_block(self, block):
-        if self.is_block_valid(block):
-            self.chain.append(block)
-            return True
-        return False
-
-    def is_block_valid(self, block):
-        if block.index != len(self.chain):
-            return False
-        if block.previous_hash != self.get_latest_block().hash:
-            return False
-        if block.hash != block.calculate_hash():
-            return False
-        if block.hash[:self.difficulty] != "0" * self.difficulty:
-            return False
-        return True
+    def get_layer_for_event(self, event):
+        event_type = event['type']
+        if event_type in ['transaction', 'block']:
+            return self.primary_layer
+        elif event_type in ['create_identity', 'verify_identity']:
+            return self.identity_layer
+        elif event_type in ['store_data', 'retrieve_data']:
+            return self.data_layer
+        elif event_type in ['deploy_contract', 'execute_contract']:
+            return self.contract_layer
+        elif event_type in ['create_proposal', 'vote_proposal', 'execute_proposal']:
+            return self.governance_layer
+        else:
+            raise ValueError(f"Unknown event type: {event_type}")
 
     def create_transaction(self, sender, recipient, amount, message=None):
-        transaction = Transaction(sender, recipient, amount, message=message)
-        transaction.sign_transaction(self.did_manager)
-        return transaction
-
-    def add_transaction(self, transaction):
-        if not transaction.sender_did or not transaction.recipient_did:
-            raise ValueError("Transaction must include sender and recipient DIDs")
-        
-        if not transaction.is_valid(self.did_manager):
-            raise ValueError(f"Cannot add invalid transaction to chain: {transaction}")
-        
-        self.pending_transactions.append(transaction)
-
-    def mine_pending_transactions(self, miner_did):
-        if not self.consensus.is_validator(miner_did):
-            raise ValueError("Miner is not a valid validator")
-
-        block = Block(len(self.chain), self.pending_transactions, int(time.time()), self.get_latest_block().hash)
-        block.mine_block(self.difficulty)
-
-        if self.add_block(block):
-            self.pending_transactions = [
-                Transaction("NETWORK", miner_did, self.mining_reward, is_mining_reward=True)
-            ]
-            return True
-        return False
-
-    def get_balance(self, did):
-        balance = 0
-        for block in self.chain:
-            for tx in block.transactions:
-                if tx.recipient_did == did:
-                    balance += tx.amount
-                if tx.sender_did == did and not tx.is_mining_reward:
-                    balance -= tx.amount
-        
-        for tx in self.pending_transactions:
-            if tx.recipient_did == did:
-                balance += tx.amount
-            if tx.sender_did == did and not tx.is_mining_reward:
-                balance -= tx.amount
-        
-        return balance
-
-    def set_balance(self, did, amount):
-        tx = Transaction("NETWORK", did, amount, is_mining_reward=True)
-        self.add_transaction(tx)
-        self.mine_pending_transactions("NETWORK")
-
-    def create_did(self):
-        return self.did_manager.create_did()
-
-    def add_validator(self, did, stake):
-        if stake >= self.stake_threshold:
-            self.validators[did] = {
-                'stake': stake,
-                'cooperation_score': 100,
-                'blocks_created': 0,
-                'last_active_time': time.time(),
-                'total_uptime': 0
+        transaction = {
+            'type': 'transaction',
+            'data': {
+                'sender': sender,
+                'recipient': recipient,
+                'amount': amount,
+                'message': message
             }
+        }
+        return self.process_event(transaction)
+
+    def mine_block(self, miner_address):
+        if not self.consensus.is_validator(miner_address):
+            raise ValueError("Miner is not a valid validator")
+        
+        block = self.primary_layer.create_block(miner_address)
+        if self.primary_layer.add_block(block):
+            reward_tx = {
+                'type': 'transaction',
+                'data': {
+                    'sender': "NETWORK",
+                    'recipient': miner_address,
+                    'amount': self.mining_reward,
+                    'message': "Mining Reward"
+                }
+            }
+            self.process_event(reward_tx)
             return True
         return False
 
-    def remove_validator(self, did):
-        return self.consensus.remove_validator(did)
+    def get_balance(self, address):
+        return self.primary_layer.get_balance(address)
 
-    def update_validator_stake(self, did, stake):
-        return self.consensus.update_stake(did, stake)
+    def create_identity(self, identity_data):
+        event = {
+            'type': 'create_identity',
+            'data': identity_data
+        }
+        return self.process_event(event)
 
-    def get_validator_info(self, did):
-        return self.consensus.get_validator_info(did)
+    def verify_identity(self, verification_data):
+        event = {
+            'type': 'verify_identity',
+            'data': verification_data
+        }
+        return self.process_event(event)
 
-    def create_cooperative(self, name):
-        return self.cooperative_manager.create_cooperative(name)
+    def store_data(self, data, access_control):
+        event = {
+            'type': 'store_data',
+            'data': {
+                'content': data,
+                'access_control': access_control
+            }
+        }
+        return self.process_event(event)
 
-    def get_cooperative(self, name):
-        return self.cooperative_manager.get_cooperative(name)
+    def retrieve_data(self, data_id, requester):
+        event = {
+            'type': 'retrieve_data',
+            'data': {
+                'data_id': data_id,
+                'requester': requester
+            }
+        }
+        return self.process_event(event)
 
-    def create_federation(self, name, cooperative_names):
-        cooperatives = [self.get_cooperative(coop_name) for coop_name in cooperative_names]
-        if all(cooperatives):
-            return self.federation_manager.create_federation(name, cooperatives)
-        return None
+    def deploy_contract(self, contract_code, deployer):
+        event = {
+            'type': 'deploy_contract',
+            'data': {
+                'code': contract_code,
+                'deployer': deployer
+            }
+        }
+        return self.process_event(event)
 
-    def get_federation(self, name):
-        return self.federation_manager.get_federation(name)
+    def execute_contract(self, contract_id, function, params, caller):
+        event = {
+            'type': 'execute_contract',
+            'data': {
+                'contract_id': contract_id,
+                'function': function,
+                'params': params,
+                'caller': caller
+            }
+        }
+        return self.process_event(event)
 
-    def list_federations(self):
-        return self.federation_manager.list_federations()
+    def create_proposal(self, proposal_data):
+        event = {
+            'type': 'create_proposal',
+            'data': proposal_data
+        }
+        return self.process_event(event)
 
-    def add_cooperative_to_federation(self, federation_name, cooperative_name):
-        cooperative = self.get_cooperative(cooperative_name)
-        if cooperative:
-            return self.federation_manager.add_cooperative_to_federation(federation_name, cooperative)
-        return False
+    def vote_on_proposal(self, proposal_id, voter, vote):
+        event = {
+            'type': 'vote_proposal',
+            'data': {
+                'proposal_id': proposal_id,
+                'voter': voter,
+                'vote': vote
+            }
+        }
+        return self.process_event(event)
 
-    def remove_cooperative_from_federation(self, federation_name, cooperative_name):
-        cooperative = self.get_cooperative(cooperative_name)
-        if cooperative:
-            return self.federation_manager.remove_cooperative_from_federation(federation_name, cooperative)
-        return False
+    def execute_proposal(self, proposal_id):
+        event = {
+            'type': 'execute_proposal',
+            'data': {
+                'proposal_id': proposal_id
+            }
+        }
+        return self.process_event(event)
 
-    def deploy_contract(self, code):
-        contract = SmartContractLanguage.parse(code)
-        if contract.validate():
-            contract_id = f"contract_{len(self.contracts)}"
-            self.contracts[contract_id] = contract
-            self.contract_states[contract_id] = {}
-            return contract_id
-        return None
+    def add_validator(self, address, stake):
+        return self.consensus.add_validator(address, stake)
 
-    def execute_contract(self, contract_id, *args):
-        contract = self.contracts.get(contract_id)
-        if contract:
-            self.vm.execute(contract)
-            return True
-        return False
+    def remove_validator(self, address):
+        return self.consensus.remove_validator(address)
 
-    @classmethod
-    def is_chain_valid(cls, chain):
-        for i in range(1, len(chain)):
-            current_block = chain[i]
-            previous_block = chain[i-1]
+    def is_validator(self, address):
+        return self.consensus.is_validator(address)
 
-            if current_block.hash != current_block.calculate_hash():
-                return False
+    def get_validators(self):
+        return self.consensus.get_validators()
 
-            if current_block.previous_hash != previous_block.hash:
-                return False
-
-        return True
+    def update_validator_stake(self, address, new_stake):
+        return self.consensus.update_stake(address, new_stake)
