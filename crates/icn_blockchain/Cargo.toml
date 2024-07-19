@@ -1,15 +1,16 @@
 [package]
-name = "icn_storage"
+name = "icn_blockchain"  # This should be icn_blockchain, not icn_api
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 icn_core = { path = "../icn_core" }
+icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
-sha2 = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

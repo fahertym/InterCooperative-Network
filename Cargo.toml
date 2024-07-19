@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/icn_api",
+    "crates/icn_blockchain",
+    "crates/icn_consensus",
+    "crates/icn_core",
+    "crates/icn_currency",
+    "crates/icn_governance",
+    "crates/icn_identity",
+    "crates/icn_network",
+    "crates/icn_node_managment",
+    "crates/icn_sharding",
+    "crates/icn_smart_contract",
+    "crates/icn_storage",
+    "crates/icn_testnet",
+    "crates/icn_vm",
+]
+
+[profile.release]
+opt-level = 3
+lto = true

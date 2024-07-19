@@ -1,18 +1,23 @@
 [package]
-name = "icn_sharding"
+name = "icn_core"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
 icn_blockchain = { path = "../icn_blockchain" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_sharding = { path = "../icn_sharding" }
+icn_vm = { path = "../icn_vm" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
-sha2 = "0.9"
+ed25519-dalek = "1.0"
+rand = "0.7"
 
 [dev-dependencies]
 tokio-test = "0.4"

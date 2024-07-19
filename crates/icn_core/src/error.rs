@@ -1,5 +1,3 @@
-// crates/icn_core/src/error.rs
-
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -36,6 +34,15 @@ pub enum Error {
 
     #[error("Timeout: {0}")]
     Timeout(String),
+
+    #[error("Currency error: {0}")]
+    CurrencyError(String),
+
+    #[error("Identity error: {0}")]
+    IdentityError(String),
+
+    #[error("Governance error: {0}")]
+    GovernanceError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

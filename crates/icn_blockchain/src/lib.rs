@@ -1,5 +1,3 @@
-// crates/icn_blockchain/src/lib.rs
-
 mod block;
 mod transaction;
 mod transaction_validator;
@@ -16,7 +14,6 @@ use icn_core::error::{Error, Result};
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use serde_json::Value as JsonValue;
 
 #[derive(Serialize, Deserialize)]
 pub struct Blockchain {
@@ -131,7 +128,7 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn create_asset_token(&mut self, name: String, description: String, owner: String, metadata: JsonValue) -> Result<AssetToken> {
+    pub fn create_asset_token(&mut self, name: String, description: String, owner: String, metadata: serde_json::Value) -> Result<AssetToken> {
         let token = self.asset_registry.create_token(name, description, owner, metadata);
         self.asset_tokens.insert(token.id.clone(), CurrencyType::AssetToken(token.id.clone()));
         Ok(token)

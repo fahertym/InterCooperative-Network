@@ -1,7 +1,7 @@
-// crates/icn_blockchain/src/transaction.rs
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use icn_currency::CurrencyType;
+use rand::rngs::OsRng;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
@@ -63,5 +63,82 @@ impl Transaction {
 
     pub fn to_string(&self) -> String {
         format!("{}{}{}{:?}{}", self.from, self.to, self.amount, self.currency_type, self.gas_limit)
+    }
+
+    pub fn with_smart_contract(&mut self, smart_contract_id: String) -> &mut Self {
+        self.smart_contract_id = Some(smart_contract_id);
+        self
+    }
+
+    pub fn is_signed(&self) -> bool {
+        self.signature.is_some() && self.public_key.is_some()
+    }
+
+    pub fn get_fee(&self) -> f64 {
+        // This is a simplified fee calculation. In a real system, this would be more complex.
+        self.gas_limit as f64 * 0.0001
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_transaction() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        assert_eq!(tx.from, "Alice");
+        assert_eq!(tx.to, "Bob");
+        assert_eq!(tx.amount, 100.0);
+        assert_eq!(tx.currency_type, CurrencyType::BasicNeeds);
+        assert_eq!(tx.gas_limit, 1000);
+    }
+
+    #[test]
+    fn test_sign_and_verify_transaction() {
+        let mut tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        assert!(tx.sign(&keypair).is_ok());
+        assert!(tx.is_signed());
+        assert!(tx.verify().unwrap());
+    }
+
+    #[test]
+    fn test_with_smart_contract() {
+        let mut tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        tx.with_smart_contract("contract123".to_string());
+        assert_eq!(tx.smart_contract_id, Some("contract123".to_string()));
+    }
+
+    #[test]
+    fn test_get_fee() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        assert_eq!(tx.get_fee(), 0.1);
     }
 }

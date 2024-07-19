@@ -1,9 +1,10 @@
 [package]
-name = "icn_core"
+name = "icn_testnet"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_core = { path = "../icn_core" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
@@ -12,12 +13,7 @@ icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
 icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
+tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 env_logger = "0.9"
-chrono = { version = "0.4", features = ["serde"] }
-thiserror = "1.0"
-ed25519-dalek = "1.0"
-rand = "0.7"
-
-[dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"
