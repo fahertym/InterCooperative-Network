@@ -1,0 +1,16 @@
+[package]
+name = "icn_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_blockchain = { path = "../icn_blockchain" }
+icn_consensus = { path = "../icn_consensus" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_node = { path = "../icn_node" }
+icn_sharding = { path = "../icn_sharding" }
+icn_vm = { path = "../icn_vm" }
+thiserror = "1.0"

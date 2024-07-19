@@ -593,6 +593,24 @@ impl Block {
     }
 }===== END OF crates/icn_blockchain/src/block.rs =====
 
+===== START OF crates/icn_blockchain/src/lib.rs =====
+// crates/icn_blockchain/src/lib.rs
+
+mod block;
+mod transaction;
+mod blockchain;
+
+pub use block::Block;
+pub use transaction::Transaction;
+pub use blockchain::Blockchain;
+
+use icn_currency::CurrencyType;
+use icn_consensus::PoCConsensus;
+
+// Re-export the Error and Result types
+mod error;
+pub use error::{Error, Result};===== END OF crates/icn_blockchain/src/lib.rs =====
+
 ===== START OF crates/icn_blockchain/src/transaction.rs =====
 // src/blockchain/transaction.rs
 
@@ -910,6 +928,24 @@ pub struct Bond {
 ===== START OF crates/icn_consensus/src/proof_of_cooperation.rs =====
 ===== END OF crates/icn_consensus/src/proof_of_cooperation.rs =====
 
+===== START OF crates/icn_core/src/cargo.toml =====
+[package]
+name = "icn_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_blockchain = { path = "../icn_blockchain" }
+icn_consensus = { path = "../icn_consensus" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_node = { path = "../icn_node" }
+icn_sharding = { path = "../icn_sharding" }
+icn_vm = { path = "../icn_vm" }
+thiserror = "1.0"===== END OF crates/icn_core/src/cargo.toml =====
+
 ===== START OF crates/icn_core/src/cli/mod.rs =====
 use crate::blockchain::Blockchain;
 use crate::smart_contract::{AssetTokenContract, BondContract};
@@ -1045,6 +1081,8 @@ fn view_bond(blockchain: &Blockchain) {
 ===== END OF crates/icn_core/src/cli/mod.rs =====
 
 ===== START OF crates/icn_core/src/error.rs =====
+// crates/icn_core/src/error.rs
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -1083,27 +1121,84 @@ pub enum Error {
     Timeout(String),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
-===== END OF crates/icn_core/src/error.rs =====
+pub type Result<T> = std::result::Result<T, Error>;===== END OF crates/icn_core/src/error.rs =====
 
 ===== START OF crates/icn_core/src/lib.rs =====
-// Filename: src/mod.rs
+// crates/icn_core/src/lib.rs
 
-// Top-level module declarations
-pub mod blockchain;
-pub mod consensus;
-pub mod currency;
-pub mod governance;
-pub mod identity;
-pub mod network;
-pub mod node;
-pub mod smart_contract;
-pub mod tests;
-pub mod vm;
-pub mod cli;
-pub mod lib; // This is not typically necessary but included here for completeness
-pub mod main; // This is not typically necessary but included here for completeness
-===== END OF crates/icn_core/src/lib.rs =====
+use std::sync::{Arc, RwLock};
+
+// Re-export key types from other crates
+pub use icn_blockchain::{Block, Transaction, Blockchain};
+pub use icn_consensus::PoCConsensus;
+pub use icn_currency::CurrencyType;
+pub use icn_governance::{DemocraticSystem, ProposalCategory, ProposalType};
+pub use icn_identity::DecentralizedIdentity;
+pub use icn_network::{Node as NetworkNode, Network};
+pub use icn_node::{ContentStore, ForwardingInformationBase, PendingInterestTable};
+pub use icn_sharding::ShardingManager;
+pub use icn_vm::{CoopVM, Opcode};
+
+mod error;
+pub use error::{Error, Result};
+
+pub struct IcnNode {
+    pub content_store: Arc<RwLock<ContentStore>>,
+    pub pit: Arc<RwLock<PendingInterestTable>>,
+    pub fib: Arc<RwLock<ForwardingInformationBase>>,
+    pub blockchain: Arc<RwLock<Blockchain>>,
+    pub coop_vm: Arc<RwLock<CoopVM>>,
+    pub sharding_manager: Arc<RwLock<ShardingManager>>,
+}
+
+impl IcnNode {
+    pub fn new() -> Self {
+        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
+        let coop_vm = Arc::new(RwLock::new(CoopVM::new()));
+        let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(4, 10)));
+
+        IcnNode {
+            content_store: Arc::new(RwLock::new(ContentStore::new())),
+            pit: Arc::new(RwLock::new(PendingInterestTable::new())),
+            fib: Arc::new(RwLock::new(ForwardingInformationBase::new())),
+            blockchain,
+            coop_vm,
+            sharding_manager,
+        }
+    }
+
+    pub fn process_cross_shard_transaction<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut ShardingManager) -> Result<R>,
+    {
+        let mut sharding_manager = self.sharding_manager.write().map_err(|_| Error::LockError("Failed to acquire write lock on sharding manager".to_string()))?;
+        f(&mut sharding_manager)
+    }
+
+    pub fn with_blockchain<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut Blockchain) -> Result<R>,
+    {
+        let mut blockchain = self.blockchain.write().map_err(|_| Error::LockError("Failed to acquire write lock on blockchain".to_string()))?;
+        f(&mut blockchain)
+    }
+
+    pub fn with_coop_vm<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut CoopVM) -> Result<R>,
+    {
+        let mut coop_vm = self.coop_vm.write().map_err(|_| Error::LockError("Failed to acquire write lock on CoopVM".to_string()))?;
+        f(&mut coop_vm)
+    }
+
+    pub fn with_sharding_manager<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&ShardingManager) -> Result<R>,
+    {
+        let sharding_manager = self.sharding_manager.read().map_err(|_| Error::LockError("Failed to acquire read lock on sharding manager".to_string()))?;
+        f(&sharding_manager)
+    }
+}===== END OF crates/icn_core/src/lib.rs =====
 
 ===== START OF crates/icn_core/src/logging/mod.rs =====
 // src/logging.rs
