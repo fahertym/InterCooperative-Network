@@ -1,16 +1,17 @@
-// src/logging.rs
+use log::{info, warn, error, debug};
+
 pub fn log_info(message: &str) {
-    println!("[INFO] {}", message);
+    info!("{}", message);
 }
 
 pub fn log_warn(message: &str) {
-    println!("[WARN] {}", message);
+    warn!("{}", message);
 }
 
 pub fn log_error(message: &str) {
-    eprintln!("[ERROR] {}", message);
+    error!("{}", message);
 }
 
 pub fn log_debug(message: &str) {
-    println!("[DEBUG] {}", message);
+    debug!("{}", message);
 }

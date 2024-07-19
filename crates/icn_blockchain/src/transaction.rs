@@ -1,8 +1,7 @@
-// src/blockchain/transaction.rs
-
+// crates/icn_blockchain/src/transaction.rs
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use crate::currency::CurrencyType;
+use icn_currency::CurrencyType;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
@@ -60,5 +59,9 @@ impl Transaction {
             bytes.extend_from_slice(contract_id.as_bytes());
         }
         bytes
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("{}{}{}{:?}{}", self.from, self.to, self.amount, self.currency_type, self.gas_limit)
     }
 }

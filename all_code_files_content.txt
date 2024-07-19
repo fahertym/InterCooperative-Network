@@ -1,16 +1,31 @@
-===== START OF crates/icn_api/src/lib.rs =====
-use crate::blockchain::{Blockchain, Transaction};
-use crate::governance::DemocraticSystem;
-use crate::governance::democracy::ProposalStatus as DemocracyProposalStatus;
-// Remove this line
-// use crate::error::Error;
+===== START OF crates/icn_api/cargo.toml =====
+[package]
+name = "icn_api"
+version = "0.1.0"
+edition = "2021"
 
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+[dependencies]
+icn_blockchain = { path = "../icn_blockchain" }
+icn_governance = { path = "../icn_governance" }
+icn_currency = { path = "../icn_currency" }
+icn_core = { path = "../icn_core" }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"===== END OF crates/icn_api/cargo.toml =====
+
+===== START OF crates/icn_api/src/lib.rs =====
+use icn_blockchain::{Blockchain, Transaction};
+use icn_governance::DemocraticSystem;
+use icn_governance::democracy::ProposalStatus as DemocracyProposalStatus;
+use icn_core::Error;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use chrono::{DateTime, Utc, Duration};
-
-// The rest of the file remains the same...
 
 #[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -143,10 +158,10 @@ pub struct Proposal {
     pub title: String,
     pub description: String,
     pub proposer: String,
-    #[serde(serialize_with = "serialize_duration", deserialize_with = "deserialize_duration")]
+    #[serde(with = "duration_serde")]
     pub voting_period: Duration,
-    pub proposal_type: crate::governance::democracy::ProposalType,
-    pub category: crate::governance::democracy::ProposalCategory,
+    pub proposal_type: icn_governance::democracy::ProposalType,
+    pub category: icn_governance::democracy::ProposalCategory,
     pub required_quorum: f64,
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
@@ -178,25 +193,30 @@ impl From<DemocracyProposalStatus> for ProposalStatus {
     }
 }
 
-fn serialize_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_i64(duration.num_seconds())
-}
+mod duration_serde {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let seconds = i64::deserialize(deserializer)?;
-    Ok(Duration::seconds(seconds))
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_i64(duration.num_seconds())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let seconds = i64::deserialize(deserializer)?;
+        Ok(Duration::seconds(seconds))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::currency::CurrencyType;
+    use icn_currency::CurrencyType;
 
     // Helper function to create a mock ApiLayer for testing
     async fn create_mock_api_layer() -> ApiLayer {
@@ -229,13 +249,30 @@ mod tests {
         assert!(balance.success);
         assert_eq!(balance.data.unwrap(), 0.0); // Initial balance
     }
-}
-===== END OF crates/icn_api/src/lib.rs =====
+}===== END OF crates/icn_api/src/lib.rs =====
+
+===== START OF crates/icn_blockchain/cargo.toml =====
+[package]
+name = "icn_blockchain"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_currency = { path = "../icn_currency" }
+icn_consensus = { path = "../icn_consensus" }
+icn_core = { path = "../icn_core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.9"
+uuid = { version = "0.8", features = ["v4"] }
+ed25519-dalek = "1.0"===== END OF crates/icn_blockchain/cargo.toml =====
 
 ===== START OF crates/icn_blockchain/src/asset_tokenization.rs =====
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use icn_core::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AssetToken {
@@ -285,12 +322,12 @@ impl AssetRegistry {
         token
     }
 
-    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<(), String> {
+    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<()> {
         if let Some(token) = self.tokens.iter_mut().find(|t| t.id == token_id) {
             token.transfer(new_owner);
             Ok(())
         } else {
-            Err("Token not found".to_string())
+            Err(Error::BlockchainError("Token not found".to_string()))
         }
     }
 
@@ -553,10 +590,11 @@ mod tests {
 }===== END OF crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF crates/icn_blockchain/src/block.rs =====
-// src/blockchain/block.rs
-use crate::blockchain::Transaction;
+// crates/icn_blockchain/src/block.rs
+use crate::Transaction;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -588,8 +626,15 @@ impl Block {
     }
 
     pub fn calculate_hash(&self) -> String {
-        // Implement proper hash calculation logic
-        format!("block_hash_{}", self.index)
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(transaction.to_string());
+        }
+        hasher.update(&self.previous_hash);
+        hasher.update(self.nonce.to_string());
+        format!("{:x}", hasher.finalize())
     }
 }===== END OF crates/icn_blockchain/src/block.rs =====
 
@@ -598,25 +643,321 @@ impl Block {
 
 mod block;
 mod transaction;
-mod blockchain;
+mod transaction_validator;
+mod asset_tokenization;
 
 pub use block::Block;
 pub use transaction::Transaction;
-pub use blockchain::Blockchain;
+pub use transaction_validator::TransactionValidator;
+pub use asset_tokenization::{AssetToken, AssetRegistry};
 
 use icn_currency::CurrencyType;
 use icn_consensus::PoCConsensus;
+use icn_core::error::{Error, Result};
 
-// Re-export the Error and Result types
-mod error;
-pub use error::{Error, Result};===== END OF crates/icn_blockchain/src/lib.rs =====
+use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+use serde_json::Value as JsonValue;
+
+#[derive(Serialize, Deserialize)]
+pub struct Blockchain {
+    pub chain: Vec<Block>,
+    pub pending_transactions: Vec<Transaction>,
+    pub asset_tokens: HashMap<String, CurrencyType>,
+    pub bonds: HashMap<String, CurrencyType>,
+    pub consensus: PoCConsensus,
+    pub asset_registry: AssetRegistry,
+}
+
+impl Blockchain {
+    pub fn new() -> Self {
+        let mut blockchain = Blockchain {
+            chain: vec![],
+            pending_transactions: vec![],
+            asset_tokens: HashMap::new(),
+            bonds: HashMap::new(),
+            consensus: PoCConsensus::new(0.5, 0.66),
+            asset_registry: AssetRegistry::new(),
+        };
+        
+        let genesis_block = Block::new(0, vec![], String::new());
+        blockchain.chain.push(genesis_block);
+        
+        blockchain
+    }
+
+    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        if TransactionValidator::validate_transaction(&transaction, self) {
+            self.pending_transactions.push(transaction);
+            Ok(())
+        } else {
+            Err(Error::BlockchainError("Invalid transaction".to_string()))
+        }
+    }
+
+    pub fn create_block(&mut self, author: String) -> Result<()> {
+        let previous_block = self.chain.last().ok_or(Error::BlockchainError("No previous block found".to_string()))?;
+        let new_block = Block::new(
+            self.chain.len() as u64,
+            self.pending_transactions.clone(),
+            previous_block.hash.clone(),
+        );
+        
+        self.chain.push(new_block);
+        self.pending_transactions.clear();
+        Ok(())
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.chain.last()
+    }
+
+    pub fn get_balance(&self, address: &str) -> f64 {
+        let mut balance = 0.0;
+        for block in &self.chain {
+            for transaction in &block.transactions {
+                if transaction.from == address {
+                    balance -= transaction.amount;
+                }
+                if transaction.to == address {
+                    balance += transaction.amount;
+                }
+            }
+        }
+        balance
+    }
+
+    pub fn validate_chain(&self) -> Result<()> {
+        for i in 1..self.chain.len() {
+            let previous_block = &self.chain[i - 1];
+            let current_block = &self.chain[i];
+
+            if current_block.previous_hash != previous_block.hash {
+                return Err(Error::BlockchainError("Invalid previous hash".to_string()));
+            }
+
+            if current_block.hash != current_block.calculate_hash() {
+                return Err(Error::BlockchainError("Invalid block hash".to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_asset_token(&self, asset_id: &str) -> Option<&CurrencyType> {
+        self.asset_tokens.get(asset_id)
+    }
+
+    pub fn get_bond(&self, bond_id: &str) -> Option<&CurrencyType> {
+        self.bonds.get(bond_id)
+    }
+
+    pub fn add_asset_token(&mut self, asset_id: String, currency_type: CurrencyType) -> Result<()> {
+        if self.asset_tokens.contains_key(&asset_id) {
+            return Err(Error::BlockchainError("Asset token already exists".to_string()));
+        }
+        self.asset_tokens.insert(asset_id, currency_type);
+        Ok(())
+    }
+
+    pub fn add_bond(&mut self, bond_id: String, currency_type: CurrencyType) -> Result<()> {
+        if self.bonds.contains_key(&bond_id) {
+            return Err(Error::BlockchainError("Bond already exists".to_string()));
+        }
+        self.bonds.insert(bond_id, currency_type);
+        Ok(())
+    }
+
+    pub fn execute_smart_contracts(&mut self) -> Result<()> {
+        // Implement smart contract execution logic here
+        Ok(())
+    }
+
+    pub fn create_asset_token(&mut self, name: String, description: String, owner: String, metadata: JsonValue) -> Result<AssetToken> {
+        let token = self.asset_registry.create_token(name, description, owner, metadata);
+        self.asset_tokens.insert(token.id.clone(), CurrencyType::AssetToken(token.id.clone()));
+        Ok(token)
+    }
+
+    pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> Result<()> {
+        self.asset_registry.transfer_token(token_id, new_owner.to_string())?;
+        Ok(())
+    }
+
+    pub fn get_asset_token_details(&self, token_id: &str) -> Option<&AssetToken> {
+        self.asset_registry.get_token(token_id)
+    }
+
+    pub fn transfer_bond(&mut self, bond_id: &str, new_owner: &str) -> Result<()> {
+        // Implement bond transfer logic here
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_blockchain_creation() {
+        let blockchain = Blockchain::new();
+        assert_eq!(blockchain.chain.len(), 1);
+        assert_eq!(blockchain.chain[0].index, 0);
+    }
+
+    #[test]
+    fn test_add_transaction_and_create_block() {
+        let mut blockchain = Blockchain::new();
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        assert!(blockchain.add_transaction(transaction).is_ok());
+        assert_eq!(blockchain.pending_transactions.len(), 1);
+
+        assert!(blockchain.create_block("Miner1".to_string()).is_ok());
+        assert_eq!(blockchain.chain.len(), 2);
+        assert!(blockchain.pending_transactions.is_empty());
+    }
+
+    #[test]
+    fn test_get_balance() {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        let transaction2 = Transaction::new(
+            "Bob".to_string(),
+            "Alice".to_string(),
+            50.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        blockchain.add_transaction(transaction1).unwrap();
+        blockchain.add_transaction(transaction2).unwrap();
+        blockchain.create_block("Miner1".to_string()).unwrap();
+
+        assert_eq!(blockchain.get_balance("Alice"), -50.0);
+        assert_eq!(blockchain.get_balance("Bob"), 50.0);
+    }
+
+    #[test]
+    fn test_validate_chain() {
+        let mut blockchain = Blockchain::new();
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        blockchain.add_transaction(transaction).unwrap();
+        blockchain.create_block("Miner1".to_string()).unwrap();
+
+        assert!(blockchain.validate_chain().is_ok());
+
+        // Tamper with a block
+        blockchain.chain[1].hash = "tampered_hash".to_string();
+        assert!(blockchain.validate_chain().is_err());
+    }
+
+    #[test]
+    fn test_asset_tokens_and_bonds() {
+        let mut blockchain = Blockchain::new();
+        
+        assert!(blockchain.add_asset_token("ASSET1".to_string(), CurrencyType::AssetToken("ASSET1".to_string())).is_ok());
+        assert!(blockchain.add_bond("BOND1".to_string(), CurrencyType::Bond("BOND1".to_string())).is_ok());
+
+        assert!(blockchain.get_asset_token("ASSET1").is_some());
+        assert!(blockchain.get_bond("BOND1").is_some());
+        assert!(blockchain.get_asset_token("NONEXISTENT").is_none());
+        assert!(blockchain.get_bond("NONEXISTENT").is_none());
+    }
+
+    #[test]
+    fn test_create_and_transfer_asset_token() {
+        let mut blockchain = Blockchain::new();
+        
+        let metadata = serde_json::json!({
+            "type": "Real Estate",
+            "location": "123 Main St, Anytown, USA",
+            "square_feet": 2000
+        });
+
+        let token = blockchain.create_asset_token(
+            "Main Street Property".to_string(),
+            "A beautiful property on Main Street".to_string(),
+            "Alice".to_string(),
+            metadata
+        ).unwrap();
+
+        assert_eq!(token.owner, "Alice");
+        
+        blockchain.transfer_asset_token(&token.id, "Bob").unwrap();
+        
+        let updated_token = blockchain.get_asset_token_details(&token.id).unwrap();
+        assert_eq!(updated_token.owner, "Bob");
+    }
+
+    #[test]
+    fn test_double_spend_prevention() {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        assert!(blockchain.add_transaction(transaction1.clone()).is_ok());
+        blockchain.create_block("Miner1".to_string()).unwrap();
+
+        // Attempt to add the same transaction again
+        assert!(blockchain.add_transaction(transaction1).is_err());
+    }
+
+    #[test]
+    fn test_insufficient_balance_prevention() {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        blockchain.add_transaction(transaction1).unwrap();
+        blockchain.create_block("Miner1".to_string()).unwrap();
+
+        // Attempt to spend more than Alice's balance
+        let transaction2 = Transaction::new(
+            "Alice".to_string(),
+            "Charlie".to_string(),
+            200.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        assert!(blockchain.add_transaction(transaction2).is_err());
+    }
+}===== END OF crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF crates/icn_blockchain/src/transaction.rs =====
-// src/blockchain/transaction.rs
-
+// crates/icn_blockchain/src/transaction.rs
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use crate::currency::CurrencyType;
+use icn_currency::CurrencyType;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
@@ -675,18 +1016,19 @@ impl Transaction {
         }
         bytes
     }
+
+    pub fn to_string(&self) -> String {
+        format!("{}{}{}{:?}{}", self.from, self.to, self.amount, self.currency_type, self.gas_limit)
+    }
 }===== END OF crates/icn_blockchain/src/transaction.rs =====
 
 ===== START OF crates/icn_blockchain/src/transaction_validator.rs =====
-// Filename: src/blockchain/transaction_validator.rs
+// crates/icn_blockchain/src/transaction_validator.rs
+use crate::{Transaction, Blockchain};
 
-use crate::blockchain::{Transaction, Blockchain};
-
-// Struct to validate transactions
 pub struct TransactionValidator;
 
 impl TransactionValidator {
-    // Function to validate a transaction
     pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> bool {
         if !Self::is_double_spend(transaction, blockchain) &&
            Self::validate_currency_and_amount(transaction) &&
@@ -697,26 +1039,82 @@ impl TransactionValidator {
         }
     }
 
-    // Function to check for double spending
-    fn is_double_spend(_transaction: &Transaction, _blockchain: &Blockchain) -> bool {
-        // TODO: Implement double spend check
+    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> bool {
+        for block in &blockchain.chain {
+            for tx in &block.transactions {
+                if tx == transaction {
+                    return true;
+                }
+            }
+        }
         false
     }
 
-    // Function to validate the currency and amount of a transaction
     fn validate_currency_and_amount(transaction: &Transaction) -> bool {
         transaction.amount > 0.0
     }
 
-    // Function to check if the sender has sufficient balance for the transaction
-    fn check_sufficient_balance(_transaction: &Transaction, _blockchain: &Blockchain) -> bool {
-        // TODO: Implement balance check
-        true
+    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> bool {
+        let balance = blockchain.get_balance(&transaction.from);
+        balance >= transaction.amount
     }
 }===== END OF crates/icn_blockchain/src/transaction_validator.rs =====
 
+===== START OF crates/icn_consensus/Cargo.toml =====
+===== END OF crates/icn_consensus/Cargo.toml =====
+
 ===== START OF crates/icn_consensus/src/bft_poc.rs =====
-===== END OF crates/icn_consensus/src/bft_poc.rs =====
+// InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs
+
+use crate::PoCConsensus;
+use icn_core::error::Result;
+
+pub struct BFTPoC {
+    consensus: PoCConsensus,
+}
+
+impl BFTPoC {
+    pub fn new(threshold: f64, quorum: f64) -> Self {
+        BFTPoC {
+            consensus: PoCConsensus::new(threshold, quorum),
+        }
+    }
+
+    pub fn propose_block(&self, _block_data: &[u8]) -> Result<()> {
+        // Implement block proposal logic
+        Ok(())
+    }
+
+    pub fn vote_on_block(&self, _block_hash: &str, _vote: bool) -> Result<()> {
+        // Implement voting logic
+        Ok(())
+    }
+
+    pub fn finalize_block(&self, _block_hash: &str) -> Result<()> {
+        // Implement block finalization logic
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bft_poc_creation() {
+        let bft_poc = BFTPoC::new(0.5, 0.66);
+        assert!(bft_poc.consensus.threshold == 0.5);
+    }
+
+    #[test]
+    fn test_block_proposal_and_voting() {
+        let bft_poc = BFTPoC::new(0.5, 0.66);
+        let block_data = vec![1, 2, 3, 4];
+        assert!(bft_poc.propose_block(&block_data).is_ok());
+        assert!(bft_poc.vote_on_block("test_block_hash", true).is_ok());
+        assert!(bft_poc.finalize_block("test_block_hash").is_ok());
+    }
+}===== END OF crates/icn_consensus/src/bft_poc.rs =====
 
 ===== START OF crates/icn_consensus/src/consensus.rs =====
 // src/currency/currency.rs
@@ -925,10 +1323,147 @@ pub struct Bond {
     pub owner: String,
 }===== END OF crates/icn_consensus/src/consensus.rs =====
 
-===== START OF crates/icn_consensus/src/proof_of_cooperation.rs =====
-===== END OF crates/icn_consensus/src/proof_of_cooperation.rs =====
+===== START OF crates/icn_consensus/src/lib.rs =====
+// InterCooperative-Network/crates/icn_consensus/src/lib.rs
 
-===== START OF crates/icn_core/src/cargo.toml =====
+mod bft_poc;
+mod proof_of_cooperation;
+
+use serde::{Serialize, Deserialize};
+use icn_core::error::{Error, Result};
+use log::{info, warn, debug};
+
+#[derive(Serialize, Deserialize)]
+pub struct PoCConsensus {
+    pub members: Vec<Member>,
+    pub threshold: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Member {
+    pub id: String,
+    pub is_validator: bool,
+}
+
+impl PoCConsensus {
+    pub fn new(threshold: f64, _quorum: f64) -> Self {
+        info!("Creating new PoCConsensus with threshold: {}", threshold);
+        PoCConsensus {
+            members: Vec::new(),
+            threshold,
+        }
+    }
+
+    pub fn add_member(&mut self, member_id: String, is_validator: bool) -> Result<()> {
+        debug!("Adding new member: {}, is_validator: {}", member_id, is_validator);
+        self.members.push(Member { id: member_id.clone(), is_validator });
+        info!("Added new member: {}", member_id);
+        Ok(())
+    }
+
+    pub fn remove_member(&mut self, member_id: &str) -> Result<()> {
+        debug!("Attempting to remove member: {}", member_id);
+        if let Some(index) = self.members.iter().position(|m| m.id == member_id) {
+            self.members.remove(index);
+            info!("Removed member: {}", member_id);
+            Ok(())
+        } else {
+            warn!("Failed to remove member: {} (not found)", member_id);
+            Err(Error::ConsensusError(format!("Member not found: {}", member_id)))
+        }
+    }
+
+    pub fn is_validator(&self, member_id: &str) -> bool {
+        let is_validator = self.members.iter().any(|m| m.id == member_id && m.is_validator);
+        debug!("Checking if {} is a validator: {}", member_id, is_validator);
+        is_validator
+    }
+
+    pub fn validate_block(&self, _block_hash: &str) -> Result<bool> {
+        debug!("Validating block: {}", _block_hash);
+        // Implement the actual validation logic here
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_and_remove_member() {
+        let mut consensus = PoCConsensus::new(0.5, 0.66);
+        
+        assert!(consensus.add_member("Alice".to_string(), true).is_ok());
+        assert_eq!(consensus.members.len(), 1);
+        assert!(consensus.is_validator("Alice"));
+
+        assert!(consensus.add_member("Bob".to_string(), false).is_ok());
+        assert_eq!(consensus.members.len(), 2);
+        assert!(!consensus.is_validator("Bob"));
+
+        assert!(consensus.remove_member("Alice").is_ok());
+        assert_eq!(consensus.members.len(), 1);
+        assert!(!consensus.is_validator("Alice"));
+
+        assert!(consensus.remove_member("Charlie").is_err());
+    }
+
+    #[test]
+    fn test_validate_block() {
+        let consensus = PoCConsensus::new(0.5, 0.66);
+        assert!(consensus.validate_block("test_block_hash").unwrap());
+    }
+}===== END OF crates/icn_consensus/src/lib.rs =====
+
+===== START OF crates/icn_consensus/src/proof_of_cooperation.rs =====
+// InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs
+
+use crate::PoCConsensus;
+use icn_core::error::Result;
+
+pub struct ProofOfCooperation {
+    consensus: PoCConsensus,
+}
+
+impl ProofOfCooperation {
+    pub fn new(threshold: f64, quorum: f64) -> Self {
+        ProofOfCooperation {
+            consensus: PoCConsensus::new(threshold, quorum),
+        }
+    }
+
+    pub fn validate_cooperation(&self, _member_id: &str, _cooperation_proof: &[u8]) -> Result<bool> {
+        // Implement cooperation validation logic
+        Ok(true)
+    }
+
+    pub fn update_reputation(&self, _member_id: &str, _reputation_change: f64) -> Result<()> {
+        // Implement reputation update logic
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_proof_of_cooperation_creation() {
+        let poc = ProofOfCooperation::new(0.5, 0.66);
+        assert!(poc.consensus.threshold == 0.5);
+    }
+
+    #[test]
+    fn test_cooperation_validation_and_reputation_update() {
+        let poc = ProofOfCooperation::new(0.5, 0.66);
+        let cooperation_proof = vec![1, 2, 3, 4];
+        assert!(poc.validate_cooperation("Alice", &cooperation_proof).unwrap());
+        assert!(poc.update_reputation("Alice", 0.1).is_ok());
+    }
+}===== END OF crates/icn_consensus/src/proof_of_cooperation.rs =====
+
+===== START OF crates/icn_core/cargo.toml =====
 [package]
 name = "icn_core"
 version = "0.1.0"
@@ -941,33 +1476,41 @@ icn_currency = { path = "../icn_currency" }
 icn_governance = { path = "../icn_governance" }
 icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
-icn_node = { path = "../icn_node" }
 icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
-thiserror = "1.0"===== END OF crates/icn_core/src/cargo.toml =====
+log = "0.4"
+env_logger = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+ed25519-dalek = "1.0"
+rand = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }===== END OF crates/icn_core/cargo.toml =====
 
 ===== START OF crates/icn_core/src/cli/mod.rs =====
-use crate::blockchain::Blockchain;
-use crate::smart_contract::{AssetTokenContract, BondContract};
+use crate::IcnNode;
+use icn_blockchain::Blockchain;
+use icn_vm::smart_contract::{AssetTokenContract, BondContract};
 use chrono::Utc;
 use std::io::{self, Write};
 
-fn run_cli(blockchain: &mut Blockchain) {
+pub fn run_cli(node: &mut IcnNode) {
     loop {
         print_menu();
         let choice = get_user_input("Enter your choice: ");
 
         match choice.trim() {
-            "1" => deploy_contract(blockchain),
-            "2" => execute_contracts(blockchain),
-            "3" => view_blockchain_state(blockchain),
+            "1" => deploy_contract(node),
+            "2" => execute_contracts(node),
+            "3" => view_blockchain_state(node),
             "4" => break,
-            "9" => create_asset_token(blockchain),
-            "10" => transfer_asset_token(blockchain),
-            "11" => view_asset_token(blockchain),
-            "12" => create_bond(blockchain),
-            "13" => transfer_bond(blockchain),
-            "14" => view_bond(blockchain),
+            "9" => create_asset_token(node),
+            "10" => transfer_asset_token(node),
+            "11" => view_asset_token(node),
+            "12" => create_bond(node),
+            "13" => transfer_bond(node),
+            "14" => view_bond(node),
             _ => println!("Invalid choice. Please try again."),
         }
     }
@@ -995,90 +1538,99 @@ fn get_user_input(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-fn deploy_contract(blockchain: &mut Blockchain) {
+fn deploy_contract(node: &mut IcnNode) {
     // Add logic to deploy a smart contract
+    println!("Deploying a new smart contract...");
 }
 
-fn execute_contracts(blockchain: &mut Blockchain) {
-    match blockchain.execute_smart_contracts() {
-        Ok(_) => println!("Executed smart contracts in the latest block successfully."),
-        Err(e) => println!("Failed to execute smart contracts: {}", e),
-    }
+fn execute_contracts(node: &mut IcnNode) {
+    node.with_blockchain(|blockchain| {
+        blockchain.execute_smart_contracts()
+    }).unwrap_or_else(|e| println!("Failed to execute smart contracts: {}", e));
 }
 
-fn view_blockchain_state(blockchain: &Blockchain) {
-    println!("{:#?}", blockchain);
+fn view_blockchain_state(node: &IcnNode) {
+    node.with_blockchain(|blockchain| {
+        println!("{:#?}", blockchain);
+        Ok(())
+    }).unwrap_or_else(|e| println!("Failed to view blockchain state: {}", e));
 }
 
-fn create_asset_token(blockchain: &mut Blockchain) {
+fn create_asset_token(node: &mut IcnNode) {
     let asset_id = get_user_input("Enter asset ID: ");
     let name = get_user_input("Enter asset name: ");
     let description = get_user_input("Enter asset description: ");
     let owner = get_user_input("Enter owner ID: ");
-    let value = get_user_input("Enter asset value: ").parse().unwrap();
+    let value: f64 = get_user_input("Enter asset value: ").parse().unwrap_or(0.0);
 
     let contract = AssetTokenContract::new(asset_id, name, description, owner, value);
-    match blockchain.deploy_smart_contract(Box::new(contract)) {
-        Ok(_) => println!("Asset token created successfully!"),
-        Err(e) => println!("Failed to create asset token: {}", e),
-    }
+    node.with_blockchain(|blockchain| {
+        blockchain.deploy_smart_contract(Box::new(contract))
+    }).unwrap_or_else(|e| println!("Failed to create asset token: {}", e));
 }
 
-fn transfer_asset_token(blockchain: &mut Blockchain) {
+fn transfer_asset_token(node: &mut IcnNode) {
     let asset_id = get_user_input("Enter asset ID: ");
     let new_owner = get_user_input("Enter new owner ID: ");
 
-    match blockchain.transfer_asset_token(&asset_id, &new_owner) {
-        Ok(_) => println!("Asset token transferred successfully!"),
-        Err(e) => println!("Failed to transfer asset token: {}", e),
-    }
+    node.with_blockchain(|blockchain| {
+        blockchain.transfer_asset_token(&asset_id, &new_owner)
+    }).unwrap_or_else(|e| println!("Failed to transfer asset token: {}", e));
 }
 
-fn view_asset_token(blockchain: &Blockchain) {
+fn view_asset_token(node: &IcnNode) {
     let asset_id = get_user_input("Enter asset ID: ");
-    match blockchain.get_asset_token(&asset_id) {
-        Some(token) => println!("{:?}", token),
-        None => println!("Asset token not found"),
-    }
+    node.with_blockchain(|blockchain| {
+        if let Some(token) = blockchain.get_asset_token(&asset_id) {
+            println!("{:?}", token);
+        } else {
+            println!("Asset token not found");
+        }
+        Ok(())
+    }).unwrap_or_else(|e| println!("Failed to view asset token: {}", e));
 }
 
-fn create_bond(blockchain: &mut Blockchain) {
+fn create_bond(node: &mut IcnNode) {
     let bond_id = get_user_input("Enter bond ID: ");
     let name = get_user_input("Enter bond name: ");
     let description = get_user_input("Enter bond description: ");
     let issuer = get_user_input("Enter issuer ID: ");
-    let face_value = get_user_input("Enter face value: ").parse().unwrap();
+    let face_value: f64 = get_user_input("Enter face value: ").parse().unwrap_or(0.0);
     let maturity_date = get_user_input("Enter maturity date (YYYY-MM-DD): ");
-    let interest_rate = get_user_input("Enter interest rate: ").parse().unwrap();
+    let interest_rate: f64 = get_user_input("Enter interest rate: ").parse().unwrap_or(0.0);
     let owner = get_user_input("Enter owner ID: ");
 
-    let maturity_date = DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", maturity_date)).unwrap().with_timezone(&Utc);
+    let maturity_date = chrono::NaiveDate::parse_from_str(&maturity_date, "%Y-%m-%d")
+        .map(|date| date.and_hms(0, 0, 0))
+        .map(|naive| chrono::DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
+        .unwrap_or_else(|_| Utc::now());
 
     let contract = BondContract::new(bond_id, name, description, issuer, face_value, maturity_date, interest_rate, owner);
-    match blockchain.deploy_smart_contract(Box::new(contract)) {
-        Ok(_) => println!("Bond created successfully!"),
-        Err(e) => println!("Failed to create bond: {}", e),
-    }
+    node.with_blockchain(|blockchain| {
+        blockchain.deploy_smart_contract(Box::new(contract))
+    }).unwrap_or_else(|e| println!("Failed to create bond: {}", e));
 }
 
-fn transfer_bond(blockchain: &mut Blockchain) {
+fn transfer_bond(node: &mut IcnNode) {
     let bond_id = get_user_input("Enter bond ID: ");
     let new_owner = get_user_input("Enter new owner ID: ");
 
-    match blockchain.transfer_bond(&bond_id, &new_owner) {
-        Ok(_) => println!("Bond transferred successfully!"),
-        Err(e) => println!("Failed to transfer bond: {}", e),
-    }
+    node.with_blockchain(|blockchain| {
+        blockchain.transfer_bond(&bond_id, &new_owner)
+    }).unwrap_or_else(|e| println!("Failed to transfer bond: {}", e));
 }
 
-fn view_bond(blockchain: &Blockchain) {
+fn view_bond(node: &IcnNode) {
     let bond_id = get_user_input("Enter bond ID: ");
-    match blockchain.get_bond(&bond_id) {
-        Some(bond) => println!("{:?}", bond),
-        None => println!("Bond not found"),
-    }
-}
-===== END OF crates/icn_core/src/cli/mod.rs =====
+    node.with_blockchain(|blockchain| {
+        if let Some(bond) = blockchain.get_bond(&bond_id) {
+            println!("{:?}", bond);
+        } else {
+            println!("Bond not found");
+        }
+        Ok(())
+    }).unwrap_or_else(|e| println!("Failed to view bond: {}", e));
+}===== END OF crates/icn_core/src/cli/mod.rs =====
 
 ===== START OF crates/icn_core/src/error.rs =====
 // crates/icn_core/src/error.rs
@@ -1130,14 +1682,13 @@ use std::sync::{Arc, RwLock};
 
 // Re-export key types from other crates
 pub use icn_blockchain::{Block, Transaction, Blockchain};
-pub use icn_consensus::PoCConsensus;
 pub use icn_currency::CurrencyType;
 pub use icn_governance::{DemocraticSystem, ProposalCategory, ProposalType};
 pub use icn_identity::DecentralizedIdentity;
-pub use icn_network::{Node as NetworkNode, Network};
+pub use icn_network::{Node as NetworkNode, Network, Packet, PacketType};
 pub use icn_node::{ContentStore, ForwardingInformationBase, PendingInterestTable};
-pub use icn_sharding::ShardingManager;
 pub use icn_vm::{CoopVM, Opcode};
+pub use icn_sharding::ShardingManager;
 
 mod error;
 pub use error::{Error, Result};
@@ -1149,12 +1700,25 @@ pub struct IcnNode {
     pub blockchain: Arc<RwLock<Blockchain>>,
     pub coop_vm: Arc<RwLock<CoopVM>>,
     pub sharding_manager: Arc<RwLock<ShardingManager>>,
+    pub execution_environment: Arc<RwLock<ExecutionEnvironment>>,
+}
+
+pub struct ExecutionEnvironment {
+    pub state: String,
+}
+
+impl ExecutionEnvironment {
+    pub fn new() -> Self {
+        ExecutionEnvironment {
+            state: String::new(),
+        }
+    }
 }
 
 impl IcnNode {
     pub fn new() -> Self {
         let blockchain = Arc::new(RwLock::new(Blockchain::new()));
-        let coop_vm = Arc::new(RwLock::new(CoopVM::new()));
+        let coop_vm = Arc::new(RwLock::new(CoopVM::new(Vec::new())));
         let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(4, 10)));
 
         IcnNode {
@@ -1164,6 +1728,7 @@ impl IcnNode {
             blockchain,
             coop_vm,
             sharding_manager,
+            execution_environment: Arc::new(RwLock::new(ExecutionEnvironment::new())),
         }
     }
 
@@ -1171,15 +1736,23 @@ impl IcnNode {
     where
         F: FnOnce(&mut ShardingManager) -> Result<R>,
     {
-        let mut sharding_manager = self.sharding_manager.write().map_err(|_| Error::LockError("Failed to acquire write lock on sharding manager".to_string()))?;
+        let mut sharding_manager = self.sharding_manager.write().map_err(|_| Error::ShardingError("Failed to acquire write lock on sharding manager".to_string()))?;
         f(&mut sharding_manager)
+    }
+
+    pub fn execute_smart_contract<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut ExecutionEnvironment) -> Result<R>,
+    {
+        let mut execution_environment = self.execution_environment.write().map_err(|_| Error::SmartContractError("Failed to acquire write lock on execution environment".to_string()))?;
+        f(&mut execution_environment)
     }
 
     pub fn with_blockchain<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&mut Blockchain) -> Result<R>,
     {
-        let mut blockchain = self.blockchain.write().map_err(|_| Error::LockError("Failed to acquire write lock on blockchain".to_string()))?;
+        let mut blockchain = self.blockchain.write().map_err(|_| Error::BlockchainError("Failed to acquire write lock on blockchain".to_string()))?;
         f(&mut blockchain)
     }
 
@@ -1187,7 +1760,7 @@ impl IcnNode {
     where
         F: FnOnce(&mut CoopVM) -> Result<R>,
     {
-        let mut coop_vm = self.coop_vm.write().map_err(|_| Error::LockError("Failed to acquire write lock on CoopVM".to_string()))?;
+        let mut coop_vm = self.coop_vm.write().map_err(|_| Error::VmError("Failed to acquire write lock on CoopVM".to_string()))?;
         f(&mut coop_vm)
     }
 
@@ -1195,29 +1768,77 @@ impl IcnNode {
     where
         F: FnOnce(&ShardingManager) -> Result<R>,
     {
-        let sharding_manager = self.sharding_manager.read().map_err(|_| Error::LockError("Failed to acquire read lock on sharding manager".to_string()))?;
+        let sharding_manager = self.sharding_manager.read().map_err(|_| Error::ShardingError("Failed to acquire read lock on sharding manager".to_string()))?;
         f(&sharding_manager)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icn_currency::CurrencyType;
+    use icn_blockchain::Transaction;
+    use ed25519_dalek::Keypair;
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn test_cross_shard_transaction() {
+        let node = IcnNode::new();
+
+        // Initialize balances
+        node.process_cross_shard_transaction(|sharding_manager| {
+            sharding_manager.add_address_to_shard("Alice".to_string(), 0);
+            sharding_manager.add_address_to_shard("Bob".to_string(), 1);
+            sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
+        }).unwrap();
+
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        let mut transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            500.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        transaction.sign(&keypair).unwrap();
+
+        node.process_cross_shard_transaction(|sharding_manager| {
+            sharding_manager.transfer_between_shards(0, 1, &transaction)
+        }).unwrap();
+
+        // Check balances after transaction
+        let alice_balance = node.with_sharding_manager(|sharding_manager| {
+            sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
+        }).unwrap();
+        let bob_balance = node.with_sharding_manager(|sharding_manager| {
+            sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
+        }).unwrap();
+
+        assert_eq!(alice_balance, 500.0);
+        assert_eq!(bob_balance, 500.0);
     }
 }===== END OF crates/icn_core/src/lib.rs =====
 
 ===== START OF crates/icn_core/src/logging/mod.rs =====
-// src/logging.rs
+use log::{info, warn, error, debug};
+
 pub fn log_info(message: &str) {
-    println!("[INFO] {}", message);
+    info!("{}", message);
 }
 
 pub fn log_warn(message: &str) {
-    println!("[WARN] {}", message);
+    warn!("{}", message);
 }
 
 pub fn log_error(message: &str) {
-    eprintln!("[ERROR] {}", message);
+    error!("{}", message);
 }
 
 pub fn log_debug(message: &str) {
-    println!("[DEBUG] {}", message);
-}
-===== END OF crates/icn_core/src/logging/mod.rs =====
+    debug!("{}", message);
+}===== END OF crates/icn_core/src/logging/mod.rs =====
 
 ===== START OF crates/icn_core/src/main.rs =====
 use log::{info, warn, error};
@@ -1226,16 +1847,15 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
-use icn_node::blockchain::Transaction;
-use icn_node::consensus::PoCConsensus;
-use icn_node::currency::CurrencyType;
-use icn_node::governance::{DemocraticSystem, ProposalType, ProposalCategory};
-use icn_node::identity::DecentralizedIdentity;
-use icn_node::network::Network;
-use icn_node::network::node::{Node, NodeType};
-use icn_node::vm::CSCLCompiler;
-use icn_node::IcnNode;
-use icn_node::error::Error as IcnNodeError;
+use icn_core::{IcnNode, Error as IcnNodeError};
+use icn_blockchain::Transaction;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencyType;
+use icn_governance::{DemocraticSystem, ProposalType, ProposalCategory};
+use icn_identity::DecentralizedIdentity;
+use icn_network::Network;
+use icn_network::node::{Node, NodeType};
+use icn_vm::CSCLCompiler;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
@@ -1406,7 +2026,7 @@ fn print_final_state(node: &Arc<IcnNode>, consensus: &PoCConsensus, democratic_s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_node::governance::democracy::ProposalStatus;
+    use icn_governance::democracy::ProposalStatus;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 
@@ -1497,8 +2117,33 @@ mod tests {
         info!("Democratic system test passed");
         Ok(())
     }
+}===== END OF crates/icn_core/src/main.rs =====
+
+===== START OF crates/icn_core/src/security/mod.rs =====
+use crate::error::Result;
+use ed25519_dalek::{Keypair, PublicKey, Signature, Verifier};
+
+pub struct SecurityManager {
+    // Add fields as needed
 }
-===== END OF crates/icn_core/src/main.rs =====
+
+impl SecurityManager {
+    pub fn new() -> Self {
+        SecurityManager {
+            // Initialize fields
+        }
+    }
+
+    pub fn verify_signature(&self, public_key: &PublicKey, message: &[u8], signature: &Signature) -> Result<bool> {
+        Ok(public_key.verify(message, signature).is_ok())
+    }
+
+    pub fn generate_keypair() -> Keypair {
+        Keypair::generate(&mut rand::thread_rng())
+    }
+
+    // Add more security-related methods as needed
+}===== END OF crates/icn_core/src/security/mod.rs =====
 
 ===== START OF crates/icn_core/tests/blockchain_and_consensus_tests.rs =====
 // Filename: src/tests/blockchain_and_consensus_tests.rs
@@ -1821,11 +2466,102 @@ Quorum: 0.5";
 }
 ===== END OF crates/icn_core/tests/smart_contract_tests.rs =====
 
-===== START OF crates/icn_currency/src/lib.rs =====
+===== START OF crates/icn_currency/Cargo.toml =====
+[package]
+name = "icn_currency"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1.0"
+uuid = { version = "0.8", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }===== END OF crates/icn_currency/Cargo.toml =====
+
+===== START OF crates/icn_currency/src/asset_token.rs =====
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssetToken {
+    pub asset_id: String,
+    pub name: String,
+    pub description: String,
+    pub owner: String,
+    pub value: f64,
+}
+
+impl AssetToken {
+    pub fn new(asset_id: String, name: String, description: String, owner: String, value: f64) -> Self {
+        AssetToken {
+            asset_id,
+            name,
+            description,
+            owner,
+            value,
+        }
+    }
+
+    pub fn transfer(&mut self, new_owner: String) {
+        self.owner = new_owner;
+    }
+}===== END OF crates/icn_currency/src/asset_token.rs =====
+
+===== START OF crates/icn_currency/src/bond.rs =====
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Bond {
+    pub bond_id: String,
+    pub name: String,
+    pub description: String,
+    pub issuer: String,
+    pub face_value: f64,
+    pub maturity_date: DateTime<Utc>,
+    pub interest_rate: f64,
+    pub owner: String,
+}
+
+impl Bond {
+    pub fn new(bond_id: String, name: String, description: String, issuer: String, face_value: f64, maturity_date: DateTime<Utc>, interest_rate: f64, owner: String) -> Self {
+        Bond {
+            bond_id,
+            name,
+            description,
+            issuer,
+            face_value,
+            maturity_date,
+            interest_rate,
+            owner,
+        }
+    }
+
+    pub fn transfer(&mut self, new_owner: String) {
+        self.owner = new_owner;
+    }
+
+    pub fn calculate_current_value(&self, current_date: DateTime<Utc>) -> f64 {
+        if current_date >= self.maturity_date {
+            self.face_value
+        } else {
+            let years_to_maturity = (self.maturity_date - current_date).num_days() as f64 / 365.0;
+            self.face_value * (1.0 + self.interest_rate).powf(years_to_maturity)
+        }
+    }
+}===== END OF crates/icn_currency/src/bond.rs =====
+
+===== START OF crates/icn_currency/src/currency.rs =====
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
+use log::{info, error, debug, warn};
+use icn_core::error::{Error, Result};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum CurrencyType {
@@ -1863,9 +2599,9 @@ pub struct Currency {
 }
 
 impl Currency {
-    #[allow(dead_code)]
     pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
         let now = Utc::now();
+        debug!("Creating new currency: {:?}", currency_type);
         Currency {
             currency_type,
             total_supply: initial_supply,
@@ -1875,21 +2611,31 @@ impl Currency {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn mint(&mut self, amount: f64) {
+    pub fn mint(&mut self, amount: f64) -> Result<()> {
         self.total_supply += amount;
         self.last_issuance = Utc::now();
+        info!("Minted {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
+        Ok(())
+    }
+
+    pub fn burn(&mut self, amount: f64) -> Result<()> {
+        if amount > self.total_supply {
+            error!("Attempted to burn more {:?} than available. Requested: {}, Available: {}", self.currency_type, amount, self.total_supply);
+            return Err(Error::CurrencyError("Insufficient supply to burn".to_string()));
+        }
+        self.total_supply -= amount;
+        info!("Burned {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
+        Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 pub struct CurrencySystem {
     pub currencies: HashMap<CurrencyType, Currency>,
 }
 
 impl CurrencySystem {
-    #[allow(dead_code)]
     pub fn new() -> Self {
+        debug!("Creating new CurrencySystem");
         let mut system = CurrencySystem {
             currencies: HashMap::new(),
         };
@@ -1905,45 +2651,145 @@ impl CurrencySystem {
         system.add_currency(CurrencyType::Luxury, 100_000.0, 0.001);
         system.add_currency(CurrencyType::Service, 200_000.0, 0.004);
 
+        info!("CurrencySystem initialized with {} currencies", system.currencies.len());
         system
     }
 
-    #[allow(dead_code)]
     pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
         let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
-        self.currencies.insert(currency_type, currency);
+        self.currencies.insert(currency_type.clone(), currency);
+        info!("Added new currency: {:?}", currency_type);
     }
 
-    #[allow(dead_code)]
     pub fn get_currency(&self, currency_type: &CurrencyType) -> Option<&Currency> {
         self.currencies.get(currency_type)
     }
 
-    #[allow(dead_code)]
     pub fn get_currency_mut(&mut self, currency_type: &CurrencyType) -> Option<&mut Currency> {
         self.currencies.get_mut(currency_type)
     }
 
-    #[allow(dead_code)]
-    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> Result<(), String> {
+    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> Result<()> {
         let currency_type = CurrencyType::Custom(name.clone());
         if self.currencies.contains_key(&currency_type) {
-            return Err(format!("Currency '{}' already exists", name));
+            error!("Attempted to create duplicate custom currency: {}", name);
+            return Err(Error::CurrencyError(format!("Currency '{}' already exists", name)));
         }
         self.add_currency(currency_type, initial_supply, issuance_rate);
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn adaptive_issuance(&mut self) {
+    pub fn adaptive_issuance(&mut self) -> Result<()> {
+        debug!("Performing adaptive issuance for all currencies");
         let now = Utc::now();
         for currency in self.currencies.values_mut() {
             let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
             let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
-            currency.mint(issuance_amount);
+            currency.mint(issuance_amount)?;
+            debug!("Adaptive issuance for {:?}: {}", currency.currency_type, issuance_amount);
+        }
+        info!("Adaptive issuance completed for all currencies");
+        Ok(())
+    }
+
+    pub fn print_currency_supplies(&self) {
+        info!("Current Currency Supplies:");
+        for (currency_type, currency) in &self.currencies {
+            info!("{:?}: {}", currency_type, currency.total_supply);
         }
     }
+}===== END OF crates/icn_currency/src/currency.rs =====
+
+===== START OF crates/icn_currency/src/lib.rs =====
+mod currency;
+mod wallet;
+mod asset_token;
+mod bond;
+
+pub use currency::{Currency, CurrencyType, CurrencySystem};
+pub use wallet::Wallet;
+pub use asset_token::AssetToken;
+pub use bond::Bond;
+
+use icn_core::error::{Error, Result};
+
+pub struct CurrencyManager {
+    pub currency_system: CurrencySystem,
 }
+
+impl CurrencyManager {
+    pub fn new() -> Self {
+        CurrencyManager {
+            currency_system: CurrencySystem::new(),
+        }
+    }
+
+    pub fn create_wallet(&self) -> Wallet {
+        Wallet::new()
+    }
+
+    pub fn create_asset_token(&self, asset_id: String, name: String, description: String, owner: String, value: f64) -> AssetToken {
+        AssetToken::new(asset_id, name, description, owner, value)
+    }
+
+    pub fn create_bond(&self, bond_id: String, name: String, description: String, issuer: String, face_value: f64, maturity_date: chrono::DateTime<chrono::Utc>, interest_rate: f64, owner: String) -> Bond {
+        Bond::new(bond_id, name, description, issuer, face_value, maturity_date, interest_rate, owner)
+    }
+
+    pub fn perform_adaptive_issuance(&mut self) -> Result<()> {
+        self.currency_system.adaptive_issuance()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn test_currency_manager() {
+        let mut manager = CurrencyManager::new();
+        
+        // Test wallet creation and operations
+        let mut wallet = manager.create_wallet();
+        assert!(wallet.deposit(CurrencyType::BasicNeeds, 100.0).is_ok());
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 100.0);
+
+        // Test asset token creation
+        let asset = manager.create_asset_token(
+            "ASSET1".to_string(),
+            "Test Asset".to_string(),
+            "A test asset".to_string(),
+            "Alice".to_string(),
+            1000.0
+        );
+        assert_eq!(asset.owner, "Alice");
+
+        // Test bond creation
+        let maturity_date = Utc::now() + chrono::Duration::days(365);
+        let bond = manager.create_bond(
+            "BOND1".to_string(),
+            "Test Bond".to_string(),
+            "A test bond".to_string(),
+            "ICN".to_string(),
+            1000.0,
+            maturity_date,
+            0.05,
+            "Bob".to_string()
+        );
+        assert_eq!(bond.owner, "Bob");
+
+        // Test adaptive issuance
+        assert!(manager.perform_adaptive_issuance().is_ok());
+    }
+}===== END OF crates/icn_currency/src/lib.rs =====
+
+===== START OF crates/icn_currency/src/wallet.rs =====
+use super::CurrencyType;
+use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+use log::{info, error, debug};
+use icn_core::error::{Error, Result};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Wallet {
@@ -1951,40 +2797,104 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    #[allow(dead_code)]
     pub fn new() -> Self {
+        debug!("Creating new Wallet");
         Wallet {
             balances: HashMap::new(),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn deposit(&mut self, currency_type: CurrencyType, amount: f64) {
-        *self.balances.entry(currency_type).or_insert(0.0) += amount;
-    }
-
-    #[allow(dead_code)]
-    pub fn withdraw(&mut self, currency_type: CurrencyType, amount: f64) -> Result<(), String> {
-        let balance = self.balances.entry(currency_type.clone()).or_insert(0.0);
-        if *balance < amount {
-            return Err(format!("Insufficient balance for {:?}", currency_type));
+    pub fn deposit(&mut self, currency_type: CurrencyType, amount: f64) -> Result<()> {
+        if amount < 0.0 {
+            return Err(Error::CurrencyError("Cannot deposit negative amount".to_string()));
         }
-        *balance -= amount;
+        *self.balances.entry(currency_type.clone()).or_insert(0.0) += amount;
+        info!("Deposited {} of {:?} into wallet", amount, currency_type);
         Ok(())
     }
 
-    #[allow(dead_code)]
+    pub fn withdraw(&mut self, currency_type: CurrencyType, amount: f64) -> Result<()> {
+        if amount < 0.0 {
+            return Err(Error::CurrencyError("Cannot withdraw negative amount".to_string()));
+        }
+        let balance = self.balances.entry(currency_type.clone()).or_insert(0.0);
+        if *balance < amount {
+            error!("Insufficient balance for withdrawal. Requested: {}, Available: {}", amount, balance);
+            return Err(Error::CurrencyError(format!("Insufficient balance for {:?}", currency_type)));
+        }
+        *balance -= amount;
+        info!("Withdrawn {} of {:?} from wallet", amount, currency_type);
+        Ok(())
+    }
+
     pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
         *self.balances.get(currency_type).unwrap_or(&0.0)
     }
-}===== END OF crates/icn_currency/src/lib.rs =====
 
-===== START OF crates/icn_governance/src/lib.rs =====
-// src/governance/democracy.rs
+    pub fn print_balances(&self) {
+        info!("Wallet Balances:");
+        for (currency_type, balance) in &self.balances {
+            info!("{:?}: {}", currency_type, balance);
+        }
+    }
 
-use std::collections::HashMap;
+    pub fn transfer(&mut self, to: &mut Wallet, currency_type: CurrencyType, amount: f64) -> Result<()> {
+        self.withdraw(currency_type.clone(), amount)?;
+        to.deposit(currency_type, amount)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wallet_operations() {
+        let mut wallet = Wallet::new();
+        
+        // Test deposit
+        assert!(wallet.deposit(CurrencyType::BasicNeeds, 100.0).is_ok());
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 100.0);
+
+        // Test withdraw
+        assert!(wallet.withdraw(CurrencyType::BasicNeeds, 50.0).is_ok());
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 50.0);
+
+        // Test insufficient balance
+        assert!(wallet.withdraw(CurrencyType::BasicNeeds, 100.0).is_err());
+
+        // Test transfer
+        let mut wallet2 = Wallet::new();
+        assert!(wallet.transfer(&mut wallet2, CurrencyType::BasicNeeds, 25.0).is_ok());
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 25.0);
+        assert_eq!(wallet2.get_balance(&CurrencyType::BasicNeeds), 25.0);
+    }
+}===== END OF crates/icn_currency/src/wallet.rs =====
+
+===== START OF crates/icn_governance/Cargo.toml =====
+[package]
+name = "icn_governance"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }===== END OF crates/icn_governance/Cargo.toml =====
+
+===== START OF crates/icn_governance/src/democracy.rs =====
+use crate::proposal::Proposal;
+use crate::voting::Vote;
+use icn_core::error::{Error, Result};
 use chrono::{DateTime, Utc, Duration};
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 use log::{info, error, debug, warn};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -2009,30 +2919,6 @@ pub enum ProposalType {
     NetworkUpgrade,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-}
-
 pub struct DemocraticSystem {
     proposals: HashMap<String, Proposal>,
     votes: HashMap<String, Vec<Vote>>,
@@ -2052,77 +2938,62 @@ impl DemocraticSystem {
         title: String,
         description: String,
         proposer: String,
-        voting_duration: Duration,
+        voting_period: Duration,
         proposal_type: ProposalType,
         category: ProposalCategory,
         required_quorum: f64,
-        execution_timestamp: Option<DateTime<Utc>>
-    ) -> Result<String, String> {
+        execution_timestamp: Option<DateTime<Utc>>,
+    ) -> Result<String> {
         let id = format!("prop_{}", Utc::now().timestamp());
-        let proposal = Proposal {
-            id: id.clone(),
+        let proposal = Proposal::new(
+            id.clone(),
             title,
             description,
             proposer,
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + voting_duration,
-            status: ProposalStatus::Active,
+            voting_period,
             proposal_type,
             category,
             required_quorum,
             execution_timestamp,
-        };
+        );
         self.proposals.insert(id.clone(), proposal);
         info!("New proposal created: {}", id);
         Ok(id)
     }
 
-    pub fn vote(
-        &mut self,
-        voter: String,
-        proposal_id: String,
-        in_favor: bool,
-        weight: f64
-    ) -> Result<(), String> {
-        let proposal = self.proposals.get(&proposal_id).ok_or("Proposal not found")?;
+    pub fn vote(&mut self, voter: String, proposal_id: String, in_favor: bool, weight: f64) -> Result<()> {
+        let proposal = self.proposals.get(&proposal_id).ok_or(Error::GovernanceError("Proposal not found".to_string()))?;
         
         if proposal.status != ProposalStatus::Active {
             error!("Attempted to vote on inactive proposal: {}", proposal_id);
-            return Err("Voting is not active for this proposal".to_string());
+            return Err(Error::GovernanceError("Voting is not active for this proposal".to_string()));
         }
 
         if Utc::now() > proposal.voting_ends_at {
             error!("Attempted to vote on expired proposal: {}", proposal_id);
-            return Err("Voting period has ended".to_string());
+            return Err(Error::GovernanceError("Voting period has ended".to_string()));
         }
 
-        let vote = Vote {
-            voter,
-            proposal_id: proposal_id.clone(),
-            in_favor,
-            weight,
-            timestamp: Utc::now(),
-        };
-
+        let vote = Vote::new(voter, proposal_id.clone(), in_favor, weight);
         self.votes.entry(proposal_id.clone()).or_insert_with(Vec::new).push(vote);
         info!("Vote recorded for proposal: {}", proposal_id);
         Ok(())
     }
 
-    pub fn tally_votes(&mut self, proposal_id: &str) -> Result<(), String> {
-        let proposal = self.proposals.get_mut(proposal_id).ok_or("Proposal not found")?;
+    pub fn tally_votes(&mut self, proposal_id: &str) -> Result<()> {
+        let proposal = self.proposals.get_mut(proposal_id).ok_or(Error::GovernanceError("Proposal not found".to_string()))?;
         
         if proposal.status != ProposalStatus::Active {
             error!("Attempted to tally votes for inactive proposal: {}", proposal_id);
-            return Err("Proposal is not active".to_string());
+            return Err(Error::GovernanceError("Proposal is not active".to_string()));
         }
 
         if Utc::now() < proposal.voting_ends_at {
             warn!("Attempted to tally votes before voting period ended: {}", proposal_id);
-            return Err("Voting period has not ended yet".to_string());
+            return Err(Error::GovernanceError("Voting period has not ended yet".to_string()));
         }
 
-        let votes = self.votes.get(proposal_id).ok_or("No votes found for this proposal")?;
+        let votes = self.votes.get(proposal_id).ok_or(Error::GovernanceError("No votes found for this proposal".to_string()))?;
         
         let total_weight: f64 = votes.iter().map(|v| v.weight).sum();
         let weight_in_favor: f64 = votes.iter().filter(|v| v.in_favor).map(|v| v.weight).sum();
@@ -2158,12 +3029,12 @@ impl DemocraticSystem {
             .collect()
     }
 
-    pub fn mark_as_implemented(&mut self, proposal_id: &str) -> Result<(), String> {
-        let proposal = self.proposals.get_mut(proposal_id).ok_or("Proposal not found")?;
+    pub fn mark_as_implemented(&mut self, proposal_id: &str) -> Result<()> {
+        let proposal = self.proposals.get_mut(proposal_id).ok_or(Error::GovernanceError("Proposal not found".to_string()))?;
         
         if proposal.status != ProposalStatus::Passed {
             error!("Attempted to mark non-passed proposal as implemented: {}", proposal_id);
-            return Err("Proposal has not passed".to_string());
+            return Err(Error::GovernanceError("Proposal has not passed".to_string()));
         }
 
         proposal.status = ProposalStatus::Implemented;
@@ -2177,9 +3048,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_proposal() {
+    fn test_democratic_system() {
         let mut system = DemocraticSystem::new();
-        let result = system.create_proposal(
+        
+        // Create proposal
+        let proposal_id = system.create_proposal(
             "Test Proposal".to_string(),
             "This is a test proposal".to_string(),
             "Alice".to_string(),
@@ -2188,45 +3061,236 @@ mod tests {
             ProposalCategory::Technical,
             0.5,
             None,
-        );
-        assert!(result.is_ok());
-        let proposal_id = result.unwrap();
-        assert!(system.get_proposal(&proposal_id).is_some());
+        ).unwrap();
+
+        // Vote on proposal
+        assert!(system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0).is_ok());
+        assert!(system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0).is_ok());
+        assert!(system.vote("David".to_string(), proposal_id.clone(), true, 1.0).is_ok());
+
+        // Try to tally votes before voting period ends (should fail)
+        assert!(system.tally_votes(&proposal_id).is_err());
+
+        // Simulate voting period end
+        let proposal = system.proposals.get_mut(&proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        // Tally votes
+        assert!(system.tally_votes(&proposal_id).is_ok());
+
+        // Check proposal status
+        let proposal = system.get_proposal(&proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Passed);
+
+        // Mark as implemented
+        assert!(system.mark_as_implemented(&proposal_id).is_ok());
+        let updated_proposal = system.get_proposal(&proposal_id).unwrap();
+        assert_eq!(updated_proposal.status, ProposalStatus::Implemented);
+    }
+}===== END OF crates/icn_governance/src/democracy.rs =====
+
+===== START OF crates/icn_governance/src/lib.rs =====
+mod democracy;
+mod proposal;
+mod voting;
+
+pub use democracy::{DemocraticSystem, ProposalCategory, ProposalType, ProposalStatus};
+pub use proposal::Proposal;
+pub use voting::Vote;
+
+use icn_core::error::{Error, Result};
+use chrono::{DateTime, Utc, Duration};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+
+pub struct GovernanceSystem {
+    democratic_system: DemocraticSystem,
+}
+
+impl GovernanceSystem {
+    pub fn new() -> Self {
+        GovernanceSystem {
+            democratic_system: DemocraticSystem::new(),
+        }
     }
 
+    pub fn create_proposal(
+        &mut self,
+        title: String,
+        description: String,
+        proposer: String,
+        voting_period: Duration,
+        proposal_type: ProposalType,
+        category: ProposalCategory,
+        required_quorum: f64,
+        execution_timestamp: Option<DateTime<Utc>>,
+    ) -> Result<String> {
+        self.democratic_system.create_proposal(
+            title,
+            description,
+            proposer,
+            voting_period,
+            proposal_type,
+            category,
+            required_quorum,
+            execution_timestamp,
+        )
+    }
+
+    pub fn vote(&mut self, voter: String, proposal_id: String, in_favor: bool, weight: f64) -> Result<()> {
+        self.democratic_system.vote(voter, proposal_id, in_favor, weight)
+    }
+
+    pub fn tally_votes(&mut self, proposal_id: &str) -> Result<()> {
+        self.democratic_system.tally_votes(proposal_id)
+    }
+
+    pub fn get_proposal(&self, proposal_id: &str) -> Option<&Proposal> {
+        self.democratic_system.get_proposal(proposal_id)
+    }
+
+    pub fn list_active_proposals(&self) -> Vec<&Proposal> {
+        self.democratic_system.list_active_proposals()
+    }
+
+    pub fn mark_as_implemented(&mut self, proposal_id: &str) -> Result<()> {
+        self.democratic_system.mark_as_implemented(proposal_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
-    fn test_vote_and_tally() {
-        let mut system = DemocraticSystem::new();
-        let proposal_id = system.create_proposal(
+    fn test_governance_system() {
+        let mut gov_system = GovernanceSystem::new();
+
+        // Create a proposal
+        let proposal_id = gov_system.create_proposal(
             "Test Proposal".to_string(),
             "This is a test proposal".to_string(),
             "Alice".to_string(),
-            Duration::seconds(1), // Short duration for testing
+            Duration::days(7),
             ProposalType::Constitutional,
             ProposalCategory::Technical,
             0.5,
             None,
         ).unwrap();
 
-        system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0).unwrap();
-        system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0).unwrap();
-        system.vote("David".to_string(), proposal_id.clone(), true, 1.0).unwrap();
+        // Vote on the proposal
+        assert!(gov_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0).is_ok());
+        assert!(gov_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0).is_ok());
+        assert!(gov_system.vote("David".to_string(), proposal_id.clone(), true, 1.0).is_ok());
 
-        // Wait for voting period to end
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Tally votes
+        assert!(gov_system.tally_votes(&proposal_id).is_ok());
 
-        let tally_result = system.tally_votes(&proposal_id);
-        assert!(tally_result.is_ok());
-
-        let proposal = system.get_proposal(&proposal_id).unwrap();
+        // Check proposal status
+        let proposal = gov_system.get_proposal(&proposal_id).unwrap();
         assert_eq!(proposal.status, ProposalStatus::Passed);
+
+        // Mark as implemented
+        assert!(gov_system.mark_as_implemented(&proposal_id).is_ok());
+        let updated_proposal = gov_system.get_proposal(&proposal_id).unwrap();
+        assert_eq!(updated_proposal.status, ProposalStatus::Implemented);
     }
 }===== END OF crates/icn_governance/src/lib.rs =====
 
-===== START OF crates/icn_identity/src/lib.rs =====
+===== START OF crates/icn_governance/src/proposal.rs =====
+use crate::democracy::{ProposalCategory, ProposalType, ProposalStatus};
+use chrono::{DateTime, Utc, Duration};
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Proposal {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub proposer: String,
+    pub created_at: DateTime<Utc>,
+    pub voting_ends_at: DateTime<Utc>,
+    pub status: ProposalStatus,
+    pub proposal_type: ProposalType,
+    pub category: ProposalCategory,
+    pub required_quorum: f64,
+    pub execution_timestamp: Option<DateTime<Utc>>,
+}
+
+impl Proposal {
+    pub fn new(
+        id: String,
+        title: String,
+        description: String,
+        proposer: String,
+        voting_period: Duration,
+        proposal_type: ProposalType,
+        category: ProposalCategory,
+        required_quorum: f64,
+        execution_timestamp: Option<DateTime<Utc>>,
+    ) -> Self {
+        let now = Utc::now();
+        Proposal {
+            id,
+            title,
+            description,
+            proposer,
+            created_at: now,
+            voting_ends_at: now + voting_period,
+            status: ProposalStatus::Active,
+            proposal_type,
+            category,
+            required_quorum,
+            execution_timestamp,
+        }
+    }
+}===== END OF crates/icn_governance/src/proposal.rs =====
+
+===== START OF crates/icn_governance/src/voting.rs =====
+use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl Vote {
+    pub fn new(voter: String, proposal_id: String, in_favor: bool, weight: f64) -> Self {
+        Vote {
+            voter,
+            proposal_id,
+            in_favor,
+            weight,
+            timestamp: Utc::now(),
+        }
+    }
+}===== END OF crates/icn_governance/src/voting.rs =====
+
+===== START OF crates/icn_identity/Cargo.toml =====
+[package]
+name = "icn_identity"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+ed25519-dalek = "1.0"
+rand = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }===== END OF crates/icn_identity/Cargo.toml =====
+
+===== START OF crates/icn_identity/src/did.rs =====
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Verifier};
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -2263,7 +3327,7 @@ mod public_key_serde {
 
 impl DecentralizedIdentity {
     pub fn new(attributes: HashMap<String, String>) -> (Self, Keypair) {
-        let mut csprng = OsRng {};
+        let mut csprng = rand::rngs::OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let public_key = keypair.public;
         let id = format!("did:icn:{}", hex::encode(public_key.to_bytes()));
@@ -2283,213 +3347,203 @@ impl DecentralizedIdentity {
     pub fn verify_signature(&self, message: &[u8], signature: &Signature) -> bool {
         self.public_key.verify(message, signature).is_ok()
     }
-}
+}===== END OF crates/icn_identity/src/did.rs =====
 
-pub struct DidManager {
-    dids: HashMap<String, DecentralizedIdentity>,
-}
-
-impl DidManager {
-    pub fn new() -> Self {
-        DidManager {
-            dids: HashMap::new(),
-        }
-    }
-
-    pub fn add_did(&mut self, did: DecentralizedIdentity) {
-        self.dids.insert(did.id.clone(), did);
-    }
-
-    pub fn get_did(&self, id: &str) -> Option<&DecentralizedIdentity> {
-        self.dids.get(id)
-    }
-
-    pub fn verify_signature(
-        &self,
-        did_id: &str,
-        message: &[u8],
-        signature: &Signature,
-    ) -> Result<bool, String> {
-        if let Some(did) = self.get_did(did_id) {
-            Ok(did.verify_signature(message, signature))
-        } else {
-            Err(format!("DID not found: {}", did_id))
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ed25519_dalek::Signer;
-
-    #[test]
-    fn test_add_and_get_did() {
-        let mut manager = DidManager::new();
-        let (did, _keypair) = DecentralizedIdentity::new(HashMap::new());
-        let did_id = did.id.clone();
-        manager.add_did(did);
-
-        assert!(manager.get_did(&did_id).is_some());
-    }
-
-    #[test]
-    fn test_verify_signature() {
-        let mut manager = DidManager::new();
-        let (did, keypair) = DecentralizedIdentity::new(HashMap::new());
-        let did_id = did.id.clone();
-        manager.add_did(did);
-
-        let message = b"test message";
-        let signature = keypair.sign(message);
-
-        assert!(manager.verify_signature(&did_id, message, &signature).unwrap());
-    }
-
-    #[test]
-    fn test_verify_signature_invalid() {
-        let mut manager = DidManager::new();
-        let (did, keypair) = DecentralizedIdentity::new(HashMap::new());
-        let did_id = did.id.clone();
-        manager.add_did(did);
-
-        let message = b"test message";
-        let invalid_message = b"invalid message";
-        let signature = keypair.sign(message);
-
-        assert!(!manager.verify_signature(&did_id, invalid_message, &signature).unwrap());
-    }
-}
-===== END OF crates/icn_identity/src/lib.rs =====
-
-===== START OF crates/icn_network/src/data_packet.rs =====
-===== END OF crates/icn_network/src/data_packet.rs =====
-
-===== START OF crates/icn_network/src/interest_packet.rs =====
-pub struct InterestPacket {
-    pub name: String,
-}
-===== END OF crates/icn_network/src/interest_packet.rs =====
-
-===== START OF crates/icn_network/src/naming.rs =====
+===== START OF crates/icn_identity/src/identity_manager.rs =====
+use crate::DecentralizedIdentity;
+use ed25519_dalek::Signature;
+use icn_core::error::{Error, Result};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct NameRecord {
-    pub name: String,
-    pub owner: String,
-    pub target: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+pub struct IdentityManager {
+    identities: HashMap<String, DecentralizedIdentity>,
 }
 
-pub struct NamingSystem {
-    records: HashMap<String, NameRecord>,
-}
-
-impl NamingSystem {
+impl IdentityManager {
     pub fn new() -> Self {
-        NamingSystem {
-            records: HashMap::new(),
+        IdentityManager {
+            identities: HashMap::new(),
         }
     }
 
-    pub fn register(&mut self, name: String, owner: String, target: String, duration: chrono::Duration) -> Result<(), String> {
-        if self.records.contains_key(&name) {
-            return Err("Name already registered".to_string());
-        }
+    pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> Result<DecentralizedIdentity> {
+        let (identity, _) = DecentralizedIdentity::new(attributes);
+        self.identities.insert(identity.id.clone(), identity.clone());
+        Ok(identity)
+    }
 
-        let now = Utc::now();
-        let record = NameRecord {
-            name: name.clone(),
-            owner,
-            target,
-            created_at: now,
-            expires_at: now + duration,
-        };
+    pub fn get_identity(&self, id: &str) -> Option<&DecentralizedIdentity> {
+        self.identities.get(id)
+    }
 
-        self.records.insert(name, record);
+    pub fn update_reputation(&mut self, id: &str, change: f64) -> Result<()> {
+        let identity = self.identities.get_mut(id).ok_or(Error::IdentityError("Identity not found".to_string()))?;
+        identity.reputation += change;
         Ok(())
     }
 
-    pub fn resolve(&self, name: &str) -> Option<&NameRecord> {
-        self.records.get(name)
-    }
-
-    pub fn update(&mut self, name: &str, new_target: String, owner: &str) -> Result<(), String> {
-        if let Some(record) = self.records.get_mut(name) {
-            if record.owner != owner {
-                return Err("Not the owner of the name".to_string());
-            }
-            record.target = new_target;
-            Ok(())
-        } else {
-            Err("Name not found".to_string())
-        }
-    }
-
-    pub fn transfer(&mut self, name: &str, new_owner: String, current_owner: &str) -> Result<(), String> {
-        if let Some(record) = self.records.get_mut(name) {
-            if record.owner != current_owner {
-                return Err("Not the owner of the name".to_string());
-            }
-            record.owner = new_owner;
-            Ok(())
-        } else {
-            Err("Name not found".to_string())
-        }
-    }
-
-    pub fn renew(&mut self, name: &str, duration: chrono::Duration, owner: &str) -> Result<(), String> {
-        if let Some(record) = self.records.get_mut(name) {
-            if record.owner != owner {
-                return Err("Not the owner of the name".to_string());
-            }
-            record.expires_at = record.expires_at + duration;
-            Ok(())
-        } else {
-            Err("Name not found".to_string())
-        }
+    pub fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> Result<bool> {
+        let identity = self.identities.get(id).ok_or(Error::IdentityError("Identity not found".to_string()))?;
+        Ok(identity.verify_signature(message, signature))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Keypair, Signer};
 
     #[test]
-    fn test_naming_system() {
-        let mut naming_system = NamingSystem::new();
-
-        // Register a name
-        naming_system.register(
-            "alice.icn".to_string(),
-            "Alice".to_string(),
-            "0x1234...".to_string(),
-            chrono::Duration::days(365)
-        ).unwrap();
-
-        // Resolve the name
-        let record = naming_system.resolve("alice.icn").unwrap();
-        assert_eq!(record.owner, "Alice");
-        assert_eq!(record.target, "0x1234...");
-
-        // Update the target
-        naming_system.update("alice.icn", "0x5678...".to_string(), "Alice").unwrap();
-        let updated_record = naming_system.resolve("alice.icn").unwrap();
-        assert_eq!(updated_record.target, "0x5678...");
-
-        // Transfer ownership
-        naming_system.transfer("alice.icn", "Bob".to_string(), "Alice").unwrap();
-        let transferred_record = naming_system.resolve("alice.icn").unwrap();
-        assert_eq!(transferred_record.owner, "Bob");
-
-        // Attempt to update with old owner (should fail)
-        assert!(naming_system.update("alice.icn", "0x9876...".to_string(), "Alice").is_err());
+    fn test_identity_management() {
+        let mut manager = IdentityManager::new();
+        
+        // Create a new identity
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        let identity = manager.create_identity(attributes).unwrap();
+        
+        // Verify the identity exists
+        assert!(manager.get_identity(&identity.id).is_some());
+        
+        // Update reputation
+        assert!(manager.update_reputation(&identity.id, 0.5).is_ok());
+        let updated_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 1.5);
+        
+        // Test signature verification
+        let message = b"Hello, World!";
+        let mut csprng = rand::rngs::OsRng {};
+        let keypair = Keypair::generate(&mut csprng);
+        let signature = keypair.sign(message);
+        
+        // This should fail because we're using a different keypair
+        assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
     }
-}===== END OF crates/icn_network/src/naming.rs =====
+}===== END OF crates/icn_identity/src/identity_manager.rs =====
+
+===== START OF crates/icn_identity/src/lib.rs =====
+mod did;
+mod identity_manager;
+
+pub use did::DecentralizedIdentity;
+pub use identity_manager::IdentityManager;
+
+use icn_core::error::{Error, Result};===== END OF crates/icn_identity/src/lib.rs =====
+
+===== START OF crates/icn_network/src/discovery.rs =====
+use crate::node::Node;
+use icn_core::error::Result;
+
+pub struct DiscoveryService;
+
+impl DiscoveryService {
+    pub fn new() -> Self {
+        DiscoveryService
+    }
+
+    pub fn register_node(&self, node: &Node) -> Result<()> {
+        // Implement node registration logic
+        Ok(())
+    }
+
+    pub fn unregister_node(&self, node_id: &str) -> Result<()> {
+        // Implement node unregistration logic
+        Ok(())
+    }
+}===== END OF crates/icn_network/src/discovery.rs =====
+
+===== START OF crates/icn_network/src/lib.rs =====
+mod node;
+mod packet;
+mod routing;
+mod protocol;
+mod security;
+mod discovery;
+mod naming;
+
+pub use node::{Node, NodeType};
+pub use packet::{Packet, PacketType};
+pub use routing::RoutingTable;
+pub use protocol::NetworkProtocol;
+pub use security::SecurityManager;
+pub use discovery::DiscoveryService;
+pub use naming::NamingService;
+
+use icn_core::error::{Error, Result};
+
+pub struct Network {
+    nodes: Vec<Node>,
+    routing_table: RoutingTable,
+    protocol: NetworkProtocol,
+    security_manager: SecurityManager,
+    discovery_service: DiscoveryService,
+    naming_service: NamingService,
+}
+
+impl Network {
+    pub fn new() -> Self {
+        Network {
+            nodes: Vec::new(),
+            routing_table: RoutingTable::new(),
+            protocol: NetworkProtocol::new(),
+            security_manager: SecurityManager::new(),
+            discovery_service: DiscoveryService::new(),
+            naming_service: NamingService::new(),
+        }
+    }
+
+    pub fn add_node(&mut self, node: Node) -> Result<()> {
+        self.nodes.push(node);
+        self.discovery_service.register_node(&node)?;
+        self.routing_table.update(&self.nodes)?;
+        Ok(())
+    }
+
+    pub fn remove_node(&mut self, node_id: &str) -> Result<()> {
+        self.nodes.retain(|n| n.id != node_id);
+        self.discovery_service.unregister_node(node_id)?;
+        self.routing_table.update(&self.nodes)?;
+        Ok(())
+    }
+
+    pub fn send_packet(&self, packet: Packet) -> Result<()> {
+        self.security_manager.validate_packet(&packet)?;
+        let route = self.routing_table.get_route(&packet.destination)?;
+        self.protocol.send_packet(&packet, &route)
+    }
+
+    pub fn receive_packet(&self, packet: Packet) -> Result<()> {
+        self.security_manager.validate_packet(&packet)?;
+        self.protocol.process_packet(packet)
+    }
+
+    pub fn resolve_name(&self, name: &str) -> Result<String> {
+        self.naming_service.resolve(name)
+    }
+
+    pub fn register_name(&mut self, name: &str, address: &str) -> Result<()> {
+        self.naming_service.register(name, address)
+    }
+}===== END OF crates/icn_network/src/lib.rs =====
+
+===== START OF crates/icn_network/src/naming.rs =====
+use icn_core::error::{Error, Result};
+use std::collections::HashMap;
+
+pub struct NamingService {
+    names: HashMap<String, String>,
+}
+
+impl NamingService {
+    pub fn new() -> Self {
+        NamingService {
+            names: HashMap::new(),
+        }
+    }
+
+    pub fn resolve(&self, name: &str) -> Result<String> {
+        self.names.get(name)
+            .cl===== END OF crates/icn_network/src/naming.rs =====
 
 ===== START OF crates/icn_network/src/network.rs =====
 use std::collections::HashMap;
@@ -2634,24 +3688,107 @@ impl Node {
             address: address.to_string(),
         }
     }
-}
-===== END OF crates/icn_network/src/node.rs =====
+}===== END OF crates/icn_network/src/node.rs =====
 
 ===== START OF crates/icn_network/src/packet.rs =====
-#[derive(Clone, Debug)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PacketType {
-    Interest,
     Data,
+    Interest,
+    Control,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Packet {
     pub packet_type: PacketType,
-    pub name: String,
+    pub source: String,
+    pub destination: String,
     pub content: Vec<u8>,
+}
+
+impl Packet {
+    pub fn new(packet_type: PacketType, source: String, destination: String, content: Vec<u8>) -> Self {
+        Packet {
+            packet_type,
+            source,
+            destination,
+            content,
+        }
+    }
 }===== END OF crates/icn_network/src/packet.rs =====
 
-===== START OF crates/icn_node/src/content_store.rs =====
+===== START OF crates/icn_network/src/protocol.rs =====
+use crate::packet::Packet;
+use icn_core::error::Result;
+
+pub struct NetworkProtocol;
+
+impl NetworkProtocol {
+    pub fn new() -> Self {
+        NetworkProtocol
+    }
+
+    pub fn send_packet(&self, packet: &Packet, route: &str) -> Result<()> {
+        // Implement packet sending logic
+        Ok(())
+    }
+
+    pub fn process_packet(&self, packet: Packet) -> Result<()> {
+        // Implement packet processing logic
+        Ok(())
+    }
+}===== END OF crates/icn_network/src/protocol.rs =====
+
+===== START OF crates/icn_network/src/routing.rs =====
+use crate::node::Node;
+use icn_core::error::{Error, Result};
+use std::collections::HashMap;
+
+pub struct RoutingTable {
+    routes: HashMap<String, String>,
+}
+
+impl RoutingTable {
+    pub fn new() -> Self {
+        RoutingTable {
+            routes: HashMap::new(),
+        }
+    }
+
+    pub fn update(&mut self, nodes: &[Node]) -> Result<()> {
+        // Implement routing table update logic
+        // This could involve shortest path algorithms or other routing strategies
+        Ok(())
+    }
+
+    pub fn get_route(&self, destination: &str) -> Result<String> {
+        self.routes.get(destination)
+            .cloned()
+            .ok_or_else(|| Error::NetworkError("Route not found".to_string()))
+    }
+}===== END OF crates/icn_network/src/routing.rs =====
+
+===== START OF crates/icn_network/src/security.rs =====
+use crate::packet::Packet;
+use icn_core::error::Result;
+
+pub struct SecurityManager;
+
+impl SecurityManager {
+    pub fn new() -> Self {
+        SecurityManager
+    }
+
+    pub fn validate_packet(&self, packet: &Packet) -> Result<()> {
+        // Implement packet validation logic
+        // This could include signature verification, encryption checks, etc.
+        Ok(())
+    }
+}===== END OF crates/icn_network/src/security.rs =====
+
+===== START OF crates/icn_node_managment/src/content_store.rs =====
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -2755,9 +3892,9 @@ mod tests {
         assert_eq!(cs.get("test2"), Some(vec![5, 6, 7, 8]));
     }
 }
-===== END OF crates/icn_node/src/content_store.rs =====
+===== END OF crates/icn_node_managment/src/content_store.rs =====
 
-===== START OF crates/icn_node/src/fib.rs =====
+===== START OF crates/icn_node_managment/src/fib.rs =====
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
@@ -2925,9 +4062,9 @@ mod tests {
         assert_eq!(entry.next_hops[0], addr2);
     }
 }
-===== END OF crates/icn_node/src/fib.rs =====
+===== END OF crates/icn_node_managment/src/fib.rs =====
 
-===== START OF crates/icn_node/src/icn_node.rs =====
+===== START OF crates/icn_node_managment/src/icn_node.rs =====
 // ===============================================
 // ICN Node Implementation
 // ===============================================
@@ -3089,9 +4226,9 @@ impl ICNNode {
         Ok(vec![])
     }
 }
-===== END OF crates/icn_node/src/icn_node.rs =====
+===== END OF crates/icn_node_managment/src/icn_node.rs =====
 
-===== START OF crates/icn_node/src/node.rs =====
+===== START OF crates/icn_node_managment/src/node.rs =====
 // ===============================================
 // Content Store, FIB, and PIT Implementation
 // ===============================================
@@ -3233,9 +4370,9 @@ impl PendingInterestTable {
         self.table.is_empty()
     }
 }
-===== END OF crates/icn_node/src/node.rs =====
+===== END OF crates/icn_node_managment/src/node.rs =====
 
-===== START OF crates/icn_node/src/pending_interest_table.rs =====
+===== START OF crates/icn_node_managment/src/pending_interest_table.rs =====
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -3327,7 +4464,7 @@ mod tests {
         assert!(!pit.has_pending_interest("test_expired"));
     }
 }
-===== END OF crates/icn_node/src/pending_interest_table.rs =====
+===== END OF crates/icn_node_managment/src/pending_interest_table.rs =====
 
 ===== START OF crates/icn_sharding/src/cross_shard_communication.rs =====
 use crate::blockchain::Transaction;

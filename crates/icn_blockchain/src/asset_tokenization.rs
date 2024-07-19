@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use icn_core::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AssetToken {
@@ -50,12 +51,12 @@ impl AssetRegistry {
         token
     }
 
-    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<(), String> {
+    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<()> {
         if let Some(token) = self.tokens.iter_mut().find(|t| t.id == token_id) {
             token.transfer(new_owner);
             Ok(())
         } else {
-            Err("Token not found".to_string())
+            Err(Error::BlockchainError("Token not found".to_string()))
         }
     }
 

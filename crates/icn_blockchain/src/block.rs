@@ -1,7 +1,8 @@
-// src/blockchain/block.rs
-use crate::blockchain::Transaction;
+// crates/icn_blockchain/src/block.rs
+use crate::Transaction;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -33,7 +34,14 @@ impl Block {
     }
 
     pub fn calculate_hash(&self) -> String {
-        // Implement proper hash calculation logic
-        format!("block_hash_{}", self.index)
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(transaction.to_string());
+        }
+        hasher.update(&self.previous_hash);
+        hasher.update(self.nonce.to_string());
+        format!("{:x}", hasher.finalize())
     }
 }

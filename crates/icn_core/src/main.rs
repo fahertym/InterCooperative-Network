@@ -4,16 +4,15 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
-use icn_node::blockchain::Transaction;
-use icn_node::consensus::PoCConsensus;
-use icn_node::currency::CurrencyType;
-use icn_node::governance::{DemocraticSystem, ProposalType, ProposalCategory};
-use icn_node::identity::DecentralizedIdentity;
-use icn_node::network::Network;
-use icn_node::network::node::{Node, NodeType};
-use icn_node::vm::CSCLCompiler;
-use icn_node::IcnNode;
-use icn_node::error::Error as IcnNodeError;
+use icn_core::{IcnNode, Error as IcnNodeError};
+use icn_blockchain::Transaction;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencyType;
+use icn_governance::{DemocraticSystem, ProposalType, ProposalCategory};
+use icn_identity::DecentralizedIdentity;
+use icn_network::Network;
+use icn_network::node::{Node, NodeType};
+use icn_vm::CSCLCompiler;
 
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
@@ -184,7 +183,7 @@ fn print_final_state(node: &Arc<IcnNode>, consensus: &PoCConsensus, democratic_s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_node::governance::democracy::ProposalStatus;
+    use icn_governance::democracy::ProposalStatus;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 

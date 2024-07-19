@@ -1,15 +1,12 @@
-use crate::blockchain::{Blockchain, Transaction};
-use crate::governance::DemocraticSystem;
-use crate::governance::democracy::ProposalStatus as DemocracyProposalStatus;
-// Remove this line
-// use crate::error::Error;
+use icn_blockchain::{Blockchain, Transaction};
+use icn_governance::DemocraticSystem;
+use icn_governance::democracy::ProposalStatus as DemocracyProposalStatus;
+use icn_core::Error;
 
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use chrono::{DateTime, Utc, Duration};
-
-// The rest of the file remains the same...
 
 #[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
@@ -142,10 +139,10 @@ pub struct Proposal {
     pub title: String,
     pub description: String,
     pub proposer: String,
-    #[serde(serialize_with = "serialize_duration", deserialize_with = "deserialize_duration")]
+    #[serde(with = "duration_serde")]
     pub voting_period: Duration,
-    pub proposal_type: crate::governance::democracy::ProposalType,
-    pub category: crate::governance::democracy::ProposalCategory,
+    pub proposal_type: icn_governance::democracy::ProposalType,
+    pub category: icn_governance::democracy::ProposalCategory,
     pub required_quorum: f64,
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
@@ -177,25 +174,30 @@ impl From<DemocracyProposalStatus> for ProposalStatus {
     }
 }
 
-fn serialize_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_i64(duration.num_seconds())
-}
+mod duration_serde {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let seconds = i64::deserialize(deserializer)?;
-    Ok(Duration::seconds(seconds))
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_i64(duration.num_seconds())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let seconds = i64::deserialize(deserializer)?;
+        Ok(Duration::seconds(seconds))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::currency::CurrencyType;
+    use icn_currency::CurrencyType;
 
     // Helper function to create a mock ApiLayer for testing
     async fn create_mock_api_layer() -> ApiLayer {

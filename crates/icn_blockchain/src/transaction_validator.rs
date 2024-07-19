@@ -1,12 +1,9 @@
-// Filename: src/blockchain/transaction_validator.rs
+// crates/icn_blockchain/src/transaction_validator.rs
+use crate::{Transaction, Blockchain};
 
-use crate::blockchain::{Transaction, Blockchain};
-
-// Struct to validate transactions
 pub struct TransactionValidator;
 
 impl TransactionValidator {
-    // Function to validate a transaction
     pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> bool {
         if !Self::is_double_spend(transaction, blockchain) &&
            Self::validate_currency_and_amount(transaction) &&
@@ -17,20 +14,23 @@ impl TransactionValidator {
         }
     }
 
-    // Function to check for double spending
-    fn is_double_spend(_transaction: &Transaction, _blockchain: &Blockchain) -> bool {
-        // TODO: Implement double spend check
+    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> bool {
+        for block in &blockchain.chain {
+            for tx in &block.transactions {
+                if tx == transaction {
+                    return true;
+                }
+            }
+        }
         false
     }
 
-    // Function to validate the currency and amount of a transaction
     fn validate_currency_and_amount(transaction: &Transaction) -> bool {
         transaction.amount > 0.0
     }
 
-    // Function to check if the sender has sufficient balance for the transaction
-    fn check_sufficient_balance(_transaction: &Transaction, _blockchain: &Blockchain) -> bool {
-        // TODO: Implement balance check
-        true
+    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> bool {
+        let balance = blockchain.get_balance(&transaction.from);
+        balance >= transaction.amount
     }
 }
