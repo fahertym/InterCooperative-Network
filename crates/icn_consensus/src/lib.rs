@@ -1,6 +1,5 @@
-use serde::{Serialize, Deserialize};
-use icn_core::error::{Error, Result};
-use log::{info, warn, debug};
+use icn_common::{Error, Result};
+use log::{info, warn};
 
 mod bft_poc;
 mod proof_of_cooperation;
@@ -8,14 +7,14 @@ mod proof_of_cooperation;
 pub use bft_poc::BFTPoC;
 pub use proof_of_cooperation::ProofOfCooperation;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PoCConsensus {
     pub members: Vec<Member>,
     pub threshold: f64,
     pub quorum: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Member {
     pub id: String,
     pub reputation: f64,
@@ -24,7 +23,6 @@ pub struct Member {
 
 impl PoCConsensus {
     pub fn new(threshold: f64, quorum: f64) -> Self {
-        info!("Creating new PoCConsensus with threshold: {} and quorum: {}", threshold, quorum);
         PoCConsensus {
             members: Vec::new(),
             threshold,
@@ -33,35 +31,31 @@ impl PoCConsensus {
     }
 
     pub fn add_member(&mut self, member_id: String, is_validator: bool) -> Result<()> {
-        debug!("Adding new member: {}, is_validator: {}", member_id, is_validator);
         if self.members.iter().any(|m| m.id == member_id) {
-            return Err(Error::ConsensusError("Member already exists".to_string()));
+            return Err(Error {
+                message: "Member already exists".to_string(),
+            });
         }
         self.members.push(Member { id: member_id.clone(), reputation: 1.0, is_validator });
-        info!("Added new member: {}", member_id);
         Ok(())
     }
 
     pub fn remove_member(&mut self, member_id: &str) -> Result<()> {
-        debug!("Attempting to remove member: {}", member_id);
         if let Some(index) = self.members.iter().position(|m| m.id == member_id) {
             self.members.remove(index);
-            info!("Removed member: {}", member_id);
             Ok(())
         } else {
-            warn!("Failed to remove member: {} (not found)", member_id);
-            Err(Error::ConsensusError(format!("Member not found: {}", member_id)))
+            return Err(Error {
+                message: format!("Member not found: {}", member_id),
+            })
         }
     }
 
     pub fn is_validator(&self, member_id: &str) -> bool {
-        let is_validator = self.members.iter().any(|m| m.id == member_id && m.is_validator);
-        debug!("Checking if {} is a validator: {}", member_id, is_validator);
-        is_validator
+        self.members.iter().any(|m| m.id == member_id && m.is_validator)
     }
 
     pub fn validate_block(&self, block_hash: &str, votes: &[(&str, bool)]) -> Result<bool> {
-        debug!("Validating block: {}", block_hash);
         let total_reputation: f64 = self.members.iter().map(|m| m.reputation).sum();
         let mut positive_reputation = 0.0;
         let mut participating_reputation = 0.0;
@@ -73,12 +67,16 @@ impl PoCConsensus {
                     positive_reputation += member.reputation;
                 }
             } else {
-                return Err(Error::ConsensusError(format!("Invalid member in votes: {}", member_id)));
+                return Err(Error {
+                    message: format!("Invalid member in votes: {}", member_id),
+                });
             }
         }
 
         if participating_reputation / total_reputation < self.quorum {
-            return Err(Error::ConsensusError("Quorum not reached".to_string()));
+            return Err(Error {
+                message: "Quorum not reached".to_string(),
+            });
         }
 
         Ok(positive_reputation / participating_reputation >= self.threshold)
@@ -90,7 +88,9 @@ impl PoCConsensus {
             member.reputation = member.reputation.max(0.0);  // Ensure reputation doesn't go negative
             Ok(())
         } else {
-            Err(Error::ConsensusError(format!("Member not found: {}", member_id)))
+            return Err(Error {
+                message: format!("Member not found: {}", member_id),
+            })
         }
     }
 

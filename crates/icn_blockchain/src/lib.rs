@@ -8,9 +8,8 @@ pub use transaction::Transaction;
 pub use transaction_validator::TransactionValidator;
 pub use asset_tokenization::{AssetToken, AssetRegistry};
 
-use icn_currency::CurrencyType;
+use icn_common::{Error, Result, CurrencyType};
 use icn_consensus::PoCConsensus;
-use icn_core::error::{Error, Result};
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
@@ -47,12 +46,16 @@ impl Blockchain {
             self.pending_transactions.push(transaction);
             Ok(())
         } else {
-            Err(Error::BlockchainError("Invalid transaction".to_string()))
+            Err(Error {
+                message: "Invalid transaction".to_string(),
+            })
         }
     }
 
     pub fn create_block(&mut self, author: String) -> Result<()> {
-        let previous_block = self.chain.last().ok_or(Error::BlockchainError("No previous block found".to_string()))?;
+        let previous_block = self.chain.last().ok_or_else(|| Error {
+            message: "No previous block found".to_string(),
+        })?;
         let new_block = Block::new(
             self.chain.len() as u64,
             self.pending_transactions.clone(),
@@ -89,11 +92,15 @@ impl Blockchain {
             let current_block = &self.chain[i];
 
             if current_block.previous_hash != previous_block.hash {
-                return Err(Error::BlockchainError("Invalid previous hash".to_string()));
+                return Err(Error {
+                    message: "Invalid previous hash".to_string(),
+                });
             }
 
             if current_block.hash != current_block.calculate_hash() {
-                return Err(Error::BlockchainError("Invalid block hash".to_string()));
+                return Err(Error {
+                    message: "Invalid block hash".to_string(),
+                });
             }
         }
         Ok(())
@@ -109,7 +116,9 @@ impl Blockchain {
 
     pub fn add_asset_token(&mut self, asset_id: String, currency_type: CurrencyType) -> Result<()> {
         if self.asset_tokens.contains_key(&asset_id) {
-            return Err(Error::BlockchainError("Asset token already exists".to_string()));
+            return Err(Error {
+                message: "Asset token already exists".to_string(),
+            });
         }
         self.asset_tokens.insert(asset_id, currency_type);
         Ok(())
@@ -117,7 +126,9 @@ impl Blockchain {
 
     pub fn add_bond(&mut self, bond_id: String, currency_type: CurrencyType) -> Result<()> {
         if self.bonds.contains_key(&bond_id) {
-            return Err(Error::BlockchainError("Bond already exists".to_string()));
+            return Err(Error {
+                message: "Bond already exists".to_string(),
+            });
         }
         self.bonds.insert(bond_id, currency_type);
         Ok(())

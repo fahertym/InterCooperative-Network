@@ -253,12 +253,12 @@ mod tests {
 
 ===== START OF crates/icn_blockchain/Cargo.toml =====
 [package]
-name = "icn_blockchain"  # This should be icn_blockchain, not icn_api
+name = "icn_blockchain"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_common = { path = "../icn_common" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -267,7 +267,8 @@ thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
-tokio-test = "0.4"===== END OF crates/icn_blockchain/Cargo.toml =====
+tokio-test = "0.4"
+===== END OF crates/icn_blockchain/Cargo.toml =====
 
 ===== START OF crates/icn_blockchain/src/asset_tokenization.rs =====
 use serde::{Serialize, Deserialize};
@@ -772,9 +773,8 @@ pub use transaction::Transaction;
 pub use transaction_validator::TransactionValidator;
 pub use asset_tokenization::{AssetToken, AssetRegistry};
 
-use icn_currency::CurrencyType;
+use icn_common::{Error, Result, CurrencyType};
 use icn_consensus::PoCConsensus;
-use icn_core::error::{Error, Result};
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
@@ -811,12 +811,16 @@ impl Blockchain {
             self.pending_transactions.push(transaction);
             Ok(())
         } else {
-            Err(Error::BlockchainError("Invalid transaction".to_string()))
+            Err(Error {
+                message: "Invalid transaction".to_string(),
+            })
         }
     }
 
     pub fn create_block(&mut self, author: String) -> Result<()> {
-        let previous_block = self.chain.last().ok_or(Error::BlockchainError("No previous block found".to_string()))?;
+        let previous_block = self.chain.last().ok_or_else(|| Error {
+            message: "No previous block found".to_string(),
+        })?;
         let new_block = Block::new(
             self.chain.len() as u64,
             self.pending_transactions.clone(),
@@ -853,11 +857,15 @@ impl Blockchain {
             let current_block = &self.chain[i];
 
             if current_block.previous_hash != previous_block.hash {
-                return Err(Error::BlockchainError("Invalid previous hash".to_string()));
+                return Err(Error {
+                    message: "Invalid previous hash".to_string(),
+                });
             }
 
             if current_block.hash != current_block.calculate_hash() {
-                return Err(Error::BlockchainError("Invalid block hash".to_string()));
+                return Err(Error {
+                    message: "Invalid block hash".to_string(),
+                });
             }
         }
         Ok(())
@@ -873,7 +881,9 @@ impl Blockchain {
 
     pub fn add_asset_token(&mut self, asset_id: String, currency_type: CurrencyType) -> Result<()> {
         if self.asset_tokens.contains_key(&asset_id) {
-            return Err(Error::BlockchainError("Asset token already exists".to_string()));
+            return Err(Error {
+                message: "Asset token already exists".to_string(),
+            });
         }
         self.asset_tokens.insert(asset_id, currency_type);
         Ok(())
@@ -881,7 +891,9 @@ impl Blockchain {
 
     pub fn add_bond(&mut self, bond_id: String, currency_type: CurrencyType) -> Result<()> {
         if self.bonds.contains_key(&bond_id) {
-            return Err(Error::BlockchainError("Bond already exists".to_string()));
+            return Err(Error {
+                message: "Bond already exists".to_string(),
+            });
         }
         self.bonds.insert(bond_id, currency_type);
         Ok(())
@@ -1071,7 +1083,8 @@ mod tests {
 
         assert!(blockchain.add_transaction(transaction2).is_err());
     }
-}===== END OF crates/icn_blockchain/src/lib.rs =====
+}
+===== END OF crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF crates/icn_blockchain/src/transaction.rs =====
 use serde::{Deserialize, Serialize};
@@ -1337,130 +1350,193 @@ mod tests {
     }
 }===== END OF crates/icn_blockchain/src/transaction_validator.rs =====
 
-===== START OF crates/icn_consensus/Cargo.toml =====
+===== START OF crates/icn_common/Cargo.toml =====
 [package]
-name = "icn_consensus"
+name = "icn_common"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+===== END OF crates/icn_common/Cargo.toml =====
 
-[dev-dependencies]
-tokio-test = "0.4"===== END OF crates/icn_consensus/Cargo.toml =====
+===== START OF crates/icn_common/src/lib.rs =====
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
 
-===== START OF crates/icn_consensus/src/bft_poc.rs =====
-use crate::PoCConsensus;
-use icn_core::error::{Error, Result};
-use std::collections::HashMap;
-use log::{info, warn, debug};
-
-pub struct BFTPoC {
-    consensus: PoCConsensus,
-    proposals: HashMap<String, Proposal>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Error {
+    pub message: String,
 }
 
-struct Proposal {
-    block_hash: String,
-    proposer: String,
-    votes: HashMap<String, bool>,
-    status: ProposalStatus,
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub enum CurrencyType {
+    BasicNeeds,
+    Education,
+    Environmental,
+    Community,
+    Volunteer,
+    Storage,
+    Processing,
+    Energy,
+    Luxury,
+    Service,
+    Custom(String),
+    AssetToken(String),
+    Bond(String),
 }
 
-enum ProposalStatus {
-    Proposed,
-    Voting,
-    Committed,
-    Rejected,
+impl std::fmt::Display for CurrencyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            CurrencyType::Custom(name) => write!(f, "Custom({})", name),
+            _ => write!(f, "{:?}", self),
+        }
+    }
 }
 
-impl BFTPoC {
-    pub fn new(threshold: f64, quorum: f64) -> Self {
-        BFTPoC {
-            consensus: PoCConsensus::new(threshold, quorum),
-            proposals: HashMap::new(),
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Currency {
+    pub currency_type: CurrencyType,
+    pub total_supply: f64,
+    pub creation_date: DateTime<Utc>,
+    pub last_issuance: DateTime<Utc>,
+    pub issuance_rate: f64,
+}
+
+impl Currency {
+    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
+        let now = Utc::now();
+        Currency {
+            currency_type,
+            total_supply: initial_supply,
+            creation_date: now,
+            last_issuance: now,
+            issuance_rate,
         }
     }
 
-    pub fn propose_block(&mut self, proposer: &str, block_hash: &str) -> Result<()> {
-        debug!("Proposing block: {} by {}", block_hash, proposer);
-        if !self.consensus.is_validator(proposer) {
-            return Err(Error::ConsensusError("Proposer is not a validator".to_string()));
-        }
+    pub fn mint(&mut self, amount: f64) {
+        self.total_supply += amount;
+        self.last_issuance = Utc::now();
+    }
 
-        let proposal = Proposal {
-            block_hash: block_hash.to_string(),
-            proposer: proposer.to_string(),
-            votes: HashMap::new(),
-            status: ProposalStatus::Proposed,
+    pub fn burn(&mut self, amount: f64) -> Result<()> {
+        if amount > self.total_supply {
+            return Err(Error {
+                message: "Insufficient supply to burn".to_string(),
+            });
+        }
+        self.total_supply -= amount;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CurrencySystem {
+    pub currencies: std::collections::HashMap<CurrencyType, Currency>,
+}
+
+impl CurrencySystem {
+    pub fn new() -> Self {
+        let mut system = CurrencySystem {
+            currencies: std::collections::HashMap::new(),
         };
+        
+        system.add_currency(CurrencyType::BasicNeeds, 1_000_000.0, 0.01);
+        system.add_currency(CurrencyType::Education, 500_000.0, 0.005);
+        system.add_currency(CurrencyType::Environmental, 750_000.0, 0.008);
+        system.add_currency(CurrencyType::Community, 250_000.0, 0.003);
+        system.add_currency(CurrencyType::Volunteer, 100_000.0, 0.002);
+        system.add_currency(CurrencyType::Storage, 1_000_000.0, 0.01);
+        system.add_currency(CurrencyType::Processing, 500_000.0, 0.005);
+        system.add_currency(CurrencyType::Energy, 750_000.0, 0.008);
+        system.add_currency(CurrencyType::Luxury, 100_000.0, 0.001);
+        system.add_currency(CurrencyType::Service, 200_000.0, 0.004);
 
-        self.proposals.insert(block_hash.to_string(), proposal);
-        info!("Block proposed: {}", block_hash);
+        system
+    }
+
+    pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
+        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
+        self.currencies.insert(currency_type.clone(), currency);
+    }
+
+    pub fn get_currency(&self, currency_type: &CurrencyType) -> Option<&Currency> {
+        self.currencies.get(currency_type)
+    }
+
+    pub fn get_currency_mut(&mut self, currency_type: &CurrencyType) -> Option<&mut Currency> {
+        self.currencies.get_mut(currency_type)
+    }
+
+    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> Result<()> {
+        let currency_type = CurrencyType::Custom(name.clone());
+        if self.currencies.contains_key(&currency_type) {
+            return Err(Error {
+                message: format!("Currency '{}' already exists", name),
+            });
+        }
+        self.add_currency(currency_type, initial_supply, issuance_rate);
         Ok(())
     }
 
-    pub fn vote_on_block(&mut self, voter: &str, block_hash: &str, vote: bool) -> Result<()> {
-        debug!("Vote received for block {} from {}: {}", block_hash, voter, vote);
-        let proposal = self.proposals.get_mut(block_hash)
-            .ok_or_else(|| Error::ConsensusError("Proposal not found".to_string()))?;
-
-        if !self.consensus.is_validator(voter) {
-            return Err(Error::ConsensusError("Voter is not a validator".to_string()));
+    pub fn adaptive_issuance(&mut self) {
+        let now = Utc::now();
+        for currency in self.currencies.values_mut() {
+            let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
+            let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
+            currency.mint(issuance_amount);
         }
+    }
 
-        proposal.votes.insert(voter.to_string(), vote);
-        proposal.status = ProposalStatus::Voting;
-        info!("Vote recorded for block {}", block_hash);
+    pub fn print_currency_supplies(&self) {
+        for (currency_type, currency) in &self.currencies {
+            println!("{:?}: {}", currency_type, currency.total_supply);
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Wallet {
+    balances: std::collections::HashMap<CurrencyType, f64>,
+}
+
+impl Wallet {
+    pub fn new() -> Self {
+        Wallet {
+            balances: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn deposit(&mut self, currency_type: CurrencyType, amount: f64) {
+        *self.balances.entry(currency_type.clone()).or_insert(0.0) += amount;
+    }
+
+    pub fn withdraw(&mut self, currency_type: CurrencyType, amount: f64) -> Result<()> {
+        let balance = self.balances.entry(currency_type.clone()).or_insert(0.0);
+        if *balance < amount {
+            return Err(Error {
+                message: format!("Insufficient balance for {:?}", currency_type),
+            });
+        }
+        *balance -= amount;
         Ok(())
     }
 
-    pub fn finalize_block(&mut self, block_hash: &str) -> Result<bool> {
-        debug!("Finalizing block: {}", block_hash);
-        let proposal = self.proposals.get(block_hash)
-            .ok_or_else(|| Error::ConsensusError("Proposal not found".to_string()))?;
-
-        let votes: Vec<(&str, bool)> = proposal.votes.iter()
-            .map(|(k, v)| (k.as_str(), *v))
-            .collect();
-
-        match self.consensus.validate_block(block_hash, &votes) {
-            Ok(true) => {
-                info!("Block {} committed", block_hash);
-                self.update_reputations(block_hash, true)?;
-                self.proposals.get_mut(block_hash).unwrap().status = ProposalStatus::Committed;
-                Ok(true)
-            }
-            Ok(false) => {
-                warn!("Block {} rejected", block_hash);
-                self.update_reputations(block_hash, false)?;
-                self.proposals.get_mut(block_hash).unwrap().status = ProposalStatus::Rejected;
-                Ok(false)
-            }
-            Err(e) => Err(e),
-        }
+    pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
+        *self.balances.get(currency_type).unwrap_or(&0.0)
     }
 
-    fn update_reputations(&mut self, block_hash: &str, committed: bool) -> Result<()> {
-        let proposal = self.proposals.get(block_hash)
-            .ok_or_else(|| Error::ConsensusError("Proposal not found".to_string()))?;
-
-        for (voter, vote) in &proposal.votes {
-            let reputation_change = if *vote == committed { 0.1 } else { -0.1 };
-            self.consensus.update_reputation(voter, reputation_change)?;
+    pub fn print_balances(&self) {
+        for (currency_type, balance) in &self.balances {
+            println!("{:?}: {}", currency_type, balance);
         }
-
-        Ok(())
-    }
-
-    pub fn get_proposal_status(&self, block_hash: &str) -> Result<ProposalStatus> {
-        self.proposals.get(block_hash)
-            .map(|p| p.status.clone())
-            .ok_or_else(|| Error::ConsensusError("Proposal not found".to_string()))
     }
 }
 
@@ -1468,91 +1544,203 @@ impl BFTPoC {
 mod tests {
     use super::*;
 
-    fn setup_bft_poc() -> BFTPoC {
-        let mut bft_poc = BFTPoC::new(0.5, 0.66);
-        bft_poc.consensus.add_member("Alice".to_string(), true).unwrap();
-        bft_poc.consensus.add_member("Bob".to_string(), true).unwrap();
-        bft_poc.consensus.add_member("Charlie".to_string(), true).unwrap();
-        bft_poc
+    #[test]
+    fn test_currency_mint_burn() {
+        let mut currency = Currency::new(CurrencyType::BasicNeeds, 1000.0, 0.01);
+        currency.mint(100.0);
+        assert_eq!(currency.total_supply, 1100.0);
+        assert!(currency.burn(200.0).is_ok());
+        assert_eq!(currency.total_supply, 900.0);
+        assert!(currency.burn(1000.0).is_err());
     }
 
     #[test]
-    fn test_propose_and_vote() {
-        let mut bft_poc = setup_bft_poc();
-
-        assert!(bft_poc.propose_block("Alice", "block1").is_ok());
-        assert!(bft_poc.vote_on_block("Alice", "block1", true).is_ok());
-        assert!(bft_poc.vote_on_block("Bob", "block1", true).is_ok());
-        assert!(bft_poc.vote_on_block("Charlie", "block1", false).is_ok());
-
-        assert!(matches!(bft_poc.get_proposal_status("block1"), Ok(ProposalStatus::Voting)));
+    fn test_currency_system() {
+        let mut system = CurrencySystem::new();
+        system.add_currency(CurrencyType::Custom("TestCoin".to_string()), 500.0, 0.02);
+        let currency = system.get_currency(&CurrencyType::Custom("TestCoin".to_string())).unwrap();
+        assert_eq!(currency.total_supply, 500.0);
     }
 
     #[test]
-    fn test_finalize_block() {
-        let mut bft_poc = setup_bft_poc();
-
-        bft_poc.propose_block("Alice", "block1").unwrap();
-        bft_poc.vote_on_block("Alice", "block1", true).unwrap();
-        bft_poc.vote_on_block("Bob", "block1", true).unwrap();
-        bft_poc.vote_on_block("Charlie", "block1", false).unwrap();
-
-        assert!(bft_poc.finalize_block("block1").unwrap());
-        assert!(matches!(bft_poc.get_proposal_status("block1"), Ok(ProposalStatus::Committed)));
-
-        // Check reputation updates
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Alice" && m.reputation > 1.0));
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Bob" && m.reputation > 1.0));
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Charlie" && m.reputation < 1.0));
+    fn test_wallet_deposit_withdraw() {
+        let mut wallet = Wallet::new();
+        wallet.deposit(CurrencyType::BasicNeeds, 100.0);
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 100.0);
+        assert!(wallet.withdraw(CurrencyType::BasicNeeds, 50.0).is_ok());
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 50.0);
+        assert!(wallet.withdraw(CurrencyType::BasicNeeds, 100.0).is_err());
     }
 
     #[test]
-    fn test_reject_block() {
-        let mut bft_poc = setup_bft_poc();
+    fn test_wallet_balances() {
+        let mut wallet = Wallet::new();
+        wallet.deposit(CurrencyType::BasicNeeds, 200.0);
+        wallet.deposit(CurrencyType::Education, 150.0);
+        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 200.0);
+        assert_eq!(wallet.get_balance(&CurrencyType::Education), 150.0);
+    }
+}
+===== END OF crates/icn_common/src/lib.rs =====
 
-        bft_poc.propose_block("Alice", "block2").unwrap();
-        bft_poc.vote_on_block("Alice", "block2", false).unwrap();
-        bft_poc.vote_on_block("Bob", "block2", false).unwrap();
-        bft_poc.vote_on_block("Charlie", "block2", true).unwrap();
+===== START OF crates/icn_consensus/Cargo.toml =====
+[package]
+name = "icn_consensus"
+version = "0.1.0"
+edition = "2021"
 
-        assert!(!bft_poc.finalize_block("block2").unwrap());
-        assert!(matches!(bft_poc.get_proposal_status("block2"), Ok(ProposalStatus::Rejected)));
+[dependencies]
+icn_common = { path = "../icn_common" }
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+thiserror = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.9.9"
 
-        // Check reputation updates
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Alice" && m.reputation > 1.0));
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Bob" && m.reputation > 1.0));
-        assert!(bft_poc.consensus.members.iter().any(|m| m.id == "Charlie" && m.reputation < 1.0));
+[dev-dependencies]
+tokio-test = "0.4"
+===== END OF crates/icn_consensus/Cargo.toml =====
+
+===== START OF crates/icn_consensus/src/bft_poc.rs =====
+use icn_common::{Error, Result};
+
+#[derive(Debug)]
+pub enum ProposalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+impl Clone for ProposalStatus {
+    fn clone(&self) -> Self {
+        match self {
+            ProposalStatus::Pending => ProposalStatus::Pending,
+            ProposalStatus::Approved => ProposalStatus::Approved,
+            ProposalStatus::Rejected => ProposalStatus::Rejected,
+        }
+    }
+}
+
+pub struct Proposal {
+    pub id: String,
+    pub status: ProposalStatus,
+    pub votes: Vec<Vote>,
+}
+
+#[derive(Clone)]
+pub struct Vote {
+    pub member_id: String,
+    pub vote: bool,
+}
+
+pub struct BFTPoC {
+    pub proposals: Vec<Proposal>,
+}
+
+impl BFTPoC {
+    pub fn new() -> Self {
+        BFTPoC {
+            proposals: Vec::new(),
+        }
+    }
+
+    pub fn create_proposal(&mut self, proposal_id: String) -> Result<()> {
+        if self.proposals.iter().any(|p| p.id == proposal_id) {
+            return Err(Error {
+                message: "Proposal already exists".to_string(),
+            });
+        }
+
+        let proposal = Proposal {
+            id: proposal_id,
+            status: ProposalStatus::Pending,
+            votes: Vec::new(),
+        };
+
+        self.proposals.push(proposal);
+        Ok(())
+    }
+
+    pub fn vote_on_proposal(&mut self, proposal_id: &str, member_id: String, vote: bool) -> Result<()> {
+        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| Error {
+            message: "Proposal not found".to_string(),
+        })?;
+
+        if proposal.votes.iter().any(|v| v.member_id == member_id) {
+            return Err(Error {
+                message: "Member has already voted".to_string(),
+            });
+        }
+
+        proposal.votes.push(Vote { member_id, vote });
+        Ok(())
+    }
+
+    pub fn finalize_proposal(&mut self, proposal_id: &str) -> Result<ProposalStatus> {
+        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| Error {
+            message: "Proposal not found".to_string(),
+        })?;
+
+        let positive_votes = proposal.votes.iter().filter(|v| v.vote).count();
+        let negative_votes = proposal.votes.len() - positive_votes;
+
+        proposal.status = if positive_votes > negative_votes {
+            ProposalStatus::Approved
+        } else {
+            ProposalStatus::Rejected
+        };
+
+        Ok(proposal.status.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_proposal() {
+        let mut bft_poc = BFTPoC::new();
+
+        assert!(bft_poc.create_proposal("proposal1".to_string()).is_ok());
+        assert_eq!(bft_poc.proposals.len(), 1);
+
+        assert!(bft_poc.create_proposal("proposal1".to_string()).is_err());
     }
 
     #[test]
-    fn test_invalid_proposer() {
-        let mut bft_poc = setup_bft_poc();
+    fn test_vote_on_proposal() {
+        let mut bft_poc = BFTPoC::new();
+        bft_poc.create_proposal("proposal1".to_string()).unwrap();
 
-        assert!(bft_poc.propose_block("David", "block3").is_err());
+        assert!(bft_poc.vote_on_proposal("proposal1", "member1".to_string(), true).is_ok());
+        assert_eq!(bft_poc.proposals[0].votes.len(), 1);
+
+        assert!(bft_poc.vote_on_proposal("proposal1", "member1".to_string(), false).is_err());
     }
 
     #[test]
-    fn test_invalid_voter() {
-        let mut bft_poc = setup_bft_poc();
+    fn test_finalize_proposal() {
+        let mut bft_poc = BFTPoC::new();
+        bft_poc.create_proposal("proposal1".to_string()).unwrap();
 
-        bft_poc.propose_block("Alice", "block4").unwrap();
-        assert!(bft_poc.vote_on_block("David", "block4", true).is_err());
+        bft_poc.vote_on_proposal("proposal1", "member1".to_string(), true).unwrap();
+        bft_poc.vote_on_proposal("proposal1", "member2".to_string(), false).unwrap();
+        bft_poc.vote_on_proposal("proposal1", "member3".to_string(), true).unwrap();
+
+        let status = bft_poc.finalize_proposal("proposal1").unwrap();
+        assert_eq!(status, ProposalStatus::Approved);
+
+        bft_poc.create_proposal("proposal2".to_string()).unwrap();
+        bft_poc.vote_on_proposal("proposal2", "member1".to_string(), false).unwrap();
+        bft_poc.vote_on_proposal("proposal2", "member2".to_string(), false).unwrap();
+        bft_poc.vote_on_proposal("proposal2", "member3".to_string(), true).unwrap();
+
+        let status = bft_poc.finalize_proposal("proposal2").unwrap();
+        assert_eq!(status, ProposalStatus::Rejected);
     }
-
-    #[test]
-    fn test_finalize_non_existent_block() {
-        let mut bft_poc = setup_bft_poc();
-
-        assert!(bft_poc.finalize_block("non_existent_block").is_err());
-    }
-
-    #[test]
-    fn test_get_status_non_existent_block() {
-        let bft_poc = setup_bft_poc();
-
-        assert!(bft_poc.get_proposal_status("non_existent_block").is_err());
-    }
-}===== END OF crates/icn_consensus/src/bft_poc.rs =====
+}
+===== END OF crates/icn_consensus/src/bft_poc.rs =====
 
 ===== START OF crates/icn_consensus/src/consensus.rs =====
 // src/currency/currency.rs
@@ -1762,9 +1950,8 @@ pub struct Bond {
 }===== END OF crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF crates/icn_consensus/src/lib.rs =====
-use serde::{Serialize, Deserialize};
-use icn_core::error::{Error, Result};
-use log::{info, warn, debug};
+use icn_common::{Error, Result};
+use log::{info, warn};
 
 mod bft_poc;
 mod proof_of_cooperation;
@@ -1772,14 +1959,14 @@ mod proof_of_cooperation;
 pub use bft_poc::BFTPoC;
 pub use proof_of_cooperation::ProofOfCooperation;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PoCConsensus {
     pub members: Vec<Member>,
     pub threshold: f64,
     pub quorum: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Member {
     pub id: String,
     pub reputation: f64,
@@ -1788,7 +1975,6 @@ pub struct Member {
 
 impl PoCConsensus {
     pub fn new(threshold: f64, quorum: f64) -> Self {
-        info!("Creating new PoCConsensus with threshold: {} and quorum: {}", threshold, quorum);
         PoCConsensus {
             members: Vec::new(),
             threshold,
@@ -1797,35 +1983,31 @@ impl PoCConsensus {
     }
 
     pub fn add_member(&mut self, member_id: String, is_validator: bool) -> Result<()> {
-        debug!("Adding new member: {}, is_validator: {}", member_id, is_validator);
         if self.members.iter().any(|m| m.id == member_id) {
-            return Err(Error::ConsensusError("Member already exists".to_string()));
+            return Err(Error {
+                message: "Member already exists".to_string(),
+            });
         }
         self.members.push(Member { id: member_id.clone(), reputation: 1.0, is_validator });
-        info!("Added new member: {}", member_id);
         Ok(())
     }
 
     pub fn remove_member(&mut self, member_id: &str) -> Result<()> {
-        debug!("Attempting to remove member: {}", member_id);
         if let Some(index) = self.members.iter().position(|m| m.id == member_id) {
             self.members.remove(index);
-            info!("Removed member: {}", member_id);
             Ok(())
         } else {
-            warn!("Failed to remove member: {} (not found)", member_id);
-            Err(Error::ConsensusError(format!("Member not found: {}", member_id)))
+            return Err(Error {
+                message: format!("Member not found: {}", member_id),
+            })
         }
     }
 
     pub fn is_validator(&self, member_id: &str) -> bool {
-        let is_validator = self.members.iter().any(|m| m.id == member_id && m.is_validator);
-        debug!("Checking if {} is a validator: {}", member_id, is_validator);
-        is_validator
+        self.members.iter().any(|m| m.id == member_id && m.is_validator)
     }
 
     pub fn validate_block(&self, block_hash: &str, votes: &[(&str, bool)]) -> Result<bool> {
-        debug!("Validating block: {}", block_hash);
         let total_reputation: f64 = self.members.iter().map(|m| m.reputation).sum();
         let mut positive_reputation = 0.0;
         let mut participating_reputation = 0.0;
@@ -1837,12 +2019,16 @@ impl PoCConsensus {
                     positive_reputation += member.reputation;
                 }
             } else {
-                return Err(Error::ConsensusError(format!("Invalid member in votes: {}", member_id)));
+                return Err(Error {
+                    message: format!("Invalid member in votes: {}", member_id),
+                });
             }
         }
 
         if participating_reputation / total_reputation < self.quorum {
-            return Err(Error::ConsensusError("Quorum not reached".to_string()));
+            return Err(Error {
+                message: "Quorum not reached".to_string(),
+            });
         }
 
         Ok(positive_reputation / participating_reputation >= self.threshold)
@@ -1854,7 +2040,9 @@ impl PoCConsensus {
             member.reputation = member.reputation.max(0.0);  // Ensure reputation doesn't go negative
             Ok(())
         } else {
-            Err(Error::ConsensusError(format!("Member not found: {}", member_id)))
+            return Err(Error {
+                message: format!("Member not found: {}", member_id),
+            })
         }
     }
 
@@ -1931,196 +2119,115 @@ mod tests {
 
         assert!(consensus.update_reputation("Bob", 1.0).is_err());
     }
-}===== END OF crates/icn_consensus/src/lib.rs =====
+}
+===== END OF crates/icn_consensus/src/lib.rs =====
 
 ===== START OF crates/icn_consensus/src/proof_of_cooperation.rs =====
-use crate::PoCConsensus;
-use icn_core::error::{Error, Result};
-use std::collections::HashMap;
-use log::{info, warn, debug};
+use icn_common::{Error, Result};
 use sha2::{Sha256, Digest};
 
+#[derive(Debug)]
 pub struct ProofOfCooperation {
-    consensus: PoCConsensus,
-    cooperation_proofs: HashMap<String, CooperationProof>,
+    pub blocks: Vec<Block>,
 }
 
-struct CooperationProof {
-    member_id: String,
-    proof: Vec<u8>,
-    timestamp: chrono::DateTime<chrono::Utc>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub previous_hash: String,
+    pub timestamp: u64,
+    pub data: String,
+    pub hash: String,
+}
+
+impl Block {
+    pub fn new(index: u64, previous_hash: String, timestamp: u64, data: String) -> Self {
+        let mut block = Block {
+            index,
+            previous_hash,
+            timestamp,
+            data,
+            hash: String::new(),
+        };
+        block.hash = block.calculate_hash();
+        block
+    }
+
+    pub fn calculate_hash(&self) -> String {
+        let input = format!("{}{}{}{}", self.index, self.previous_hash, self.timestamp, self.data);
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        let result = hasher.finalize();
+        format!("{:x}", result)
+    }
 }
 
 impl ProofOfCooperation {
-    pub fn new(threshold: f64, quorum: f64) -> Self {
+    pub fn new() -> Self {
         ProofOfCooperation {
-            consensus: PoCConsensus::new(threshold, quorum),
-            cooperation_proofs: HashMap::new(),
+            blocks: Vec::new(),
         }
     }
 
-    pub fn submit_cooperation_proof(&mut self, member_id: &str, proof: Vec<u8>) -> Result<()> {
-        debug!("Submitting cooperation proof for member: {}", member_id);
-        if !self.consensus.is_validator(member_id) {
-            return Err(Error::ConsensusError("Member is not a validator".to_string()));
-        }
-
-        let cooperation_proof = CooperationProof {
-            member_id: member_id.to_string(),
-            proof,
-            timestamp: chrono::Utc::now(),
+    pub fn add_block(&mut self, data: String) -> Result<()> {
+        let previous_hash = if let Some(last_block) = self.blocks.last() {
+            last_block.hash.clone()
+        } else {
+            String::new()
         };
 
-        self.cooperation_proofs.insert(member_id.to_string(), cooperation_proof);
-        info!("Cooperation proof submitted for member: {}", member_id);
+        let new_block = Block::new(
+            self.blocks.len() as u64,
+            previous_hash,
+            chrono::Utc::now().timestamp_millis() as u64,
+            data,
+        );
+
+        self.blocks.push(new_block);
         Ok(())
     }
 
-    pub fn validate_cooperation(&self, member_id: &str) -> Result<bool> {
-        debug!("Validating cooperation for member: {}", member_id);
-        let proof = self.cooperation_proofs.get(member_id)
-            .ok_or_else(|| Error::ConsensusError("No cooperation proof found".to_string()))?;
+    pub fn validate_chain(&self) -> Result<()> {
+        for i in 1..self.blocks.len() {
+            let previous_block = &self.blocks[i - 1];
+            let current_block = &self.blocks[i];
 
-        // In a real implementation, this would involve more complex validation logic
-        // For this example, we'll use a simple hash-based validation
-        let mut hasher = Sha256::new();
-        hasher.update(&proof.proof);
-        let hash = hasher.finalize();
+            if current_block.previous_hash != previous_block.hash {
+                return Err(Error {
+                    message: "Invalid previous hash".to_string(),
+                });
+            }
 
-        // Consider cooperation valid if the hash starts with a zero byte
-        let is_valid = hash[0] == 0;
-
-        if is_valid {
-            info!("Cooperation proof valid for member: {}", member_id);
-        } else {
-            warn!("Cooperation proof invalid for member: {}", member_id);
+            if current_block.hash != current_block.calculate_hash() {
+                return Err(Error {
+                    message: "Invalid block hash".to_string(),
+                });
+            }
         }
-
-        Ok(is_valid)
-    }
-
-    pub fn update_reputation(&mut self, member_id: &str) -> Result<()> {
-        debug!("Updating reputation for member: {}", member_id);
-        let is_cooperative = self.validate_cooperation(member_id)?;
-
-        let reputation_change = if is_cooperative { 0.1 } else { -0.1 };
-        self.consensus.update_reputation(member_id, reputation_change)?;
-
-        info!("Reputation updated for member: {}", member_id);
         Ok(())
-    }
-
-    pub fn get_member_reputation(&self, member_id: &str) -> Result<f64> {
-        self.consensus.members.iter()
-            .find(|m| m.id == member_id)
-            .map(|m| m.reputation)
-            .ok_or_else(|| Error::ConsensusError("Member not found".to_string()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
-
-    fn setup_poc() -> ProofOfCooperation {
-        let mut poc = ProofOfCooperation::new(0.5, 0.66);
-        poc.consensus.add_member("Alice".to_string(), true).unwrap();
-        poc.consensus.add_member("Bob".to_string(), true).unwrap();
-        poc.consensus.add_member("Charlie".to_string(), true).unwrap();
-        poc
-    }
-
-    fn generate_random_proof() -> Vec<u8> {
-        let mut rng = rand::thread_rng();
-        let proof: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
-        proof
-    }
 
     #[test]
-    fn test_submit_cooperation_proof() {
-        let mut poc = setup_poc();
-        let proof = generate_random_proof();
-
-        assert!(poc.submit_cooperation_proof("Alice", proof.clone()).is_ok());
-        assert!(poc.cooperation_proofs.contains_key("Alice"));
-        assert_eq!(poc.cooperation_proofs.get("Alice").unwrap().proof, proof);
-    }
-
-    #[test]
-    fn test_validate_cooperation() {
-        let mut poc = setup_poc();
-        let proof = vec![0; 32]; // This will always be considered valid in our simple implementation
-
-        poc.submit_cooperation_proof("Alice", proof).unwrap();
-        assert!(poc.validate_cooperation("Alice").unwrap());
-
-        let invalid_proof = vec![1; 32]; // This will always be considered invalid
-        poc.submit_cooperation_proof("Bob", invalid_proof).unwrap();
-        assert!(!poc.validate_cooperation("Bob").unwrap());
-    }
-
-    #[test]
-    fn test_update_reputation() {
-        let mut poc = setup_poc();
-        let valid_proof = vec![0; 32];
-        let invalid_proof = vec![1; 32];
-
-        poc.submit_cooperation_proof("Alice", valid_proof).unwrap();
-        poc.submit_cooperation_proof("Bob", invalid_proof).unwrap();
-
-        poc.update_reputation("Alice").unwrap();
-        poc.update_reputation("Bob").unwrap();
-
-        assert!(poc.get_member_reputation("Alice").unwrap() > 1.0);
-        assert!(poc.get_member_reputation("Bob").unwrap() < 1.0);
-    }
-
-    #[test]
-    fn test_get_member_reputation() {
-        let poc = setup_poc();
-
-        assert_eq!(poc.get_member_reputation("Alice").unwrap(), 1.0);
-        assert!(poc.get_member_reputation("NonExistentMember").is_err());
-    }
-
-    #[test]
-    fn test_invalid_member_submission() {
-        let mut poc = setup_poc();
-        let proof = generate_random_proof();
-
-        assert!(poc.submit_cooperation_proof("NonExistentMember", proof).is_err());
-    }
-
-    #[test]
-    fn test_validate_nonexistent_cooperation() {
-        let poc = setup_poc();
-
-        assert!(poc.validate_cooperation("Alice").is_err());
-    }
-
-    #[test]
-    fn test_update_reputation_without_proof() {
-        let mut poc = setup_poc();
-
-        assert!(poc.update_reputation("Alice").is_err());
-    }
-
-    #[test]
-    fn test_multiple_reputation_updates() {
-        let mut poc = setup_poc();
-        let valid_proof = vec![0; 32];
-
-        poc.submit_cooperation_proof("Alice", valid_proof.clone()).unwrap();
+    fn test_add_and_validate_blocks() {
+        let mut poc = ProofOfCooperation::new();
         
-        for _ in 0..5 {
-            poc.update_reputation("Alice").unwrap();
-        }
+        poc.add_block("Block 1 Data".to_string()).unwrap();
+        poc.add_block("Block 2 Data".to_string()).unwrap();
 
-        let final_reputation = poc.get_member_reputation("Alice").unwrap();
-        assert!(final_reputation > 1.4 && final_reputation < 1.6);
+        assert_eq!(poc.blocks.len(), 2);
+        assert!(poc.validate_chain().is_ok());
+
+        // Tamper with a block
+        poc.blocks[1].data = "Tampered Data".to_string();
+        assert!(poc.validate_chain().is_err());
     }
-}===== END OF crates/icn_consensus/src/proof_of_cooperation.rs =====
+}
+===== END OF crates/icn_consensus/src/proof_of_cooperation.rs =====
 
 ===== START OF crates/icn_core/Cargo.toml =====
 [package]
@@ -2129,12 +2236,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
-icn_currency = { path = "../icn_currency" }
-icn_governance = { path = "../icn_governance" }
-icn_identity = { path = "../icn_identity" }
-icn_network = { path = "../icn_network" }
-icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -2145,7 +2248,8 @@ ed25519-dalek = "1.0"
 rand = "0.7"
 
 [dev-dependencies]
-tokio-test = "0.4"===== END OF crates/icn_core/Cargo.toml =====
+tokio-test = "0.4"
+===== END OF crates/icn_core/Cargo.toml =====
 
 ===== START OF crates/icn_core/src/cli/mod.rs =====
 use crate::IcnNode;
@@ -2342,55 +2446,128 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF crates/icn_core/src/error.rs =====
 
 ===== START OF crates/icn_core/src/lib.rs =====
-use std::sync::{Arc, RwLock};
-
-// Re-export key types from other crates
-#[cfg(feature = "blockchain")]
-pub use icn_blockchain::{Block, Transaction, Blockchain};
-#[cfg(feature = "currency")]
-pub use icn_currency::CurrencyType;
-#[cfg(feature = "governance")]
-pub use icn_governance::{DemocraticSystem, ProposalCategory, ProposalType};
-#[cfg(feature = "identity")]
-pub use icn_identity::DecentralizedIdentity;
-#[cfg(feature = "network")]
-pub use icn_network::{Node as NetworkNode, Network, Packet, PacketType};
-#[cfg(feature = "sharding")]
-pub use icn_sharding::ShardingManager;
-#[cfg(feature = "vm")]
-pub use icn_vm::{CoopVM, Opcode};
-
-pub mod error;
-pub use error::{Error, Result};
-
-pub mod cli;
-pub mod logging;
-pub mod security;
+use icn_common::{Error, Result, CurrencyType};
+use icn_blockchain::{Blockchain, Transaction};
+use icn_vm::smart_contract::{AssetTokenContract, BondContract};
+use chrono::Utc;
+use std::io;
 
 pub struct IcnNode {
-    // Add fields as needed
+    pub blockchain: Blockchain,
+    pub asset_contract: AssetTokenContract,
+    pub bond_contract: BondContract,
 }
 
 impl IcnNode {
     pub fn new() -> Self {
         IcnNode {
-            // Initialize fields
+            blockchain: Blockchain::new(),
+            asset_contract: AssetTokenContract::new(),
+            bond_contract: BondContract::new(),
         }
     }
 
-    // Add methods as needed
+    pub fn process_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        self.blockchain.add_transaction(transaction)?;
+        self.blockchain.create_block("Miner".to_string())?;
+        Ok(())
+    }
+
+    pub fn get_balance(&self, address: &str) -> f64 {
+        self.blockchain.get_balance(address)
+    }
+}
+
+pub fn main() {
+    let mut node = IcnNode::new();
+
+    loop {
+        println!("Enter a command (balance, transaction, exit):");
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).expect("Failed to read line");
+
+        match input.trim() {
+            "balance" => {
+                println!("Enter address:");
+                let mut address = String::new();
+                io::stdin().read_line(&mut address).expect("Failed to read line");
+                let balance = node.get_balance(address.trim());
+                println!("Balance: {}", balance);
+            }
+            "transaction" => {
+                println!("Enter from address:");
+                let mut from = String::new();
+                io::stdin().read_line(&mut from).expect("Failed to read line");
+                println!("Enter to address:");
+                let mut to = String::new();
+                io::stdin().read_line(&mut to).expect("Failed to read line");
+                println!("Enter amount:");
+                let mut amount = String::new();
+                io::stdin().read_line(&mut amount).expect("Failed to read line");
+
+                let transaction = Transaction::new(
+                    from.trim().to_string(),
+                    to.trim().to_string(),
+                    amount.trim().parse().expect("Invalid amount"),
+                    CurrencyType::BasicNeeds,
+                    1000,
+                );
+
+                node.process_transaction(transaction).expect("Transaction failed");
+                println!("Transaction processed");
+            }
+            "exit" => break,
+            _ => println!("Unknown command"),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_blockchain::{Transaction};
 
     #[test]
-    fn test_icn_node_creation() {
-        let node = IcnNode::new();
-        // Add assertions as needed
+    fn test_process_transaction() {
+        let mut node = IcnNode::new();
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        assert!(node.process_transaction(transaction).is_ok());
+        assert_eq!(node.blockchain.pending_transactions.len(), 0);
     }
-}===== END OF crates/icn_core/src/lib.rs =====
+
+    #[test]
+    fn test_get_balance() {
+        let mut node = IcnNode::new();
+        let transaction1 = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        let transaction2 = Transaction::new(
+            "Bob".to_string(),
+            "Alice".to_string(),
+            50.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+
+        node.process_transaction(transaction1).unwrap();
+        node.process_transaction(transaction2).unwrap();
+
+        assert_eq!(node.get_balance("Alice"), -50.0);
+        assert_eq!(node.get_balance("Bob"), 50.0);
+    }
+}
+===== END OF crates/icn_core/src/lib.rs =====
 
 ===== START OF crates/icn_core/src/logging/mod.rs =====
 use log::{info, warn, error, debug};
@@ -6030,104 +6207,6 @@ mod tests {
 }
 ===== END OF crates/icn_sharding/src/lib.rs =====
 
-===== START OF crates/icn_smart_contract/Cargo.toml =====
-[package]
-name = "icn_smart_contract"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-icn_core = { path = "../icn_core" }
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
-log = "0.4"
-thiserror = "1.0"
-
-[dev-dependencies]
-tokio-test = "0.4"===== END OF crates/icn_smart_contract/Cargo.toml =====
-
-===== START OF crates/icn_smart_contract/src/lib.rs =====
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SmartContract {
-    pub id: String,
-    pub code: String,
-    pub owner: String,
-}
-
-impl SmartContract {
-    pub fn new(id: String, code: String, owner: String) -> Self {
-        SmartContract { id, code, owner }
-    }
-
-    pub fn execute(&self, _context: &str) -> Result<String, String> {
-        // Placeholder for smart contract execution logic
-        Ok("Smart contract executed successfully".to_string())
-    }
-}
-
-pub trait SmartContractEngine {
-    fn deploy(&mut self, contract: SmartContract) -> Result<(), String>;
-    fn execute(&self, contract_id: &str, context: &str) -> Result<String, String>;
-}
-
-pub struct SimpleSmartContractEngine {
-    contracts: Vec<SmartContract>,
-}
-
-impl SimpleSmartContractEngine {
-    pub fn new() -> Self {
-        SimpleSmartContractEngine {
-            contracts: Vec::new(),
-        }
-    }
-}
-
-impl SmartContractEngine for SimpleSmartContractEngine {
-    fn deploy(&mut self, contract: SmartContract) -> Result<(), String> {
-        self.contracts.push(contract);
-        Ok(())
-    }
-
-    fn execute(&self, contract_id: &str, context: &str) -> Result<String, String> {
-        self.contracts
-            .iter()
-            .find(|c| c.id == contract_id)
-            .ok_or_else(|| "Contract not found".to_string())?
-            .execute(context)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_smart_contract_execution() {
-        let contract = SmartContract::new(
-            "test_contract".to_string(),
-            "contract code".to_string(),
-            "owner".to_string(),
-        );
-        let result = contract.execute("test context");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_smart_contract_engine() {
-        let mut engine = SimpleSmartContractEngine::new();
-        let contract = SmartContract::new(
-            "test_contract".to_string(),
-            "contract code".to_string(),
-            "owner".to_string(),
-        );
-        assert!(engine.deploy(contract).is_ok());
-        let result = engine.execute("test_contract", "test context");
-        assert!(result.is_ok());
-    }
-}===== END OF crates/icn_smart_contract/src/lib.rs =====
-
 ===== START OF crates/icn_storage/Cargo.toml =====
 [package]
 name = "icn_storage"
@@ -6356,13 +6435,13 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
-tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio-test = "0.4"
 ===== END OF crates/icn_vm/Cargo.toml =====
 
 ===== START OF crates/icn_vm/src/compiler.rs =====
@@ -7186,91 +7265,139 @@ pub enum Opcode {
 ===== END OF crates/icn_vm/src/opcode.rs =====
 
 ===== START OF crates/icn_vm/src/smart_contract.rs =====
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use crate::currency::{AssetToken, Bond};
+use icn_common::{Error, Result};
+use serde::{Serialize, Deserialize};
 
-pub trait SmartContract: erased_serde::Serialize + Send + Sync {
-    fn execute(&self, env: &mut ExecutionEnvironment) -> Result<String, String>;
-    fn id(&self) -> String;
-}
-
-erased_serde::serialize_trait_object!(SmartContract);
-
-pub struct ExecutionEnvironment {
-    pub state: String,
-}
-
-impl ExecutionEnvironment {
-    pub fn new() -> Self {
-        ExecutionEnvironment {
-            state: String::new(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AssetTokenContract {
-    pub asset_token: AssetToken,
+    pub tokens: Vec<AssetToken>,
 }
 
-impl SmartContract for AssetTokenContract {
-    fn execute(&self, _env: &mut ExecutionEnvironment) -> Result<String, String> {
-        // Implementation would go here
-        Ok("Asset token created".to_string())
-    }
-
-    fn id(&self) -> String {
-        self.asset_token.asset_id.clone()
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct BondContract {
-    pub bond: Bond,
-}
-
-impl SmartContract for BondContract {
-    fn execute(&self, _env: &mut ExecutionEnvironment) -> Result<String, String> {
-        // Implementation would go here
-        Ok("Bond created".to_string())
-    }
-
-    fn id(&self) -> String {
-        self.bond.bond_id.clone()
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AssetToken {
+    pub id: String,
+    pub owner: String,
+    pub metadata: serde_json::Value,
 }
 
 impl AssetTokenContract {
-    pub fn new(asset_id: String, name: String, description: String, owner: String, value: f64) -> Self {
-        Self {
-            asset_token: AssetToken {
-                asset_id,
-                name,
-                description,
-                owner,
-                value,
-            }
+    pub fn new() -> Self {
+        AssetTokenContract {
+            tokens: Vec::new(),
         }
+    }
+
+    pub fn create_token(&mut self, id: String, owner: String, metadata: serde_json::Value) -> Result<AssetToken> {
+        if self.tokens.iter().any(|t| t.id == id) {
+            return Err(Error {
+                message: "Token already exists".to_string(),
+            });
+        }
+
+        let token = AssetToken {
+            id: id.clone(),
+            owner: owner.clone(),
+            metadata,
+        };
+
+        self.tokens.push(token.clone());
+        Ok(token)
+    }
+
+    pub fn transfer_token(&mut self, id: &str, new_owner: String) -> Result<()> {
+        let token = self.tokens.iter_mut().find(|t| t.id == id).ok_or_else(|| Error {
+            message: "Token not found".to_string(),
+        })?;
+
+        token.owner = new_owner;
+        Ok(())
+    }
+
+    pub fn get_token(&self, id: &str) -> Option<&AssetToken> {
+        self.tokens.iter().find(|t| t.id == id)
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BondContract {
+    pub bonds: Vec<Bond>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Bond {
+    pub id: String,
+    pub owner: String,
+    pub terms: String,
+}
+
 impl BondContract {
-    pub fn new(bond_id: String, name: String, description: String, issuer: String, face_value: f64, maturity_date: DateTime<Utc>, interest_rate: f64, owner: String) -> Self {
-        Self {
-            bond: Bond {
-                bond_id,
-                name,
-                description,
-                issuer,
-                face_value,
-                maturity_date,
-                interest_rate,
-                owner,
-            }
+    pub fn new() -> Self {
+        BondContract {
+            bonds: Vec::new(),
         }
     }
-}===== END OF crates/icn_vm/src/smart_contract.rs =====
+
+    pub fn create_bond(&mut self, id: String, owner: String, terms: String) -> Result<Bond> {
+        if self.bonds.iter().any(|b| b.id == id) {
+            return Err(Error {
+                message: "Bond already exists".to_string(),
+            });
+        }
+
+        let bond = Bond {
+            id: id.clone(),
+            owner: owner.clone(),
+            terms,
+        };
+
+        self.bonds.push(bond.clone());
+        Ok(bond)
+    }
+
+    pub fn transfer_bond(&mut self, id: &str, new_owner: String) -> Result<()> {
+        let bond = self.bonds.iter_mut().find(|b| b.id == id).ok_or_else(|| Error {
+            message: "Bond not found".to_string(),
+        })?;
+
+        bond.owner = new_owner;
+        Ok(())
+    }
+
+    pub fn get_bond(&self, id: &str) -> Option<&Bond> {
+        self.bonds.iter().find(|b| b.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_create_and_transfer_token() {
+        let mut contract = AssetTokenContract::new();
+        let metadata = json!({ "type": "Real Estate", "location": "123 Main St" });
+
+        let token = contract.create_token("token1".to_string(), "Alice".to_string(), metadata).unwrap();
+        assert_eq!(token.owner, "Alice");
+
+        contract.transfer_token("token1", "Bob".to_string()).unwrap();
+        let updated_token = contract.get_token("token1").unwrap();
+        assert_eq!(updated_token.owner, "Bob");
+    }
+
+    #[test]
+    fn test_create_and_transfer_bond() {
+        let mut contract = BondContract::new();
+        let bond = contract.create_bond("bond1".to_string(), "Alice".to_string(), "Terms of the bond".to_string()).unwrap();
+        assert_eq!(bond.owner, "Alice");
+
+        contract.transfer_bond("bond1", "Bob".to_string()).unwrap();
+        let updated_bond = contract.get_bond("bond1").unwrap();
+        assert_eq!(updated_bond.owner, "Bob");
+    }
+}
+===== END OF crates/icn_vm/src/smart_contract.rs =====
 
 ===== START OF crates/icn_vm/src/templates.rs =====
 ===== END OF crates/icn_vm/src/templates.rs =====

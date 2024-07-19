@@ -1,10 +1,10 @@
 [package]
-name = "icn_blockchain"  # This should be icn_blockchain, not icn_api
+name = "icn_blockchain"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_common = { path = "../icn_common" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }

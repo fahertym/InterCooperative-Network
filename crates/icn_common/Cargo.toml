@@ -1,14 +1,10 @@
 [package]
-name = "icn_vm"
+name = "icn_common"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-
-[dev-dependencies]
-tokio-test = "0.4"
