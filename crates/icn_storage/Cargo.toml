@@ -1,0 +1,36 @@
+[package]
+name = "icn_storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+uuid = "1.0"
+log = "0.4"
+thiserror = "1.0"
+
+[dependencies.futures]
+version = "0.3"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+
+[dependencies.icn_blockchain]
+path = "../icn_blockchain"
+
+[dependencies.icn_network]
+path = "../icn_network"
+
+[dependencies.icn_currency]
+path = "../icn_currency"
+
+[dependencies.icn_error]
+path = "../icn_error"

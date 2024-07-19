@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 use thiserror::Error;
 
 pub mod cross_shard_communication;
+pub mod cross_shard_sync;
 
 #[derive(Error, Debug)]
 pub enum ShardingError {

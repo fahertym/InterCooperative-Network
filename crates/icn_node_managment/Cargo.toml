@@ -1,0 +1,15 @@
+[package]
+name = "icn_node_management"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+icn_network = { path = "../icn_network" }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }

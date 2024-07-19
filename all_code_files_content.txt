@@ -3430,6 +3430,23 @@ pub use identity_manager::IdentityManager;
 
 use icn_core::error::{Error, Result};===== END OF crates/icn_identity/src/lib.rs =====
 
+===== START OF crates/icn_network/Cargo.toml =====
+[package]
+name = "icn_network"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+===== END OF crates/icn_network/Cargo.toml =====
+
 ===== START OF crates/icn_network/src/discovery.rs =====
 use crate::node::Node;
 use icn_core::error::Result;
@@ -3450,7 +3467,8 @@ impl DiscoveryService {
         // Implement node unregistration logic
         Ok(())
     }
-}===== END OF crates/icn_network/src/discovery.rs =====
+}
+===== END OF crates/icn_network/src/discovery.rs =====
 
 ===== START OF crates/icn_network/src/lib.rs =====
 mod node;
@@ -3524,7 +3542,8 @@ impl Network {
     pub fn register_name(&mut self, name: &str, address: &str) -> Result<()> {
         self.naming_service.register(name, address)
     }
-}===== END OF crates/icn_network/src/lib.rs =====
+}
+===== END OF crates/icn_network/src/lib.rs =====
 
 ===== START OF crates/icn_network/src/naming.rs =====
 use icn_core::error::{Error, Result};
@@ -3543,7 +3562,19 @@ impl NamingService {
 
     pub fn resolve(&self, name: &str) -> Result<String> {
         self.names.get(name)
-            .cl===== END OF crates/icn_network/src/naming.rs =====
+            .cloned()
+            .ok_or_else(|| Error::NetworkError("Name not found".to_string()))
+    }
+
+    pub fn register(&mut self, name: &str, address: &str) -> Result<()> {
+        if self.names.contains_key(name) {
+            return Err(Error::NetworkError("Name already registered".to_string()));
+        }
+        self.names.insert(name.to_string(), address.to_string());
+        Ok(())
+    }
+}
+===== END OF crates/icn_network/src/naming.rs =====
 
 ===== START OF crates/icn_network/src/network.rs =====
 use std::collections::HashMap;
@@ -3688,7 +3719,8 @@ impl Node {
             address: address.to_string(),
         }
     }
-}===== END OF crates/icn_network/src/node.rs =====
+}
+===== END OF crates/icn_network/src/node.rs =====
 
 ===== START OF crates/icn_network/src/packet.rs =====
 use serde::{Serialize, Deserialize};
@@ -3717,7 +3749,8 @@ impl Packet {
             content,
         }
     }
-}===== END OF crates/icn_network/src/packet.rs =====
+}
+===== END OF crates/icn_network/src/packet.rs =====
 
 ===== START OF crates/icn_network/src/protocol.rs =====
 use crate::packet::Packet;
@@ -3739,7 +3772,8 @@ impl NetworkProtocol {
         // Implement packet processing logic
         Ok(())
     }
-}===== END OF crates/icn_network/src/protocol.rs =====
+}
+===== END OF crates/icn_network/src/protocol.rs =====
 
 ===== START OF crates/icn_network/src/routing.rs =====
 use crate::node::Node;
@@ -3768,7 +3802,8 @@ impl RoutingTable {
             .cloned()
             .ok_or_else(|| Error::NetworkError("Route not found".to_string()))
     }
-}===== END OF crates/icn_network/src/routing.rs =====
+}
+===== END OF crates/icn_network/src/routing.rs =====
 
 ===== START OF crates/icn_network/src/security.rs =====
 use crate::packet::Packet;
@@ -3786,7 +3821,26 @@ impl SecurityManager {
         // This could include signature verification, encryption checks, etc.
         Ok(())
     }
-}===== END OF crates/icn_network/src/security.rs =====
+}
+===== END OF crates/icn_network/src/security.rs =====
+
+===== START OF crates/icn_node_managment/Cargo.toml =====
+[package]
+name = "icn_node_management"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_core = { path = "../icn_core" }
+icn_network = { path = "../icn_network" }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+thiserror = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
+===== END OF crates/icn_node_managment/Cargo.toml =====
 
 ===== START OF crates/icn_node_managment/src/content_store.rs =====
 use std::collections::HashMap;
@@ -3906,16 +3960,6 @@ pub struct FibEntry {
 }
 
 impl FibEntry {
-    /// Creates a new FIB entry with a given name and initial next hop.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string representing the name or prefix.
-    /// * `next_hop` - A `SocketAddr` representing the initial next hop address.
-    ///
-    /// # Returns
-    ///
-    /// * A new `FibEntry` instance.
     pub fn new(name: String, next_hop: SocketAddr) -> Self {
         FibEntry {
             name,
@@ -3923,22 +3967,12 @@ impl FibEntry {
         }
     }
 
-    /// Adds a new next hop to the FIB entry if it does not already exist.
-    ///
-    /// # Arguments
-    ///
-    /// * `next_hop` - A `SocketAddr` representing the new next hop address.
     pub fn add_next_hop(&mut self, next_hop: SocketAddr) {
         if !self.next_hops.contains(&next_hop) {
             self.next_hops.push(next_hop);
         }
     }
 
-    /// Removes an existing next hop from the FIB entry.
-    ///
-    /// # Arguments
-    ///
-    /// * `next_hop` - A reference to the `SocketAddr` to be removed.
     pub fn remove_next_hop(&mut self, next_hop: &SocketAddr) {
         self.next_hops.retain(|&x| x != *next_hop);
     }
@@ -3950,23 +3984,12 @@ pub struct ForwardingInformationBase {
 }
 
 impl ForwardingInformationBase {
-    /// Creates a new, empty Forwarding Information Base.
-    ///
-    /// # Returns
-    ///
-    /// * A new `ForwardingInformationBase` instance.
     pub fn new() -> Self {
         ForwardingInformationBase {
             entries: HashMap::new(),
         }
     }
 
-    /// Adds a new entry to the FIB or updates an existing entry with a new next hop.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string representing the name or prefix.
-    /// * `next_hop` - A `SocketAddr` representing the next hop address.
     pub fn add_entry(&mut self, name: String, next_hop: SocketAddr) {
         self.entries
             .entry(name.clone())
@@ -3974,37 +3997,14 @@ impl ForwardingInformationBase {
             .or_insert_with(|| FibEntry::new(name, next_hop));
     }
 
-    /// Removes an entry from the FIB.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string representing the name or prefix to be removed.
     pub fn remove_entry(&mut self, name: &str) {
         self.entries.remove(name);
     }
 
-    /// Retrieves the list of next hop addresses for a given name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string representing the name or prefix.
-    ///
-    /// # Returns
-    ///
-    /// * An `Option` containing a reference to a vector of `SocketAddr` if the name exists, otherwise `None`.
     pub fn get_next_hops(&self, name: &str) -> Option<&Vec<SocketAddr>> {
         self.entries.get(name).map(|entry| &entry.next_hops)
     }
 
-    /// Performs a longest prefix match to find the best entry for a given name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - A string representing the name or prefix.
-    ///
-    /// # Returns
-    ///
-    /// * An `Option` containing a reference to the best matching `FibEntry` if found, otherwise `None`.
     pub fn longest_prefix_match(&self, name: &str) -> Option<&FibEntry> {
         self.entries
             .iter()
@@ -4013,11 +4013,6 @@ impl ForwardingInformationBase {
             .map(|(_, entry)| entry)
     }
 
-    /// Checks if the FIB is empty.
-    ///
-    /// # Returns
-    ///
-    /// * `true` if the FIB is empty, otherwise `false`.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -4029,31 +4024,24 @@ mod tests {
 
     #[test]
     fn test_fib() {
-        // Create a new Forwarding Information Base
         let mut fib = ForwardingInformationBase::new();
 
-        // Define some socket addresses for testing
         let addr1: SocketAddr = "127.0.0.1:8000".parse().unwrap();
         let addr2: SocketAddr = "127.0.0.1:8001".parse().unwrap();
 
-        // Add entries to the FIB
         fib.add_entry("/test".to_string(), addr1);
         fib.add_entry("/test/nested".to_string(), addr2);
 
-        // Check if the next hops are correctly added
         assert_eq!(fib.get_next_hops("/test").unwrap().len(), 1);
         assert_eq!(fib.get_next_hops("/test/nested").unwrap().len(), 1);
 
-        // Perform a longest prefix match
         let longest_match = fib.longest_prefix_match("/test/nested/deep");
         assert!(longest_match.is_some());
         assert_eq!(longest_match.unwrap().name, "/test/nested");
 
-        // Test remove_entry
         fib.remove_entry("/test");
         assert!(fib.get_next_hops("/test").is_none());
 
-        // Test FibEntry methods
         let mut entry = FibEntry::new("/example".to_string(), addr1);
         entry.add_next_hop(addr2);
         assert_eq!(entry.next_hops.len(), 2);
@@ -4228,6 +4216,74 @@ impl ICNNode {
 }
 ===== END OF crates/icn_node_managment/src/icn_node.rs =====
 
+===== START OF crates/icn_node_managment/src/lib.rs =====
+mod content_store;
+mod fib;
+mod pit;
+
+pub use content_store::ContentStore;
+pub use fib::ForwardingInformationBase;
+pub use pit::PendingInterestTable;
+
+use icn_core::error::{Error, Result};
+use icn_network::Node as NetworkNode;
+
+pub struct IcnNodeManager {
+    network_node: NetworkNode,
+    content_store: ContentStore,
+    fib: ForwardingInformationBase,
+    pit: PendingInterestTable,
+}
+
+impl IcnNodeManager {
+    pub fn new(network_node: NetworkNode) -> Self {
+        IcnNodeManager {
+            network_node,
+            content_store: ContentStore::new(),
+            fib: ForwardingInformationBase::new(),
+            pit: PendingInterestTable::new(),
+        }
+    }
+
+    pub fn add_content(&mut self, name: String, content: Vec<u8>) -> Result<()> {
+        self.content_store.add(name, content);
+        Ok(())
+    }
+
+    pub fn get_content(&self, name: &str) -> Option<Vec<u8>> {
+        self.content_store.get(name)
+    }
+
+    pub fn add_fib_entry(&mut self, prefix: String, next_hop: String) -> Result<()> {
+        self.fib.add_entry(prefix, next_hop);
+        Ok(())
+    }
+
+    pub fn add_pit_entry(&mut self, name: String, incoming_face: String) -> Result<()> {
+        self.pit.add_interest(name, &incoming_face);
+        Ok(())
+    }
+
+    pub fn remove_expired_content(&mut self) {
+        self.content_store.remove_expired();
+    }
+
+    pub fn clear_expired_pit_entries(&mut self) {
+        self.pit.clear_expired();
+    }
+
+    pub fn process_interest_packet(&self, packet: Packet) -> Result<()> {
+        // Logic to process interest packets
+        Ok(())
+    }
+
+    pub fn process_data_packet(&self, packet: Packet) -> Result<()> {
+        // Logic to process data packets
+        Ok(())
+    }
+}
+===== END OF crates/icn_node_managment/src/lib.rs =====
+
 ===== START OF crates/icn_node_managment/src/node.rs =====
 // ===============================================
 // Content Store, FIB, and PIT Implementation
@@ -4372,7 +4428,7 @@ impl PendingInterestTable {
 }
 ===== END OF crates/icn_node_managment/src/node.rs =====
 
-===== START OF crates/icn_node_managment/src/pending_interest_table.rs =====
+===== START OF crates/icn_node_managment/src/pit.rs =====
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -4464,7 +4520,46 @@ mod tests {
         assert!(!pit.has_pending_interest("test_expired"));
     }
 }
-===== END OF crates/icn_node_managment/src/pending_interest_table.rs =====
+===== END OF crates/icn_node_managment/src/pit.rs =====
+
+===== START OF crates/icn_sharding/Cargo.toml =====
+[package]
+name = "icn_sharding"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+uuid = "1.0"
+sha2 = "0.9"
+log = "0.4"
+thiserror = "1.0"
+
+[dependencies.ed25519-dalek]
+version = "1.0"
+features = ["std"]
+
+[dependencies]
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+
+[dependencies.icn_blockchain]
+path = "../icn_blockchain"
+
+[dependencies.icn_network]
+path = "../icn_network"
+
+[dependencies.icn_currency]
+path = "../icn_currency"
+
+[dependencies.icn_error]
+path = "../icn_error"
+===== END OF crates/icn_sharding/Cargo.toml =====
 
 ===== START OF crates/icn_sharding/src/cross_shard_communication.rs =====
 use crate::blockchain::Transaction;
@@ -4734,9 +4829,39 @@ mod tests {
         assert_eq!(communicator.pending_transactions.len(), 1);
         assert!(communicator.pending_transactions.contains_key("tx2"));
     }
-}===== END OF crates/icn_sharding/src/cross_shard_communication.rs =====
+}
+===== END OF crates/icn_sharding/src/cross_shard_communication.rs =====
 
 ===== START OF crates/icn_sharding/src/cross_shard_sync.rs =====
+// This module will handle synchronization across shards for consistency.
+
+pub struct CrossShardSyncManager {
+    // Fields and methods for cross-shard synchronization.
+}
+
+impl CrossShardSyncManager {
+    pub fn new() -> Self {
+        CrossShardSyncManager {
+            // Initialize fields.
+        }
+    }
+
+    pub fn synchronize(&self) {
+        // Implement synchronization logic.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_synchronize() {
+        let sync_manager = CrossShardSyncManager::new();
+        sync_manager.synchronize();
+        // Add assertions for synchronization.
+    }
+}
 ===== END OF crates/icn_sharding/src/cross_shard_sync.rs =====
 
 ===== START OF crates/icn_sharding/src/cross_shard_transaction_manager.rs =====
@@ -4863,6 +4988,7 @@ use crate::error::{Error, Result};
 use thiserror::Error;
 
 pub mod cross_shard_communication;
+pub mod cross_shard_sync;
 
 #[derive(Error, Debug)]
 pub enum ShardingError {
@@ -5349,132 +5475,146 @@ mod tests {
         assert_eq!(manager.get_balance("Frank".to_string(), CurrencyType::BasicNeeds).unwrap(), 500.0);
         assert_eq!(manager.get_balance("Grace".to_string(), CurrencyType::BasicNeeds).unwrap(), 0.0);
     }
-}===== END OF crates/icn_sharding/src/lib.rs =====
+}
+===== END OF crates/icn_sharding/src/lib.rs =====
+
+===== START OF crates/icn_smart_contract/Cargo.rs =====
+===== END OF crates/icn_smart_contract/Cargo.rs =====
+
+===== START OF crates/icn_storage/Cargo.toml =====
+[package]
+name = "icn_storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+uuid = "1.0"
+log = "0.4"
+thiserror = "1.0"
+
+[dependencies.futures]
+version = "0.3"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+
+[dependencies.icn_blockchain]
+path = "../icn_blockchain"
+
+[dependencies.icn_network]
+path = "../icn_network"
+
+[dependencies.icn_currency]
+path = "../icn_currency"
+
+[dependencies.icn_error]
+path = "../icn_error"
+===== END OF crates/icn_storage/Cargo.toml =====
 
 ===== START OF crates/icn_storage/src/lib.rs =====
+pub mod storage_manager;
+pub mod storage_node;
+
+use crate::storage_manager::StorageManager;
+use crate::storage_node::StorageNode;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+use log::info;
+use uuid::Uuid;
+
+pub struct ICNStorage {
+    storage_manager: Arc<Mutex<StorageManager>>,
+    storage_nodes: Vec<Arc<Mutex<StorageNode>>>,
+}
+
+impl ICNStorage {
+    pub fn new(storage_manager: StorageManager) -> Self {
+        ICNStorage {
+            storage_manager: Arc::new(Mutex::new(storage_manager)),
+            storage_nodes: Vec::new(),
+        }
+    }
+
+    pub fn add_storage_node(&mut self, storage_node: StorageNode) {
+        self.storage_nodes.push(Arc::new(Mutex::new(storage_node)));
+    }
+
+    pub fn get_storage_manager(&self) -> Arc<Mutex<StorageManager>> {
+        Arc::clone(&self.storage_manager)
+    }
+
+    pub fn get_storage_nodes(&self) -> Vec<Arc<Mutex<StorageNode>>> {
+        self.storage_nodes.clone()
+    }
+}
+===== END OF crates/icn_storage/src/lib.rs =====
+
+===== START OF crates/icn_storage/src/storage_manager.rs =====
 use std::collections::HashMap;
-use sha2::{Sha256, Digest};
-use serde::{Serialize, Deserialize};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
+use crate::storage_node::StorageNode;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StorageNode {
-    data: HashMap<String, Vec<u8>>,
+#[derive(Debug)]
+pub struct StorageManager {
+    nodes: HashMap<Uuid, Arc<Mutex<StorageNode>>>,
 }
 
-impl StorageNode {
+impl StorageManager {
     pub fn new() -> Self {
-        StorageNode {
-            data: HashMap::new(),
+        StorageManager {
+            nodes: HashMap::new(),
         }
     }
 
-    pub fn store(&mut self, content: Vec<u8>) -> String {
-        let hash = self.calculate_hash(&content);
-        self.data.insert(hash.clone(), content);
-        hash
+    pub fn add_node(&mut self, node: Arc<Mutex<StorageNode>>) -> Uuid {
+        let id = Uuid::new_v4();
+        self.nodes.insert(id, node);
+        id
     }
 
-    pub fn retrieve(&self, hash: &str) -> Option<&Vec<u8>> {
-        self.data.get(hash)
+    pub fn remove_node(&mut self, id: Uuid) {
+        self.nodes.remove(&id);
     }
 
-    pub fn delete(&mut self, hash: &str) -> bool {
-        self.data.remove(hash).is_some()
+    pub fn get_node(&self, id: &Uuid) -> Option<Arc<Mutex<StorageNode>>> {
+        self.nodes.get(id).cloned()
     }
 
-    pub fn update(&mut self, hash: &str, new_content: Vec<u8>) -> Result<(), String> {
-        if self.data.contains_key(hash) {
-            let new_hash = self.calculate_hash(&new_content);
-            if new_hash != hash {
-                return Err("Update would change the hash, use store instead".to_string());
-            }
-            self.data.insert(hash.to_string(), new_content);
-            Ok(())
-        } else {
-            Err("Hash not found".to_string())
-        }
-    }
-
-    fn calculate_hash(&self, content: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        let result = hasher.finalize();
-        hex::encode(result)
-    }
-
-    pub fn list_hashes(&self) -> Vec<String> {
-        self.data.keys().cloned().collect()
-    }
-
-    pub fn contains(&self, hash: &str) -> bool {
-        self.data.contains_key(hash)
-    }
-
-    pub fn clear(&mut self) {
-        self.data.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+    pub fn list_nodes(&self) -> Vec<Uuid> {
+        self.nodes.keys().cloned().collect()
     }
 }
+===== END OF crates/icn_storage/src/storage_manager.rs =====
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+===== START OF crates/icn_storage/src/storage_node.rs =====
+===== END OF crates/icn_storage/src/storage_node.rs =====
 
-    #[test]
-    fn test_store_and_retrieve() {
-        let mut node = StorageNode::new();
-        let content = b"Hello, ICN!".to_vec();
-        let hash = node.store(content.clone());
-        assert_eq!(node.retrieve(&hash), Some(&content));
-    }
+===== START OF crates/icn_vm/Cargo.rs =====
+[package]
+name = "icn_vm"
+version = "0.1.0"
+edition = "2021"
 
-    #[test]
-    fn test_delete() {
-        let mut node = StorageNode::new();
-        let content = b"Delete me".to_vec();
-        let hash = node.store(content);
-        assert!(node.delete(&hash));
-        assert!(!node.contains(&hash));
-    }
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+thiserror = "1.0"
+tokio = { version = "1", features = ["full"] }
 
-    #[test]
-    fn test_update() {
-        let mut node = StorageNode::new();
-        let content = b"Original content".to_vec();
-        let hash = node.store(content);
-        let new_content = b"Original content".to_vec(); // Same content, should work
-        assert!(node.update(&hash, new_content).is_ok());
-        let different_content = b"Different content".to_vec();
-        assert!(node.update(&hash, different_content).is_err());
-    }
-
-    #[test]
-    fn test_list_hashes() {
-        let mut node = StorageNode::new();
-        let hash1 = node.store(b"Content 1".to_vec());
-        let hash2 = node.store(b"Content 2".to_vec());
-        let hashes = node.list_hashes();
-        assert!(hashes.contains(&hash1));
-        assert!(hashes.contains(&hash2));
-    }
-
-    #[test]
-    fn test_clear_and_len() {
-        let mut node = StorageNode::new();
-        node.store(b"Content 1".to_vec());
-        node.store(b"Content 2".to_vec());
-        assert_eq!(node.len(), 2);
-        node.clear();
-        assert!(node.is_empty());
-    }
-}===== END OF crates/icn_storage/src/lib.rs =====
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+===== END OF crates/icn_vm/Cargo.rs =====
 
 ===== START OF crates/icn_vm/src/compiler.rs =====
 use crate::vm::opcode::{Opcode, Value};
@@ -6257,6 +6397,9 @@ impl CoopVM {
 }
 ===== END OF crates/icn_vm/src/coop_vm.rs =====
 
+===== START OF crates/icn_vm/src/lib.rs =====
+===== END OF crates/icn_vm/src/lib.rs =====
+
 ===== START OF crates/icn_vm/src/opcode.rs =====
 #[derive(Debug, Clone, PartialEq, PartialOrd)] // Add PartialOrd here
 pub enum Value {
@@ -6744,4 +6887,7 @@ mod tests {
     }
 }
 ===== END OF crates/icn_vm/src/vm.rs =====
+
+===== START OF Cargo.toml =====
+===== END OF Cargo.toml =====
 
