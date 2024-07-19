@@ -10,7 +10,6 @@ members = [
     "crates/icn_network",
     "crates/icn_node_managment",
     "crates/icn_sharding",
-    "crates/icn_smart_contract",
     "crates/icn_storage",
     "crates/icn_testnet",
     "crates/icn_vm",

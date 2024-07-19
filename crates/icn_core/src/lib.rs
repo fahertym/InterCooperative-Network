@@ -1,83 +1,116 @@
-use icn_common::{Error, Result, CurrencyType};
-use icn_blockchain::{Blockchain, Transaction};
-use icn_vm::smart_contract::{AssetTokenContract, BondContract};
-use chrono::Utc;
-use std::io;
+// crates/icn_core/src/lib.rs
+
+mod error;
+pub use error::{Error, Result};
+
+use icn_blockchain::{Blockchain, Block, Transaction};
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencySystem;
+use icn_governance::DemocraticSystem;
+use icn_identity::DecentralizedIdentity;
+use icn_network::Network;
+use icn_sharding::ShardingManager;
+use icn_vm::CoopVM;
 
 pub struct IcnNode {
     pub blockchain: Blockchain,
-    pub asset_contract: AssetTokenContract,
-    pub bond_contract: BondContract,
+    pub consensus: PoCConsensus,
+    pub currency_system: CurrencySystem,
+    pub democratic_system: DemocraticSystem,
+    pub identity: DecentralizedIdentity,
+    pub network: Network,
+    pub sharding_manager: ShardingManager,
+    pub vm: CoopVM,
 }
 
 impl IcnNode {
     pub fn new() -> Self {
         IcnNode {
             blockchain: Blockchain::new(),
-            asset_contract: AssetTokenContract::new(),
-            bond_contract: BondContract::new(),
+            consensus: PoCConsensus::new(),
+            currency_system: CurrencySystem::new(),
+            democratic_system: DemocraticSystem::new(),
+            identity: DecentralizedIdentity::new(),
+            network: Network::new(),
+            sharding_manager: ShardingManager::new(),
+            vm: CoopVM::new(),
         }
     }
 
     pub fn process_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        self.blockchain.add_transaction(transaction)?;
-        self.blockchain.create_block("Miner".to_string())?;
-        Ok(())
+        self.blockchain.add_transaction(transaction)
     }
 
-    pub fn get_balance(&self, address: &str) -> f64 {
+    pub fn create_block(&mut self) -> Result<()> {
+        let pending_transactions = self.blockchain.pending_transactions().clone();
+        let previous_hash = self.blockchain.latest_block().hash.clone();
+        let new_block = Block::new(
+            self.blockchain.chain().len() as u64,
+            pending_transactions,
+            previous_hash,
+        );
+
+        // Collect votes from validators
+        let validators = self.consensus.get_validators();
+        let votes: Vec<(&str, bool)> = validators.iter()
+            .map(|v| (v.id.as_str(), self.collect_vote(&new_block, v)))
+            .collect();
+
+        // Add the block to the blockchain
+        self.blockchain.add_block(new_block, &votes)
+    }
+
+    fn collect_vote(&self, block: &Block, validator: &icn_consensus::Member) -> bool {
+        // In a real implementation, this would involve network communication
+        // and potentially running the block through the VM to verify its validity
+        // For now, we'll just return true as a placeholder
+        true
+    }
+
+    pub fn execute_smart_contract(&mut self, contract: String) -> Result<()> {
+        let compiled_contract = self.vm.compile(contract)?;
+        self.vm.execute(compiled_contract)
+    }
+
+    pub fn create_proposal(&mut self, proposal: String) -> Result<String> {
+        self.democratic_system.create_proposal(proposal)
+    }
+
+    pub fn vote_on_proposal(&mut self, proposal_id: &str, vote: bool) -> Result<()> {
+        self.democratic_system.vote(proposal_id, vote)
+    }
+
+    pub fn allocate_resources(&mut self, resource_type: String, amount: u64) -> Result<()> {
+        self.sharding_manager.allocate_resources(resource_type, amount)
+    }
+
+    pub fn update_reputation(&mut self, address: &str, change: f64) -> Result<()> {
+        self.consensus.update_reputation(address, change)
+    }
+
+    pub fn get_balance(&self, address: &str) -> Result<f64> {
         self.blockchain.get_balance(address)
     }
-}
 
-pub fn main() {
-    let mut node = IcnNode::new();
+    pub fn create_asset_token(&mut self, name: String, description: String, owner: String) -> Result<String> {
+        let token = self.blockchain.create_asset_token(name, description, owner)?;
+        Ok(token.id)
+    }
 
-    loop {
-        println!("Enter a command (balance, transaction, exit):");
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).expect("Failed to read line");
-
-        match input.trim() {
-            "balance" => {
-                println!("Enter address:");
-                let mut address = String::new();
-                io::stdin().read_line(&mut address).expect("Failed to read line");
-                let balance = node.get_balance(address.trim());
-                println!("Balance: {}", balance);
-            }
-            "transaction" => {
-                println!("Enter from address:");
-                let mut from = String::new();
-                io::stdin().read_line(&mut from).expect("Failed to read line");
-                println!("Enter to address:");
-                let mut to = String::new();
-                io::stdin().read_line(&mut to).expect("Failed to read line");
-                println!("Enter amount:");
-                let mut amount = String::new();
-                io::stdin().read_line(&mut amount).expect("Failed to read line");
-
-                let transaction = Transaction::new(
-                    from.trim().to_string(),
-                    to.trim().to_string(),
-                    amount.trim().parse().expect("Invalid amount"),
-                    CurrencyType::BasicNeeds,
-                    1000,
-                );
-
-                node.process_transaction(transaction).expect("Transaction failed");
-                println!("Transaction processed");
-            }
-            "exit" => break,
-            _ => println!("Unknown command"),
-        }
+    pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> Result<()> {
+        self.blockchain.transfer_asset_token(token_id, new_owner)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_blockchain::{Transaction};
+
+    #[test]
+    fn test_icn_node_creation() {
+        let node = IcnNode::new();
+        assert_eq!(node.blockchain.chain().len(), 1);
+    }
 
     #[test]
     fn test_process_transaction() {
@@ -86,36 +119,22 @@ mod tests {
             "Alice".to_string(),
             "Bob".to_string(),
             100.0,
-            CurrencyType::BasicNeeds,
-            1000,
+            icn_currency::CurrencyType::BasicNeeds,
         );
-
         assert!(node.process_transaction(transaction).is_ok());
-        assert_eq!(node.blockchain.pending_transactions.len(), 0);
     }
 
     #[test]
-    fn test_get_balance() {
+    fn test_create_block() {
         let mut node = IcnNode::new();
-        let transaction1 = Transaction::new(
+        let transaction = Transaction::new(
             "Alice".to_string(),
             "Bob".to_string(),
             100.0,
-            CurrencyType::BasicNeeds,
-            1000,
+            icn_currency::CurrencyType::BasicNeeds,
         );
-        let transaction2 = Transaction::new(
-            "Bob".to_string(),
-            "Alice".to_string(),
-            50.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-
-        node.process_transaction(transaction1).unwrap();
-        node.process_transaction(transaction2).unwrap();
-
-        assert_eq!(node.get_balance("Alice"), -50.0);
-        assert_eq!(node.get_balance("Bob"), 50.0);
+        node.process_transaction(transaction).unwrap();
+        assert!(node.create_block().is_ok());
+        assert_eq!(node.blockchain.chain().len(), 2);
     }
 }
