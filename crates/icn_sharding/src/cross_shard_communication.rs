@@ -1,0 +1,268 @@
+use crate::blockchain::Transaction;
+use crate::sharding::ShardingManager;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+use uuid::Uuid;
+use crate::error::{Error, Result};
+
+#[derive(Clone, Debug)]
+pub struct CrossShardTransaction {
+    pub transaction: Transaction,
+    pub from_shard: u64,
+    pub to_shard: u64,
+    pub status: CrossShardTransactionStatus,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CrossShardTransactionStatus {
+    Initiated,
+    LockAcquired,
+    Committed,
+    Failed(String),
+}
+
+pub struct CrossShardCommunicator {
+    sharding_manager: Arc<Mutex<ShardingManager>>,
+    pending_transactions: HashMap<String, CrossShardTransaction>,
+    tx_channels: HashMap<u64, mpsc::Sender<CrossShardTransaction>>,
+}
+
+impl CrossShardCommunicator {
+    pub fn new(sharding_manager: Arc<Mutex<ShardingManager>>) -> Self {
+        let mut tx_channels = HashMap::new();
+        let shard_count = sharding_manager.lock().unwrap().get_shard_count();
+        for i in 0..shard_count {
+            let (tx, mut rx) = mpsc::channel(100);
+            tx_channels.insert(i, tx);
+            let sm = Arc::clone(&sharding_manager);
+            tokio::spawn(async move {
+                while let Some(transaction) = rx.recv().await {
+                    if let Err(e) = Self::process_transaction(sm.clone(), transaction).await {
+                        eprintln!("Error processing cross-shard transaction: {}", e);
+                    }
+                }
+            });
+        }
+
+        CrossShardCommunicator {
+            sharding_manager,
+            pending_transactions: HashMap::new(),
+            tx_channels,
+        }
+    }
+
+    pub async fn initiate_cross_shard_transaction(&mut self, transaction: Transaction) -> Result<String> {
+        let sharding_manager = self.sharding_manager.lock().map_err(|e| Error::LockError(e.to_string()))?;
+        let from_shard = sharding_manager.get_shard_for_address(&transaction.from);
+        let to_shard = sharding_manager.get_shard_for_address(&transaction.to);
+
+        if from_shard == to_shard {
+            return Err(Error::ShardingError("Not a cross-shard transaction".to_string()));
+        }
+
+        let cross_shard_tx = CrossShardTransaction {
+            transaction: transaction.clone(),
+            from_shard,
+            to_shard,
+            status: CrossShardTransactionStatus::Initiated,
+        };
+
+        let tx_id = Uuid::new_v4().to_string();
+        self.pending_transactions.insert(tx_id.clone(), cross_shard_tx.clone());
+
+        if let Some(tx) = self.tx_channels.get(&from_shard) {
+            tx.send(cross_shard_tx).await.map_err(|e| Error::CommunicationError(e.to_string()))?;
+        } else {
+            return Err(Error::ShardingError(format!("Channel for shard {} not found", from_shard)));
+        }
+
+        Ok(tx_id)
+    }
+
+    async fn process_transaction(sharding_manager: Arc<Mutex<ShardingManager>>, mut transaction: CrossShardTransaction) -> Result<()> {
+        // Phase 1: Lock funds in the source shard
+        {
+            let sm = sharding_manager.lock().map_err(|e| Error::LockError(e.to_string()))?;
+            sm.lock_funds_in_shard(
+                transaction.from_shard,
+                &transaction.transaction.from,
+                &transaction.transaction.currency_type,
+                transaction.transaction.amount
+            )?;
+        }
+        transaction.status = CrossShardTransactionStatus::LockAcquired;
+
+        // Phase 2: Transfer funds to the destination shard
+        {
+            let sm = sharding_manager.lock().map_err(|e| Error::LockError(e.to_string()))?;
+            sm.transfer_between_shards(transaction.from_shard, transaction.to_shard, &transaction.transaction)?;
+        }
+
+        // Phase 3: Commit the transaction
+        {
+            let sm = sharding_manager.lock().map_err(|e| Error::LockError(e.to_string()))?;
+            sm.commit_cross_shard_transaction(&transaction.transaction, transaction.from_shard, transaction.to_shard)?;
+        }
+
+        transaction.status = CrossShardTransactionStatus::Committed;
+        Ok(())
+    }
+
+    pub fn get_transaction_status(&self, tx_id: &str) -> Option<CrossShardTransactionStatus> {
+        self.pending_transactions.get(tx_id).map(|tx| tx.status.clone())
+    }
+
+    pub async fn wait_for_transaction(&self, tx_id: &str, timeout: std::time::Duration) -> Result<CrossShardTransactionStatus> {
+        let start_time = std::time::Instant::now();
+        while start_time.elapsed() < timeout {
+            if let Some(status) = self.get_transaction_status(tx_id) {
+                match status {
+                    CrossShardTransactionStatus::Committed => return Ok(status),
+                    CrossShardTransactionStatus::Failed(reason) => return Err(Error::TransactionFailed(reason)),
+                    _ => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Err(Error::Timeout("Transaction timeout".to_string()))
+    }
+
+    pub async fn cleanup_completed_transactions(&mut self) {
+        self.pending_transactions.retain(|_, tx| {
+            match tx.status {
+                CrossShardTransactionStatus::Committed => false,
+                CrossShardTransactionStatus::Failed(_) => false,
+                _ => true,
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::currency::CurrencyType;
+    use ed25519_dalek::Keypair;
+    use rand::rngs::OsRng;
+
+    #[tokio::test]
+    async fn test_cross_shard_transaction() {
+        let sharding_manager = Arc::new(Mutex::new(ShardingManager::new(2, 10)));
+        let mut communicator = CrossShardCommunicator::new(sharding_manager.clone());
+
+        {
+            let mut sm = sharding_manager.lock().unwrap();
+            sm.add_address_to_shard("Alice".to_string(), 0);
+            sm.add_address_to_shard("Bob".to_string(), 1);
+            sm.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0).unwrap();
+        }
+
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        let mut transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            200.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        transaction.sign(&keypair).unwrap();
+
+        let tx_id = communicator.initiate_cross_shard_transaction(transaction).await.unwrap();
+
+        // Wait for the transaction to be processed
+        let status = communicator.wait_for_transaction(&tx_id, std::time::Duration::from_secs(5)).await.unwrap();
+        assert_eq!(status, CrossShardTransactionStatus::Committed);
+
+        let sm = sharding_manager.lock().unwrap();
+        let alice_balance = sm.get_balance("Alice".to_string(), CurrencyType::BasicNeeds).unwrap();
+        let bob_balance = sm.get_balance("Bob".to_string(), CurrencyType::BasicNeeds).unwrap();
+        
+        assert_eq!(alice_balance, 800.0);
+        assert_eq!(bob_balance, 200.0);
+    }
+
+    #[tokio::test]
+    async fn test_cross_shard_transaction_insufficient_balance() {
+        let sharding_manager = Arc::new(Mutex::new(ShardingManager::new(2, 10)));
+        let mut communicator = CrossShardCommunicator::new(sharding_manager.clone());
+
+        {
+            let mut sm = sharding_manager.lock().unwrap();
+            sm.add_address_to_shard("Charlie".to_string(), 0);
+            sm.add_address_to_shard("Dave".to_string(), 1);
+            sm.initialize_balance("Charlie".to_string(), CurrencyType::BasicNeeds, 100.0).unwrap();
+        }
+
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        let mut transaction = Transaction::new(
+            "Charlie".to_string(),
+            "Dave".to_string(),
+            200.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        transaction.sign(&keypair).unwrap();
+
+        let tx_id = communicator.initiate_cross_shard_transaction(transaction).await.unwrap();
+
+        // Wait for the transaction to be processed
+        let result = communicator.wait_for_transaction(&tx_id, std::time::Duration::from_secs(5)).await;
+        assert!(matches!(result, Err(Error::TransactionFailed(_))));
+
+        let sm = sharding_manager.lock().unwrap();
+        let charlie_balance = sm.get_balance("Charlie".to_string(), CurrencyType::BasicNeeds).unwrap();
+        let dave_balance = sm.get_balance("Dave".to_string(), CurrencyType::BasicNeeds).unwrap();
+        
+        assert_eq!(charlie_balance, 100.0);
+        assert_eq!(dave_balance, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_completed_transactions() {
+        let sharding_manager = Arc::new(Mutex::new(ShardingManager::new(2, 10)));
+        let mut communicator = CrossShardCommunicator::new(sharding_manager.clone());
+
+        // Add some test transactions
+        communicator.pending_transactions.insert(
+            "tx1".to_string(),
+            CrossShardTransaction {
+                transaction: Transaction::new("Alice".to_string(), "Bob".to_string(), 100.0, CurrencyType::BasicNeeds, 1000),
+                from_shard: 0,
+                to_shard: 1,
+                status: CrossShardTransactionStatus::Committed,
+            },
+        );
+
+        communicator.pending_transactions.insert(
+            "tx2".to_string(),
+            CrossShardTransaction {
+                transaction: Transaction::new("Charlie".to_string(), "Dave".to_string(), 50.0, CurrencyType::BasicNeeds, 1000),
+                from_shard: 0,
+                to_shard: 1,
+                status: CrossShardTransactionStatus::Initiated,
+            },
+        );
+
+        communicator.pending_transactions.insert(
+            "tx3".to_string(),
+            CrossShardTransaction {
+                transaction: Transaction::new("Eve".to_string(), "Frank".to_string(), 75.0, CurrencyType::BasicNeeds, 1000),
+                from_shard: 0,
+                to_shard: 1,
+                status: CrossShardTransactionStatus::Failed("Insufficient balance".to_string()),
+            },
+        );
+
+        // Perform cleanup
+        communicator.cleanup_completed_transactions().await;
+
+        // Check that only the initiated transaction remains
+        assert_eq!(communicator.pending_transactions.len(), 1);
+        assert!(communicator.pending_transactions.contains_key("tx2"));
+    }
+}
