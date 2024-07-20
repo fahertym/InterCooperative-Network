@@ -12,6 +12,6 @@ members = [
     "crates/icn_sharding",
     "crates/icn_storage",
     "crates/icn_testnet",
-    "crates/icn_vm",
+    "crates/icn_vm", "icn_utils",
 ]
 resolver = "2"

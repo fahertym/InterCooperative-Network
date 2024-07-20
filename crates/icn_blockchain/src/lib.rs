@@ -1,11 +1,12 @@
-mod block;
-mod transaction;
+// icn_blockchain/src/lib.rs
+
 mod asset_tokenization;
 mod currency;
 mod consensus;
 
-pub use self::block::Block;
-pub use self::transaction::Transaction;
+use icn_utils::types::{Block, Transaction};
+use icn_utils::error::{IcnError, Result};
+
 pub use self::asset_tokenization::{AssetToken, AssetRegistry};
 pub use self::currency::{Currency, CurrencyType};
 pub use self::consensus::PoCConsensus;
@@ -92,18 +93,4 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn get_asset_token(&self, asset_id: &str) -> Option<&AssetToken> {
-        self.asset_registry.get_token(asset_id)
-    }
-
-    pub fn get_bond(&self, bond_id: &str) -> Option<&CurrencyType> {
-        None
-    }
-
-    pub fn deploy_smart_contract(&mut self, contract: Box<dyn SmartContract>) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-pub trait SmartContract {
-}
+    pub fn get_asset_token(&s
