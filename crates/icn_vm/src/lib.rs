@@ -1,4 +1,4 @@
-use icn_types::{IcnResult, IcnError};
+use icn_common_types::{IcnResult, IcnError};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]

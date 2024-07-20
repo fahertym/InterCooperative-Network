@@ -1,12 +1,10 @@
-use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, Block};
-use icn_blockchain::Blockchain;
+use icn_common_types::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
 use icn_identity::IdentityManager;
 use icn_network::Network;
 use icn_sharding::ShardingManager;
-use icn_storage::StorageManager;
 use icn_vm::ContractManager;
 
 use std::sync::{Arc, Mutex};
@@ -28,7 +26,6 @@ pub struct IcnNode {
     identity_manager: Arc<Mutex<IdentityManager>>,
     network: Arc<Mutex<Network>>,
     sharding_manager: Arc<Mutex<ShardingManager>>,
-    storage_manager: Arc<Mutex<StorageManager>>,
     contract_manager: Arc<Mutex<ContractManager>>,
 }
 
@@ -43,7 +40,6 @@ impl IcnNode {
             identity_manager: Arc::new(Mutex::new(IdentityManager::new())),
             network: Arc::new(Mutex::new(Network::new(config.network_port))),
             sharding_manager: Arc::new(Mutex::new(ShardingManager::new(config.shard_count)?)),
-            storage_manager: Arc::new(Mutex::new(StorageManager::new())),
             contract_manager: Arc::new(Mutex::new(ContractManager::new())),
             config,
         })
@@ -96,11 +92,10 @@ impl IcnNode {
             return Ok(false);
         }
 
-        // TODO: Implement signature verification
-        // This would typically involve getting the public key for the sender
-        // from the identity_manager and verifying the transaction signature
-
-        Ok(true)
+        // Implement signature verification
+        let identity_manager = self.identity_manager.lock().map_err(|e| IcnError::Identity(e.to_string()))?;
+        let public_key = identity_manager.get_public_key(&transaction.from)?;
+        transaction.verify(&public_key)
     }
 
     pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
@@ -122,19 +117,6 @@ impl IcnNode {
             .map_err(|e| IcnError::Blockchain(e.to_string()))?
             .get_latest_block()
             .ok_or_else(|| IcnError::Blockchain("No blocks in the blockchain".into()))
-    }
-
-    pub fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        self.identity_manager
-            .lock()
-            .map_err(|e| IcnError::Identity(e.to_string()))?
-            .create_identity(attributes)
-    }
-
-    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
-        // This is a placeholder. Implement actual resource allocation logic
-        info!("Allocating {} units of resource {}", amount, resource_id);
-        Ok(())
     }
 
     pub fn execute_smart_contract(&self, contract_id: &str, input: &[u8]) -> IcnResult<Vec<u8>> {

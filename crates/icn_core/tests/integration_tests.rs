@@ -1,7 +1,7 @@
 // icn_core/tests/integration_tests.rs
 
 use icn_core::{IcnNode, Config};
-use icn_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use icn_common_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use chrono::Duration;
 use log::info;
 use uuid::Uuid;

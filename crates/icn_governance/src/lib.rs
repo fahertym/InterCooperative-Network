@@ -1,4 +1,4 @@
-use icn_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
+use icn_common_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
 use chrono::{DateTime, Utc, Duration};
 use std::collections::HashMap;
 

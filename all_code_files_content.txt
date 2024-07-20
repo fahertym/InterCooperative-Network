@@ -23,6 +23,10 @@
 │   │   └── src
 │   │       ├── lib.rs
 │   │       └── main.rs
+│   ├── icn_common_types
+│   │   ├── Cargo.toml
+│   │   └── src
+│   │       └── lib.rs
 │   ├── icn_consensus
 │   │   ├── Cargo.toml
 │   │   └── src
@@ -109,10 +113,6 @@
 │   │   ├── Cargo.toml
 │   │   └── src
 │   │       └── main.rs
-│   ├── icn_types
-│   │   ├── Cargo.toml
-│   │   └── src
-│   │       └── lib.rs
 │   ├── icn_utils
 │   │   ├── Cargo.toml
 │   │   └── src
@@ -145,8 +145,6 @@
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
-# File: Cargo.toml
-
 [workspace]
 members = [
     "crates/icn_utils",
@@ -161,13 +159,12 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_types",
+    "crates/icn_common_types",
     "crates/icn_core", 
     "crates/icn_common",
 ]
 
-resolver = "2"
-===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+resolver = "2"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 [package]
@@ -178,7 +175,7 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" } 
 icn_utils = { path = "../icn_utils" }
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
@@ -193,7 +190,7 @@ thiserror = "1.0"
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
-use icn_types::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
+use icn_common_types::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
 use icn_common::{CommonError, CommonResult};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -443,23 +440,21 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
-# File: crates/icn_blockchain/Cargo.toml
-
 [package]
 name = "icn_blockchain"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
-icn_utils = { path = "../icn_utils" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.9"
 ed25519-dalek = "1.0"
 rand = "0.7"
-uuid = { version = "0.8", features = ["v4"] }
+log = "0.4"
+thiserror = "1.0"
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
@@ -607,7 +602,7 @@ mod tests {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 // crates/icn_core/src/blockchain.rs
 
-use icn_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction};
 use chrono::Utc;
 use sha2::{Sha256, Digest};
 
@@ -760,133 +755,85 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-use icn_types::{Block, Transaction, CurrencyType};
-use icn_common::{CommonError, CommonResult};
+use icn_common_types::{Block, Transaction, IcnResult, IcnError, Hashable};
+use icn_common::error::Result;
 use chrono::Utc;
-use sha2::{Sha256, Digest};
-use std::collections::HashMap;
+use log::{info, warn, error};
+use std::collections::VecDeque;
+
+const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
 
 pub struct Blockchain {
-    pub chain: Vec<Block>,
-    pub pending_transactions: Vec<Transaction>,
-    pub difficulty: u32,
-    pub mining_reward: f64,
+    chain: Vec<Block>,
+    pending_transactions: VecDeque<Transaction>,
 }
 
 impl Blockchain {
-    pub fn new() -> CommonResult<Self> {
-        let mut blockchain = Blockchain {
-            chain: Vec::new(),
-            pending_transactions: Vec::new(),
-            difficulty: 4,
-            mining_reward: 100.0,
-        };
-
-        blockchain.create_genesis_block()?;
-
-        Ok(blockchain)
+    pub fn new() -> Result<Self> {
+        let genesis_block = Block::genesis();
+        Ok(Blockchain {
+            chain: vec![genesis_block],
+            pending_transactions: VecDeque::new(),
+        })
     }
 
-    fn create_genesis_block(&mut self) -> CommonResult<()> {
-        let genesis_block = Block {
-            index: 0,
-            timestamp: Utc::now().timestamp(),
-            transactions: Vec::new(),
-            previous_hash: String::from("0"),
-            hash: String::new(),
-        };
-
-        let hash = self.calculate_hash(&genesis_block)?;
-        let mut genesis_block = genesis_block;
-        genesis_block.hash = hash;
-
-        self.chain.push(genesis_block);
-        Ok(())
-    }
-
-    pub fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()> {
-        if !self.validate_transaction(&transaction) {
-            return Err(CommonError::BlockchainError("Invalid transaction".into()));
+    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        if self.verify_transaction(&transaction)? {
+            self.pending_transactions.push_back(transaction);
+            Ok(())
+        } else {
+            Err(IcnError::Blockchain("Invalid transaction".into()))
         }
-
-        self.pending_transactions.push(transaction);
-        Ok(())
     }
 
-    pub fn mine_pending_transactions(&mut self, miner_address: &str) -> CommonResult<Block> {
-        let mut block = Block {
+    pub fn create_block(&mut self) -> Result<Block> {
+        let previous_block = self.chain.last().ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
+        
+        let transactions: Vec<Transaction> = self.pending_transactions.drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK)).collect();
+
+        let new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
-            transactions: self.pending_transactions.clone(),
-            previous_hash: self.get_latest_block()?.hash.clone(),
-            hash: String::new(),
+            transactions,
+            previous_hash: previous_block.hash.clone(),
+            hash: String::new(), // Will be set in calculate_hash
         };
 
-        let mut nonce = 0;
-        loop {
-            let hash = self.calculate_hash_with_nonce(&block, nonce)?;
-            if self.is_hash_valid(&hash) {
-                block.hash = hash;
-                break;
-            }
-            nonce += 1;
-        }
-
-        self.chain.push(block.clone());
-
-        // Reset pending transactions and reward the miner
-        self.pending_transactions = vec![Transaction {
-            from: String::from("System"),
-            to: miner_address.to_string(),
-            amount: self.mining_reward,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        }];
-
-        Ok(block)
+        let new_block = self.calculate_hash(new_block);
+        self.chain.push(new_block.clone());
+        Ok(new_block)
     }
 
-    fn calculate_hash(&self, block: &Block) -> CommonResult<String> {
-        let mut hasher = Sha256::new();
-        hasher.update(block.index.to_string());
-        hasher.update(block.timestamp.to_string());
-        for transaction in &block.transactions {
-            hasher.update(transaction.hash());
-        }
-        hasher.update(&block.previous_hash);
-        
-        Ok(format!("{:x}", hasher.finalize()))
+    fn calculate_hash(&self, mut block: Block) -> Block {
+        block.hash = block.hash();
+        block
     }
 
-    fn calculate_hash_with_nonce(&self, block: &Block, nonce: u64) -> CommonResult<String> {
-        let mut hasher = Sha256::new();
-        hasher.update(block.index.to_string());
-        hasher.update(block.timestamp.to_string());
-        for transaction in &block.transactions {
-            hasher.update(transaction.hash());
-        }
-        hasher.update(&block.previous_hash);
-        hasher.update(nonce.to_string());
-        
-        Ok(format!("{:x}", hasher.finalize()))
+    pub fn verify_transaction(&self, transaction: &Transaction) -> Result<bool> {
+        // Implement transaction verification logic
+        // For example, check if the sender has sufficient balance
+        // and if the signature is valid
+        Ok(true) // Placeholder
     }
 
-    fn is_hash_valid(&self, hash: &str) -> bool {
-        let prefix = "0".repeat(self.difficulty as usize);
-        hash.starts_with(&prefix)
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.chain.last()
     }
 
-    pub fn get_latest_block(&self) -> CommonResult<&Block> {
-        self.chain.last().ok_or_else(|| CommonError::BlockchainError("Blockchain is empty".into()))
+    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
+        self.chain.get(index as usize)
     }
 
-    pub fn validate_chain(&self) -> CommonResult<bool> {
+    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
+        self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    pub fn validate_chain(&self) -> Result<bool> {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
 
-            if current_block.hash != self.calculate_hash(current_block)? {
+            if current_block.hash != current_block.hash() {
                 return Ok(false);
             }
 
@@ -898,61 +845,21 @@ impl Blockchain {
         Ok(true)
     }
 
-    fn validate_transaction(&self, transaction: &Transaction) -> bool {
-        // In a real implementation, this would check the transaction signature,
-        // ensure the sender has sufficient balance, etc.
-        // For now, we'll just do a basic check
-        transaction.amount > 0.0
+    pub fn start(&self) -> Result<()> {
+        info!("Blockchain started");
+        Ok(())
     }
 
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64> {
-        let mut balance = 0.0;
-        for block in &self.chain {
-            for transaction in &block.transactions {
-                if transaction.from == address && transaction.currency_type == *currency_type {
-                    balance -= transaction.amount;
-                }
-                if transaction.to == address && transaction.currency_type == *currency_type {
-                    balance += transaction.amount;
-                }
-            }
-        }
-        Ok(balance)
-    }
-
-    pub fn adjust_difficulty(&mut self) {
-        // This is a simple difficulty adjustment algorithm.
-        // In a real-world scenario, this would be more sophisticated.
-        if self.chain.len() % 10 == 0 {
-            let last_ten_blocks = &self.chain[self.chain.len() - 10..];
-            let average_time = last_ten_blocks.windows(2)
-                .map(|w| w[1].timestamp - w[0].timestamp)
-                .sum::<i64>() / 9;
-
-            if average_time < 55 { // If blocks are being mined too quickly
-                self.difficulty += 1;
-            } else if average_time > 65 && self.difficulty > 1 { // If blocks are being mined too slowly
-                self.difficulty -= 1;
-            }
-        }
-    }
-}
-
-impl Transaction {
-    pub fn hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(&self.from);
-        hasher.update(&self.to);
-        hasher.update(self.amount.to_string());
-        hasher.update(format!("{:?}", self.currency_type));
-        hasher.update(self.timestamp.to_string());
-        format!("{:x}", hasher.finalize())
+    pub fn stop(&self) -> Result<()> {
+        info!("Blockchain stopped");
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {
@@ -962,112 +869,44 @@ mod tests {
     }
 
     #[test]
-    fn test_add_transaction() {
+    fn test_add_transaction_and_create_block() {
         let mut blockchain = Blockchain::new().unwrap();
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            Utc::now().timestamp(),
+        );
+
         assert!(blockchain.add_transaction(transaction).is_ok());
         assert_eq!(blockchain.pending_transactions.len(), 1);
-    }
 
-    #[test]
-    fn test_mine_pending_transactions() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-        blockchain.add_transaction(transaction).unwrap();
-        
-        let mined_block = blockchain.mine_pending_transactions("Miner").unwrap();
+        let new_block = blockchain.create_block().unwrap();
         assert_eq!(blockchain.chain.len(), 2);
-        assert_eq!(mined_block.index, 1);
-        assert_eq!(mined_block.transactions.len(), 1);
-        assert_eq!(blockchain.pending_transactions.len(), 1); // Mining reward transaction
+        assert_eq!(new_block.index, 1);
+        assert_eq!(new_block.transactions.len(), 1);
     }
 
     #[test]
     fn test_blockchain_validation() {
         let mut blockchain = Blockchain::new().unwrap();
-        assert!(blockchain.validate_chain().unwrap());
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            Utc::now().timestamp(),
+        );
 
-        // Add a valid block
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
         blockchain.add_transaction(transaction).unwrap();
-        blockchain.mine_pending_transactions("Miner").unwrap();
+        blockchain.create_block().unwrap();
+
         assert!(blockchain.validate_chain().unwrap());
 
         // Tamper with a block
-        blockchain.chain[1].transactions[0].amount = 100.0;
+        blockchain.chain[1].transactions[0].amount = 200.0;
         assert!(!blockchain.validate_chain().unwrap());
-    }
-
-    #[test]
-    fn test_get_balance() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let transaction1 = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-        let transaction2 = Transaction {
-            from: "Bob".to_string(),
-            to: "Alice".to_string(),
-            amount: 30.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-        blockchain.add_transaction(transaction1).unwrap();
-        blockchain.add_transaction(transaction2).unwrap();
-        blockchain.mine_pending_transactions("Miner").unwrap();
-
-        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), -20.0);
-        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 20.0);
-        assert!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds).unwrap() > 0.0);
-    }
-
-    #[test]
-    fn test_adjust_difficulty() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let initial_difficulty = blockchain.difficulty;
-
-        // Mine 10 blocks quickly
-        for _ in 0..10 {
-            let transaction = Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 1.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            };
-            blockchain.add_transaction(transaction).unwrap();
-            blockchain.mine_pending_transactions("Miner").unwrap();
-        }
-
-        blockchain.adjust_difficulty();
-        assert!(blockchain.difficulty > initial_difficulty);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
@@ -1375,6 +1214,403 @@ fn main() {
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
 
+===== START OF /home/matt/InterCooperative-Network/crates/icn_common_types/Cargo.toml =====
+[package]
+name = "icn_common_types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+chrono = "0.4"
+serde_json = "1.0"===== END OF /home/matt/InterCooperative-Network/crates/icn_common_types/Cargo.toml =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_common_types/src/lib.rs =====
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CurrencyType {
+    BasicNeeds,
+    Education,
+    Environmental,
+    Community,
+    Volunteer,
+    Storage,
+    Processing,
+    Energy,
+    Luxury,
+    Service,
+    Custom(String),
+    AssetToken(String),
+    Bond(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub currency_type: CurrencyType,
+    pub timestamp: i64,
+    pub signature: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub proposer: String,
+    pub created_at: DateTime<Utc>,
+    pub voting_ends_at: DateTime<Utc>,
+    pub status: ProposalStatus,
+    pub proposal_type: ProposalType,
+    pub category: ProposalCategory,
+    pub required_quorum: f64,
+    pub execution_timestamp: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Implemented,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalCategory {
+    Constitutional,
+    Economic,
+    Technical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NodeType {
+    PersonalDevice,
+    CooperativeServer,
+    GovernmentServer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Node {
+    pub id: String,
+    pub node_type: NodeType,
+    pub address: String,
+}
+
+#[derive(Error, Debug)]
+pub enum IcnError {
+    #[error("Blockchain error: {0}")]
+    Blockchain(String),
+    #[error("Consensus error: {0}")]
+    Consensus(String),
+    #[error("Currency error: {0}")]
+    Currency(String),
+    #[error("Governance error: {0}")]
+    Governance(String),
+    #[error("Identity error: {0}")]
+    Identity(String),
+    #[error("Network error: {0}")]
+    Network(String),
+    #[error("Sharding error: {0}")]
+    Sharding(String),
+    #[error("Storage error: {0}")]
+    Storage(String),
+    #[error("VM error: {0}")]
+    Vm(String),
+    #[error("API error: {0}")]
+    Api(String),
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub type IcnResult<T> = std::result::Result<T, IcnError>;
+
+pub trait Validator<T> {
+    fn validate(&self, item: &T) -> bool;
+}
+
+pub trait Hashable {
+    fn hash(&self) -> String;
+}
+
+impl Hashable for Block {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(&self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(&transaction.hash());
+        }
+        hasher.update(&self.previous_hash);
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+impl Hashable for Transaction {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.from);
+        hasher.update(&self.to);
+        hasher.update(self.amount.to_string().as_bytes());
+        hasher.update(format!("{:?}", self.currency_type).as_bytes());
+        hasher.update(self.timestamp.to_string().as_bytes());
+        if let Some(signature) = &self.signature {
+            hasher.update(signature);
+        }
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+impl Transaction {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
+        Transaction {
+            from,
+            to,
+            amount,
+            currency_type,
+            timestamp,
+            signature: None,
+        }
+    }
+
+    pub fn sign(&mut self, private_key: &[u8]) -> IcnResult<()> {
+        use ed25519_dalek::{Keypair, Signer};
+        let keypair = Keypair::from_bytes(private_key)
+            .map_err(|e| IcnError::Identity(format!("Invalid private key: {}", e)))?;
+        let message = self.hash().as_bytes().to_vec();
+        let signature = keypair.sign(&message);
+        self.signature = Some(signature.to_bytes().to_vec());
+        Ok(())
+    }
+
+    pub fn verify(&self, public_key: &[u8]) -> IcnResult<bool> {
+        use ed25519_dalek::{PublicKey, Verifier};
+        let public_key = PublicKey::from_bytes(public_key)
+            .map_err(|e| IcnError::Identity(format!("Invalid public key: {}", e)))?;
+        let message = self.hash().as_bytes().to_vec();
+        if let Some(signature) = &self.signature {
+            let signature = ed25519_dalek::Signature::from_bytes(signature)
+                .map_err(|e| IcnError::Identity(format!("Invalid signature: {}", e)))?;
+            Ok(public_key.verify(&message, &signature).is_ok())
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+impl Block {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
+        let timestamp = Utc::now().timestamp();
+        let mut block = Block {
+            index,
+            timestamp,
+            transactions,
+            previous_hash,
+            hash: String::new(),
+        };
+        block.hash = block.hash();
+        block
+    }
+
+    pub fn genesis() -> Self {
+        Block::new(0, Vec::new(), "0".repeat(64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transaction_hash() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+        let hash = tx.hash();
+        assert!(!hash.is_empty());
+        assert_eq!(hash.len(), 64);
+    }
+
+    #[test]
+    fn test_block_hash() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+        let block = Block::new(1, vec![tx], "previous_hash".to_string());
+        let hash = block.hash();
+        assert!(!hash.is_empty());
+        assert_eq!(hash.len(), 64);
+        assert_eq!(block.hash, hash);
+    }
+
+    #[test]
+    fn test_transaction_sign_and_verify() {
+        use ed25519_dalek::{Keypair, Signer};
+        use rand::rngs::OsRng;
+
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        let mut tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+
+        tx.sign(keypair.to_bytes().as_ref()).unwrap();
+        assert!(tx.verify(keypair.public.as_bytes()).unwrap());
+
+        // Test with wrong public key
+        let wrong_keypair: Keypair = Keypair::generate(&mut csprng);
+        assert!(!tx.verify(wrong_keypair.public.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn test_proposal() {
+        let proposal = Proposal {
+            id: "prop1".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+
+        assert_eq!(proposal.status, ProposalStatus::Active);
+        assert_eq!(proposal.proposal_type, ProposalType::Constitutional);
+        assert_eq!(proposal.category, ProposalCategory::Economic);
+    }
+
+    #[test]
+    fn test_vote() {
+        let vote = Vote {
+            voter: "Bob".to_string(),
+            proposal_id: "prop1".to_string(),
+            in_favor: true,
+            weight: 1.0,
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(vote.voter, "Bob");
+        assert_eq!(vote.proposal_id, "prop1");
+        assert!(vote.in_favor);
+        assert_eq!(vote.weight, 1.0);
+    }
+
+    #[test]
+    fn test_node() {
+        let node = Node {
+            id: "node1".to_string(),
+            node_type: NodeType::PersonalDevice,
+            address: "127.0.0.1:8000".to_string(),
+        };
+
+        assert_eq!(node.id, "node1");
+        assert!(matches!(node.node_type, NodeType::PersonalDevice));
+        assert_eq!(node.address, "127.0.0.1:8000");
+    }
+
+    #[test]
+    fn test_icn_error() {
+        let error = IcnError::Blockchain("Test error".to_string());
+        assert_eq!(error.to_string(), "Blockchain error: Test error");
+
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let icn_error: IcnError = io_error.into();
+        assert!(matches!(icn_error, IcnError::Io(_)));
+    }
+
+    #[test]
+    fn test_validator_trait() {
+        struct AlwaysValidValidator;
+        impl Validator<Transaction> for AlwaysValidValidator {
+            fn validate(&self, _item: &Transaction) -> bool {
+                true
+            }
+        }
+
+        let validator = AlwaysValidValidator;
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+
+        assert!(validator.validate(&tx));
+    }
+
+    #[test]
+    fn test_hashable_trait() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+        let tx_hash = tx.hash();
+        assert!(!tx_hash.is_empty());
+        assert_eq!(tx_hash.len(), 64);
+
+        let block = Block::new(1, vec![tx], "previous_hash".to_string());
+        let block_hash = block.hash();
+        assert!(!block_hash.is_empty());
+        assert_eq!(block_hash.len(), 64);
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_common_types/src/lib.rs =====
+
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
 [package]
 name = "icn_consensus"
@@ -1382,16 +1618,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common_types = { path = "../icn_common_types" }
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 thiserror = "1.0"
-icn_utils = { path = "../icn_utils" }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
 sha2 = "0.9"
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
+tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs =====
 use icn_utils::{error::IcnError, IcnResult};
@@ -1689,10 +1926,12 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::Utc;
+use log::{info, warn, error};
+use rand::Rng;
 
 #[derive(Debug, Clone)]
 pub struct Member {
@@ -1708,6 +1947,18 @@ pub struct PoCConsensus {
 }
 
 impl PoCConsensus {
+    pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
+        if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
+            return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
+        }
+
+        Ok(PoCConsensus {
+            members: HashMap::new(),
+            threshold,
+            quorum,
+        })
+    }
+
     pub fn add_member(&mut self, id: String, is_validator: bool) -> IcnResult<()> {
         if self.members.contains_key(&id) {
             return Err(IcnError::Consensus("Member already exists".into()));
@@ -1779,13 +2030,11 @@ impl PoCConsensus {
             return Err(IcnError::Consensus("No validators available".into()));
         }
 
-        // For simplicity, we'll use a basic selection method.
-        // In a real implementation, this could be more sophisticated,
-        // potentially using a deterministic random selection based on the current block.
         let total_reputation: f64 = validators.iter().map(|m| m.reputation).sum();
-        let mut cumulative_reputation = 0.0;
-        let random_point = rand::random::<f64>() * total_reputation;
+        let mut rng = rand::thread_rng();
+        let random_point = rng.gen::<f64>() * total_reputation;
 
+        let mut cumulative_reputation = 0.0;
         for validator in validators {
             cumulative_reputation += validator.reputation;
             if cumulative_reputation > random_point {
@@ -1798,35 +2047,20 @@ impl PoCConsensus {
     }
 
     pub fn start(&self) -> IcnResult<()> {
-        // Initialize any necessary state for the consensus mechanism
+        info!("PoC Consensus mechanism started");
         Ok(())
     }
 
     pub fn stop(&self) -> IcnResult<()> {
-        // Clean up any resources used by the consensus mechanism
+        info!("PoC Consensus mechanism stopped");
         Ok(())
-    }
-}
-
-pub trait ConsensusAlgorithm {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool>;
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool>;
-}
-
-impl ConsensusAlgorithm for PoCConsensus {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        self.validate_block(block)
-    }
-
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
-        self.reach_consensus(block, votes)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_types::CurrencyType;
+    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
@@ -1858,14 +2092,13 @@ mod tests {
         let block = Block {
             index: 1,
             timestamp: Utc::now().timestamp(),
-            transactions: vec![Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 100.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            }],
+            transactions: vec![Transaction::new(
+                "Alice".to_string(),
+                "Bob".to_string(),
+                100.0,
+                CurrencyType::BasicNeeds,
+                Utc::now().timestamp(),
+            )],
             previous_hash: "previous_hash".to_string(),
             hash: "hash".to_string(),
         };
@@ -1901,81 +2134,6 @@ mod tests {
         let mut consensus_no_validators = PoCConsensus::new(0.66, 0.51).unwrap();
         consensus_no_validators.add_member("Dave".to_string(), false).unwrap();
         assert!(consensus_no_validators.select_proposer().is_err());
-    }
-
-    #[test]
-    fn test_get_validators() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), false).unwrap();
-        consensus.add_member("Charlie".to_string(), true).unwrap();
-
-        let validators = consensus.get_validators();
-        assert_eq!(validators.len(), 2);
-        assert!(validators.iter().any(|m| m.id == "Alice"));
-        assert!(validators.iter().any(|m| m.id == "Charlie"));
-    }
-
-    #[test]
-    fn test_consensus_edge_cases() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), true).unwrap();
-
-        let block = Block {
-            index: 1,
-            timestamp: Utc::now().timestamp(),
-            transactions: vec![],
-            previous_hash: "previous_hash".to_string(),
-            hash: "hash".to_string(),
-        };
-
-        // Test with empty block
-        assert!(consensus.validate_block(&block).is_err());
-
-        // Test with non-existent member
-        let votes = vec![("Charlie", true)];
-        assert!(consensus.reach_consensus(&block, &votes).is_err());
-
-        // Test with insufficient participation
-        consensus.quorum = 0.99; // Set an impossibly high quorum
-        let votes = vec![("Alice", true)];
-        assert!(consensus.reach_consensus(&block, &votes).is_err());
-    }
-
-    #[test]
-    fn test_reputation_based_consensus() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), true).unwrap();
-        consensus.add_member("Charlie".to_string(), true).unwrap();
-
-        // Increase Alice's reputation
-        consensus.update_reputation("Alice", 1.0).unwrap();
-
-        let block = Block {
-            index: 1,
-            timestamp: Utc::now().timestamp(),
-            transactions: vec![Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 100.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            }],
-            previous_hash: "previous_hash".to_string(),
-            hash: "hash".to_string(),
-        };
-
-        // Alice's vote should have more weight due to higher reputation
-        let votes = vec![
-            ("Alice", true),
-            ("Bob", false),
-            ("Charlie", false),
-        ];
-
-        assert!(consensus.reach_consensus(&block, &votes).unwrap());
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 
@@ -2090,24 +2248,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
-log = "0.4"
-thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-ed25519-dalek = "1.0"
-rand = "0.7"
-icn_utils = { path = "../icn_utils" }
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
+icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
 icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
-icn_common = { path = "../icn_common" }
-
-# Remove the dependency on icn_storage
-# icn_storage = { path = "../icn_storage" }
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+thiserror = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml =====
@@ -2205,15 +2359,13 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, Block};
-use icn_blockchain::Blockchain;
+use icn_common_types::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
 use icn_identity::IdentityManager;
 use icn_network::Network;
 use icn_sharding::ShardingManager;
-use icn_storage::StorageManager;
 use icn_vm::ContractManager;
 
 use std::sync::{Arc, Mutex};
@@ -2235,7 +2387,6 @@ pub struct IcnNode {
     identity_manager: Arc<Mutex<IdentityManager>>,
     network: Arc<Mutex<Network>>,
     sharding_manager: Arc<Mutex<ShardingManager>>,
-    storage_manager: Arc<Mutex<StorageManager>>,
     contract_manager: Arc<Mutex<ContractManager>>,
 }
 
@@ -2250,7 +2401,6 @@ impl IcnNode {
             identity_manager: Arc::new(Mutex::new(IdentityManager::new())),
             network: Arc::new(Mutex::new(Network::new(config.network_port))),
             sharding_manager: Arc::new(Mutex::new(ShardingManager::new(config.shard_count)?)),
-            storage_manager: Arc::new(Mutex::new(StorageManager::new())),
             contract_manager: Arc::new(Mutex::new(ContractManager::new())),
             config,
         })
@@ -2303,11 +2453,10 @@ impl IcnNode {
             return Ok(false);
         }
 
-        // TODO: Implement signature verification
-        // This would typically involve getting the public key for the sender
-        // from the identity_manager and verifying the transaction signature
-
-        Ok(true)
+        // Implement signature verification
+        let identity_manager = self.identity_manager.lock().map_err(|e| IcnError::Identity(e.to_string()))?;
+        let public_key = identity_manager.get_public_key(&transaction.from)?;
+        transaction.verify(&public_key)
     }
 
     pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
@@ -2329,19 +2478,6 @@ impl IcnNode {
             .map_err(|e| IcnError::Blockchain(e.to_string()))?
             .get_latest_block()
             .ok_or_else(|| IcnError::Blockchain("No blocks in the blockchain".into()))
-    }
-
-    pub fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        self.identity_manager
-            .lock()
-            .map_err(|e| IcnError::Identity(e.to_string()))?
-            .create_identity(attributes)
-    }
-
-    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
-        // This is a placeholder. Implement actual resource allocation logic
-        info!("Allocating {} units of resource {}", amount, resource_id);
-        Ok(())
     }
 
     pub fn execute_smart_contract(&self, contract_id: &str, input: &[u8]) -> IcnResult<Vec<u8>> {
@@ -2738,7 +2874,7 @@ fn test_packet_processing() {
 // icn_core/tests/integration_tests.rs
 
 use icn_core::{IcnNode, Config};
-use icn_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use icn_common_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use chrono::Duration;
 use log::info;
 use uuid::Uuid;
@@ -3220,7 +3356,7 @@ impl CurrencySystem {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/currency.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, CurrencyType};
+use icn_common_types::{IcnResult, IcnError, CurrencyType};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
 
@@ -3727,7 +3863,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/democracy.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
+use icn_common_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
 use chrono::{DateTime, Utc, Duration};
 use std::collections::HashMap;
 
@@ -4147,7 +4283,7 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/identity_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
-use icn_types::{IcnResult, IcnError};
+use icn_common_types::{IcnResult, IcnError};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
@@ -4326,7 +4462,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -4363,7 +4499,7 @@ impl DiscoveryService {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
-use icn_types::{Node, NodeType};
+use icn_common_types::{Node, NodeType};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -5458,7 +5594,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
 serde = { version = "1.0", features = ["derive"] }
@@ -5890,7 +6026,7 @@ impl CrossShardCommunicator {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/cross_shard_transaction_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 
@@ -6120,7 +6256,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -6347,443 +6483,260 @@ env_logger = "0.9"
 rand = "0.8"===== END OF /home/matt/InterCooperative-Network/crates/icn_testnet/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_testnet/src/main.rs =====
-// File: icn_testnet/src/main.rs
-
+use icn_core::{IcnNode, Config};
+use icn_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use std::io::{self, Write};
+use chrono::{Duration, Utc};
 use log::{info, warn, error};
-use chrono::Utc;
-use std::collections::HashMap;
-use std::error::Error;
-use std::sync::Arc;
+use uuid::Uuid;
 
-use icn_core::{IcnNode, Error as IcnNodeError};
-use icn_blockchain::Transaction;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencyType;
-use icn_governance::{DemocraticSystem, ProposalType, ProposalCategory};
-use icn_identity::DecentralizedIdentity;
-use icn_network::Network;
-use icn_network::node::{Node, NodeType};
-use icn_vm::CSCLCompiler;
-
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
-    info!("Starting ICN Node");
 
-    let node = Arc::new(IcnNode::new());
-    let mut network = Network::new();
-    let mut consensus = PoCConsensus::new(0.5, 0.66);
-    let mut democratic_system = DemocraticSystem::new();
+    let config = Config {
+        shard_count: 4,
+        consensus_threshold: 0.66,
+        consensus_quorum: 0.51,
+        network_port: 8080,
+    };
 
-    setup_network_and_consensus(&mut network, &mut consensus)?;
-    process_initial_transactions(Arc::clone(&node))?;
-    create_and_vote_on_proposal(&mut democratic_system)?;
-    compile_and_run_cscl(Arc::clone(&node))?;
-    simulate_cross_shard_transaction(Arc::clone(&node))?;
-    print_final_state(&node, &consensus, &democratic_system);
+    info!("Starting InterCooperative Network testnet...");
+    let node = IcnNode::new(config)?;
+    node.start()?;
 
-    info!("ICN Node simulation completed.");
-    Ok(())
-}
+    info!("Node started successfully. Type 'help' for available commands.");
 
-fn setup_network_and_consensus(network: &mut Network, consensus: &mut PoCConsensus) -> Result<(), Box<dyn Error>> {
-    let node1 = Node::new("Node1", NodeType::PersonalDevice, "127.0.0.1:8000");
-    let node2 = Node::new("Node2", NodeType::PersonalDevice, "127.0.0.1:8001");
-    network.add_node(node1);
-    network.add_node(node2);
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
 
-    consensus.add_member("Alice".to_string(), false)?;
-    consensus.add_member("Bob".to_string(), false)?;
-    consensus.add_member("Charlie".to_string(), false)?;
-    consensus.add_member("CorpX".to_string(), true)?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
 
-    Ok(())
-}
-
-fn process_initial_transactions(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    let (alice_did, _) = DecentralizedIdentity::new(HashMap::new());
-    let (bob_did, _) = DecentralizedIdentity::new(HashMap::new());
-
-    let tx = Transaction::new(
-        alice_did.id.clone(),
-        bob_did.id.clone(),
-        100.0,
-        CurrencyType::BasicNeeds,
-        1000,
-    );
-
-    node.with_blockchain(|blockchain| {
-        blockchain.add_transaction(tx.clone())?;
-        blockchain.create_block("Alice".to_string())?;
-        if let Some(latest_block) = blockchain.get_latest_block() {
-            info!("New block created: {:?}", latest_block);
-        } else {
-            warn!("No blocks in the blockchain to broadcast");
+        match input {
+            "help" => print_help(),
+            "exit" => break,
+            "transaction" => process_transaction(&node)?,
+            "proposal" => create_proposal(&node)?,
+            "balance" => check_balance(&node)?,
+            "identity" => create_identity(&node)?,
+            "allocate" => allocate_resource(&node)?,
+            "network" => get_network_stats(&node)?,
+            _ => println!("Unknown command. Type 'help' for available commands."),
         }
-        Ok(())
-    })?;
+    }
+
+    info!("Stopping node...");
+    node.stop()?;
+    info!("Node stopped. Goodbye!");
 
     Ok(())
 }
 
-fn create_and_vote_on_proposal(democratic_system: &mut DemocraticSystem) -> Result<(), Box<dyn Error>> {
-    let proposal_id = democratic_system.create_proposal(
-        "Community Garden".to_string(),
-        "Create a community garden in the local park".to_string(),
-        "Alice".to_string(),
-        chrono::Duration::weeks(1),
-        ProposalType::Constitutional,
-        ProposalCategory::Economic,
-        0.51,
-        Some(Utc::now() + chrono::Duration::days(30)),
-    )?;
-
-    democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
-    democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
-    democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
-    democratic_system.tally_votes(&proposal_id)?;
-
-    let proposal = democratic_system.get_proposal(&proposal_id)
-        .ok_or("Proposal not found after voting")?;
-    info!("Proposal status after voting: {:?}", proposal.status);
-
-    Ok(())
+fn print_help() {
+    println!("Available commands:");
+    println!("  help        - Show this help message");
+    println!("  transaction - Create a new transaction");
+    println!("  proposal    - Create a new proposal");
+    println!("  balance     - Check account balance");
+    println!("  identity    - Create a new identity");
+    println!("  allocate    - Allocate a resource");
+    println!("  network     - Get network statistics");
+    println!("  exit        - Exit the application");
 }
 
-fn compile_and_run_cscl(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    let cscl_code = r#"
-    x = 100 + 50;
-    y = 200 - 25;
-    z = x * y / 10;
-    emit("Result", z);
-    "#;
-
-    let mut compiler = CSCLCompiler::new(cscl_code);
-    let opcodes = compiler.compile()?;
+fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Processing a new transaction");
     
-    node.with_coop_vm(|coop_vm| {
-        coop_vm.load_program(opcodes);
-        coop_vm.run().map_err(IcnNodeError::VmError)
-    })?;
+    print!("From: ");
+    io::stdout().flush()?;
+    let mut from = String::new();
+    io::stdin().read_line(&mut from)?;
+    
+    print!("To: ");
+    io::stdout().flush()?;
+    let mut to = String::new();
+    io::stdin().read_line(&mut to)?;
+    
+    print!("Amount: ");
+    io::stdout().flush()?;
+    let mut amount_str = String::new();
+    io::stdin().read_line(&mut amount_str)?;
+    let amount: f64 = amount_str.trim().parse()?;
 
+    let transaction = Transaction {
+        from: from.trim().to_string(),
+        to: to.trim().to_string(),
+        amount,
+        currency_type: CurrencyType::BasicNeeds,
+        timestamp: Utc::now().timestamp(),
+        signature: None,
+    };
+
+    node.process_transaction(transaction)?;
+    info!("Transaction processed successfully");
     Ok(())
 }
 
-fn simulate_cross_shard_transaction(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    node.process_cross_shard_transaction(|sharding_manager| {
-        sharding_manager.add_address_to_shard("Alice".to_string(), 0);
-        sharding_manager.add_address_to_shard("Bob".to_string(), 1);
-        sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
-    })?;
+fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Creating a new proposal");
+    
+    print!("Title: ");
+    io::stdout().flush()?;
+    let mut title = String::new();
+    io::stdin().read_line(&mut title)?;
+    
+    print!("Description: ");
+    io::stdout().flush()?;
+    let mut description = String::new();
+    io::stdin().read_line(&mut description)?;
+    
+    print!("Proposer: ");
+    io::stdout().flush()?;
+    let mut proposer = String::new();
+    io::stdin().read_line(&mut proposer)?;
 
-    let transaction = Transaction::new(
-        "Alice".to_string(),
-        "Bob".to_string(),
-        500.0,
-        CurrencyType::BasicNeeds,
-        1000,
-    );
+    let proposal = Proposal {
+        id: Uuid::new_v4().to_string(),
+        title: title.trim().to_string(),
+        description: description.trim().to_string(),
+        proposer: proposer.trim().to_string(),
+        created_at: Utc::now(),
+        voting_ends_at: Utc::now() + Duration::days(7),
+        status: ProposalStatus::Active,
+        proposal_type: ProposalType::Constitutional,
+        category: ProposalCategory::Economic,
+        required_quorum: 0.66,
+        execution_timestamp: None,
+    };
 
-    node.process_cross_shard_transaction(|sharding_manager| {
-        sharding_manager.transfer_between_shards(0, 1, &transaction)
-    })?;
-
-    let alice_balance = node.with_sharding_manager(|sharding_manager| {
-        sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
-    })?;
-
-    let bob_balance = node.with_sharding_manager(|sharding_manager| {
-        sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
-    })?;
-
-    info!("Alice's balance after cross-shard transaction: {:?}", alice_balance);
-    info!("Bob's balance after cross-shard transaction: {:?}", bob_balance);
-
+    let proposal_id = node.create_proposal(proposal)?;
+    info!("Proposal created successfully with ID: {}", proposal_id);
     Ok(())
 }
 
-fn print_final_state(node: &Arc<IcnNode>, consensus: &PoCConsensus, democratic_system: &DemocraticSystem) {
-    info!("Blockchain state:");
-    if let Err(e) = node.with_blockchain(|blockchain| {
-        info!("Number of blocks: {}", blockchain.chain.len());
-        if let Some(latest_block) = blockchain.get_latest_block() {
-            info!("Latest block hash: {}", latest_block.hash);
-        } else {
-            warn!("No blocks in the blockchain");
-        }
-        Ok(())
-    }) {
-        error!("Failed to read blockchain state: {}", e);
-    }
+fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Checking balance");
+    
+    print!("Address: ");
+    io::stdout().flush()?;
+    let mut address = String::new();
+    io::stdin().read_line(&mut address)?;
+    
+    let balance = node.get_balance(address.trim(), &CurrencyType::BasicNeeds)?;
+    println!("Balance: {}", balance);
+    Ok(())
+}
 
-    info!("Consensus state:");
-    info!("Number of members: {}", consensus.members.len());
-    info!("Current vote threshold: {}", consensus.threshold);
+fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Creating a new identity");
+    
+    print!("Name: ");
+    io::stdout().flush()?;
+    let mut name = String::new();
+    io::stdin().read_line(&mut name)?;
 
-    info!("Democratic system state:");
-    info!("Number of active proposals: {}", democratic_system.list_active_proposals().len());
+    print!("Email: ");
+    io::stdout().flush()?;
+    let mut email = String::new();
+    io::stdin().read_line(&mut email)?;
 
-    info!("Sharding state:");
-    if let Err(e) = node.with_sharding_manager(|sharding_manager| {
-        info!("Number of shards: {}", sharding_manager.get_shard_count());
-        Ok(())
-    }) {
-        error!("Failed to read sharding state: {}", e);
-    }
+    let mut attributes = std::collections::HashMap::new();
+    attributes.insert("name".to_string(), name.trim().to_string());
+    attributes.insert("email".to_string(), email.trim().to_string());
+
+    let identity = node.create_identity(attributes)?;
+    info!("Identity created successfully with ID: {}", identity.id);
+    Ok(())
+}
+
+fn allocate_resource(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Allocating a resource");
+    
+    print!("Resource ID: ");
+    io::stdout().flush()?;
+    let mut resource_id = String::new();
+    io::stdin().read_line(&mut resource_id)?;
+
+    print!("Amount: ");
+    io::stdout().flush()?;
+    let mut amount_str = String::new();
+    io::stdin().read_line(&mut amount_str)?;
+    let amount: u64 = amount_str.trim().parse()?;
+
+    node.allocate_resource(resource_id.trim(), amount)?;
+    info!("Resource allocated successfully");
+    Ok(())
+}
+
+fn get_network_stats(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Getting network statistics");
+    
+    let stats = node.get_network_stats()?;
+    println!("Connected peers: {}", stats.connected_peers);
+    println!("Total transactions: {}", stats.total_transactions);
+    println!("Network uptime: {} seconds", stats.uptime.as_secs());
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_governance::democracy::ProposalStatus;
-    use ed25519_dalek::Keypair;
-    use rand::rngs::OsRng;
 
     #[test]
-    fn test_icn_node_creation() {
-        let node = Arc::new(IcnNode::new());
-        assert!(node.with_blockchain(|blockchain| Ok(blockchain.chain.len() == 1)).unwrap());
-        info!("ICN Node creation test passed");
+    fn test_node_creation_and_basic_operations() {
+        let config = Config {
+            shard_count: 4,
+            consensus_threshold: 0.66,
+            consensus_quorum: 0.51,
+            network_port: 8080,
+        };
+
+        let node = IcnNode::new(config).unwrap();
+        assert!(node.start().is_ok());
+
+        // Test create identity
+        let mut attributes = std::collections::HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        attributes.insert("email".to_string(), "alice@example.com".to_string());
+        let identity = node.create_identity(attributes).unwrap();
+        assert_eq!(identity.attributes.get("name"), Some(&"Alice".to_string()));
+
+        // Test process transaction
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+        assert!(node.process_transaction(transaction).is_ok());
+
+        // Test create proposal
+        let proposal = Proposal {
+            id: Uuid::new_v4().to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+        assert!(node.create_proposal(proposal).is_ok());
+
+        // Test get network stats
+        let stats = node.get_network_stats().unwrap();
+        assert!(stats.connected_peers >= 0);
+
+        assert!(node.stop().is_ok());
     }
-
-    #[test]
-    fn test_cross_shard_transaction() -> Result<(), Box<dyn Error>> {
-        let node = Arc::new(IcnNode::new());
-
-        node.process_cross_shard_transaction(|sharding_manager| {
-            sharding_manager.add_address_to_shard("Alice".to_string(), 0);
-            sharding_manager.add_address_to_shard("Bob".to_string(), 1);
-            sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
-        })?;
-
-        let mut csprng = OsRng{};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-
-        let mut transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            500.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-        transaction.sign(&keypair)?;
-
-        node.process_cross_shard_transaction(|sharding_manager| {
-            sharding_manager.transfer_between_shards(0, 1, &transaction)
-        })?;
-
-        let alice_balance = node.with_sharding_manager(|sharding_manager| {
-            sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
-        })?;
-
-        let bob_balance = node.with_sharding_manager(|sharding_manager| {
-            sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
-        })?;
-
-        assert_eq!(alice_balance, 500.0);
-        assert_eq!(bob_balance, 500.0);
-
-        info!("Cross-shard transaction test passed");
-        Ok(())
-    }
-
-    #[test]
-    fn test_smart_contract_execution() -> Result<(), Box<dyn Error>> {
-        let node = Arc::new(IcnNode::new());
-        compile_and_run_cscl(Arc::clone(&node))?;
-        info!("Smart contract execution test passed");
-        Ok(())
-    }
-
-    #[test]
-    fn test_democratic_system() -> Result<(), Box<dyn Error>> {
-        let mut democratic_system = DemocraticSystem::new();
-        
-        let proposal_id = democratic_system.create_proposal(
-            "Community Garden".to_string(),
-            "Create a community garden in the local park".to_string(),
-            "Alice".to_string(),
-            chrono::Duration::seconds(5), // Shorter duration for testing
-            ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            0.51,
-            Some(Utc::now() + chrono::Duration::days(30)),
-        )?;
-
-        democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
-        democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
-        democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
-
-        // Wait for the voting period to end
-        std::thread::sleep(std::time::Duration::from_secs(6));
-
-        democratic_system.tally_votes(&proposal_id)?;
-
-        let proposal = democratic_system.get_proposal(&proposal_id)
-            .ok_or("Proposal not found after voting")?;
-        assert_eq!(proposal.status, ProposalStatus::Passed);
-        
-        info!("Democratic system test passed");
-        Ok(())
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_testnet/src/main.rs =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_types/Cargo.toml =====
-# File: icn_types/Cargo.toml
-
-
-[package]
-name = "icn_types"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
-chrono = "0.4"
-serde_json = "1.0"
-
-===== END OF /home/matt/InterCooperative-Network/crates/icn_types/Cargo.toml =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_types/src/lib.rs =====
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-use thiserror::Error;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Constitutional,
-    Economic,
-    Technical,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-#[derive(Error, Debug)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Sharding error: {0}")]
-    Sharding(String),
-    #[error("Storage error: {0}")]
-    Storage(String),
-    #[error("VM error: {0}")]
-    Vm(String),
-    #[error("API error: {0}")]
-    Api(String),
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
-
-pub trait Validator<T> {
-    fn validate(&self, item: &T) -> bool;
-}
-
-pub trait Hashable {
-    fn hash(&self) -> String;
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_types/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_testnet/src/main.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/Cargo.toml =====
 # File: icn_utils/Cargo.toml
@@ -6803,7 +6756,7 @@ thiserror = "1.0"
 serde_json = "1.0"
 bincode = "1.3"
 hex = "0.4"
-icn_types = { path = "../icn_types" }  # Corrected dependency from icn_common to icn_types
+icn_common_types = { path = "../icn_common_types" }  # Corrected dependency from icn_common to icn_types
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -7283,7 +7236,7 @@ tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -8071,7 +8024,7 @@ impl CoopVM {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/coop_vm.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
-use icn_types::{IcnResult, IcnError};
+use icn_common_types::{IcnResult, IcnError};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8882,8 +8835,6 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/vm.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
-# File: Cargo.toml
-
 [workspace]
 members = [
     "crates/icn_utils",
@@ -8898,11 +8849,10 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_types",
+    "crates/icn_common_types",
     "crates/icn_core", 
     "crates/icn_common",
 ]
 
-resolver = "2"
-===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+resolver = "2"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 

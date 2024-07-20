@@ -1,6 +1,6 @@
 // crates/icn_core/src/blockchain.rs
 
-use icn_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction};
 use chrono::Utc;
 use sha2::{Sha256, Digest};
 

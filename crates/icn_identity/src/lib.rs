@@ -1,4 +1,4 @@
-use icn_types::{IcnResult, IcnError};
+use icn_common_types::{IcnResult, IcnError};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};

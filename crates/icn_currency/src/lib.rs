@@ -1,4 +1,4 @@
-use icn_types::{IcnResult, IcnError, CurrencyType};
+use icn_common_types::{IcnResult, IcnError, CurrencyType};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
 

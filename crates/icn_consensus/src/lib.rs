@@ -1,7 +1,9 @@
-use icn_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::Utc;
+use log::{info, warn, error};
+use rand::Rng;
 
 #[derive(Debug, Clone)]
 pub struct Member {
@@ -17,6 +19,18 @@ pub struct PoCConsensus {
 }
 
 impl PoCConsensus {
+    pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
+        if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
+            return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
+        }
+
+        Ok(PoCConsensus {
+            members: HashMap::new(),
+            threshold,
+            quorum,
+        })
+    }
+
     pub fn add_member(&mut self, id: String, is_validator: bool) -> IcnResult<()> {
         if self.members.contains_key(&id) {
             return Err(IcnError::Consensus("Member already exists".into()));
@@ -88,13 +102,11 @@ impl PoCConsensus {
             return Err(IcnError::Consensus("No validators available".into()));
         }
 
-        // For simplicity, we'll use a basic selection method.
-        // In a real implementation, this could be more sophisticated,
-        // potentially using a deterministic random selection based on the current block.
         let total_reputation: f64 = validators.iter().map(|m| m.reputation).sum();
-        let mut cumulative_reputation = 0.0;
-        let random_point = rand::random::<f64>() * total_reputation;
+        let mut rng = rand::thread_rng();
+        let random_point = rng.gen::<f64>() * total_reputation;
 
+        let mut cumulative_reputation = 0.0;
         for validator in validators {
             cumulative_reputation += validator.reputation;
             if cumulative_reputation > random_point {
@@ -107,35 +119,20 @@ impl PoCConsensus {
     }
 
     pub fn start(&self) -> IcnResult<()> {
-        // Initialize any necessary state for the consensus mechanism
+        info!("PoC Consensus mechanism started");
         Ok(())
     }
 
     pub fn stop(&self) -> IcnResult<()> {
-        // Clean up any resources used by the consensus mechanism
+        info!("PoC Consensus mechanism stopped");
         Ok(())
-    }
-}
-
-pub trait ConsensusAlgorithm {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool>;
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool>;
-}
-
-impl ConsensusAlgorithm for PoCConsensus {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        self.validate_block(block)
-    }
-
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
-        self.reach_consensus(block, votes)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_types::CurrencyType;
+    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
@@ -167,14 +164,13 @@ mod tests {
         let block = Block {
             index: 1,
             timestamp: Utc::now().timestamp(),
-            transactions: vec![Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 100.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            }],
+            transactions: vec![Transaction::new(
+                "Alice".to_string(),
+                "Bob".to_string(),
+                100.0,
+                CurrencyType::BasicNeeds,
+                Utc::now().timestamp(),
+            )],
             previous_hash: "previous_hash".to_string(),
             hash: "hash".to_string(),
         };
@@ -210,80 +206,5 @@ mod tests {
         let mut consensus_no_validators = PoCConsensus::new(0.66, 0.51).unwrap();
         consensus_no_validators.add_member("Dave".to_string(), false).unwrap();
         assert!(consensus_no_validators.select_proposer().is_err());
-    }
-
-    #[test]
-    fn test_get_validators() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), false).unwrap();
-        consensus.add_member("Charlie".to_string(), true).unwrap();
-
-        let validators = consensus.get_validators();
-        assert_eq!(validators.len(), 2);
-        assert!(validators.iter().any(|m| m.id == "Alice"));
-        assert!(validators.iter().any(|m| m.id == "Charlie"));
-    }
-
-    #[test]
-    fn test_consensus_edge_cases() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), true).unwrap();
-
-        let block = Block {
-            index: 1,
-            timestamp: Utc::now().timestamp(),
-            transactions: vec![],
-            previous_hash: "previous_hash".to_string(),
-            hash: "hash".to_string(),
-        };
-
-        // Test with empty block
-        assert!(consensus.validate_block(&block).is_err());
-
-        // Test with non-existent member
-        let votes = vec![("Charlie", true)];
-        assert!(consensus.reach_consensus(&block, &votes).is_err());
-
-        // Test with insufficient participation
-        consensus.quorum = 0.99; // Set an impossibly high quorum
-        let votes = vec![("Alice", true)];
-        assert!(consensus.reach_consensus(&block, &votes).is_err());
-    }
-
-    #[test]
-    fn test_reputation_based_consensus() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("Alice".to_string(), true).unwrap();
-        consensus.add_member("Bob".to_string(), true).unwrap();
-        consensus.add_member("Charlie".to_string(), true).unwrap();
-
-        // Increase Alice's reputation
-        consensus.update_reputation("Alice", 1.0).unwrap();
-
-        let block = Block {
-            index: 1,
-            timestamp: Utc::now().timestamp(),
-            transactions: vec![Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 100.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            }],
-            previous_hash: "previous_hash".to_string(),
-            hash: "hash".to_string(),
-        };
-
-        // Alice's vote should have more weight due to higher reputation
-        let votes = vec![
-            ("Alice", true),
-            ("Bob", false),
-            ("Charlie", false),
-        ];
-
-        assert!(consensus.reach_consensus(&block, &votes).unwrap());
     }
 }

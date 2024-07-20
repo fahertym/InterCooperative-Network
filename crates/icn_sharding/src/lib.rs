@@ -1,4 +1,4 @@
-use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_common_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 

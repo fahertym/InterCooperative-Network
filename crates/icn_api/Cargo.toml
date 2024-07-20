@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" } 
 icn_utils = { path = "../icn_utils" }
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }

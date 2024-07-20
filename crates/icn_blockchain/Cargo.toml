@@ -1,20 +1,18 @@
-# File: crates/icn_blockchain/Cargo.toml
-
 [package]
 name = "icn_blockchain"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_types = { path = "../icn_types" }
+icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
-icn_utils = { path = "../icn_utils" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.9"
 ed25519-dalek = "1.0"
 rand = "0.7"
-uuid = { version = "0.8", features = ["v4"] }
+log = "0.4"
+thiserror = "1.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
