@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+[dependencies]
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
@@ -17,12 +18,12 @@ icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
 icn_governance = { path = "../icn_governance" }
-icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
 icn_sharding = { path = "../icn_sharding" }
 icn_storage = { path = "../icn_storage" }
 icn_vm = { path = "../icn_vm" }
-env_logger = "0.9"
+icn_common = { path = "../icn_common" }  # Added dependency
+
 
 [dev-dependencies]
 tokio-test = "0.4"

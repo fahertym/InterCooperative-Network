@@ -4,6 +4,9 @@ use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+// In other crates like icn_core, icn_identity, etc.
+use icn_common::{CommonError, CommonResult};
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecentralizedIdentity {

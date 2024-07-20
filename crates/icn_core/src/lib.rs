@@ -10,6 +10,9 @@ use icn_network::Network;
 use icn_sharding::ShardingManager;
 use icn_storage::StorageManager;
 use icn_vm::ContractManager;
+// In other crates like icn_core, icn_identity, etc.
+use icn_common::{CommonError, CommonResult};
+
 
 use std::sync::{Arc, Mutex};
 use log::{info, warn, error};
