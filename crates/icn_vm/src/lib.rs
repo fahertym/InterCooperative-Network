@@ -1,5 +1,3 @@
-// File: icn_vm/src/lib.rs
-
 use icn_types::{IcnResult, IcnError};
 use std::collections::HashMap;
 
@@ -144,6 +142,61 @@ impl CoopVM {
             _ => Err(IcnError::VM("Expected boolean value".to_string())),
         }
     }
+
+    pub fn get_stack(&self) -> &Vec<Value> {
+        &self.stack
+    }
+
+    pub fn get_memory(&self) -> &HashMap<String, Value> {
+        &self.memory
+    }
+
+    pub fn load_program(&mut self, program: Vec<Opcode>) {
+        self.program = program;
+        self.pc = 0;
+        self.stack.clear();
+        self.memory.clear();
+    }
+}
+
+pub struct SmartContract {
+    pub name: String,
+    pub code: Vec<Opcode>,
+}
+
+impl SmartContract {
+    pub fn new(name: String, code: Vec<Opcode>) -> Self {
+        SmartContract { name, code }
+    }
+}
+
+pub struct ContractManager {
+    contracts: HashMap<String, SmartContract>,
+    vm: CoopVM,
+}
+
+impl ContractManager {
+    pub fn new() -> Self {
+        ContractManager {
+            contracts: HashMap::new(),
+            vm: CoopVM::new(Vec::new()),
+        }
+    }
+
+    pub fn deploy_contract(&mut self, contract: SmartContract) -> IcnResult<()> {
+        if self.contracts.contains_key(&contract.name) {
+            return Err(IcnError::VM(format!("Contract {} already exists", contract.name)));
+        }
+        self.contracts.insert(contract.name.clone(), contract);
+        Ok(())
+    }
+
+    pub fn execute_contract(&mut self, contract_name: &str) -> IcnResult<()> {
+        let contract = self.contracts.get(contract_name)
+            .ok_or_else(|| IcnError::VM(format!("Contract {} not found", contract_name)))?;
+        self.vm.load_program(contract.code.clone());
+        self.vm.run()
+    }
 }
 
 #[cfg(test)]
@@ -163,7 +216,7 @@ mod tests {
         let mut vm = CoopVM::new(program);
         vm.run().unwrap();
 
-        assert_eq!(vm.stack, vec![Value::Int(16)]);
+        assert_eq!(vm.get_stack(), &vec![Value::Int(16)]);
     }
 
     #[test]
@@ -181,6 +234,40 @@ mod tests {
         let mut vm = CoopVM::new(program);
         vm.run().unwrap();
 
-        assert_eq!(vm.stack, vec![Value::Int(5)]);
+        assert_eq!(vm.get_stack(), &vec![Value::Int(5)]);
+    }
+
+    #[test]
+    fn test_contract_manager() {
+        let mut manager = ContractManager::new();
+
+        let contract1 = SmartContract::new(
+            "SimpleAddition".to_string(),
+            vec![
+                Opcode::Push(Value::Int(5)),
+                Opcode::Push(Value::Int(3)),
+                Opcode::Add,
+            ],
+        );
+
+        manager.deploy_contract(contract1).unwrap();
+        manager.execute_contract("SimpleAddition").unwrap();
+
+        assert_eq!(manager.vm.get_stack(), &vec![Value::Int(8)]);
+
+        // Test deploying a contract with the same name
+        let contract2 = SmartContract::new(
+            "SimpleAddition".to_string(),
+            vec![
+                Opcode::Push(Value::Int(1)),
+                Opcode::Push(Value::Int(1)),
+                Opcode::Add,
+            ],
+        );
+
+        assert!(manager.deploy_contract(contract2).is_err());
+
+        // Test executing a non-existent contract
+        assert!(manager.execute_contract("NonExistentContract").is_err());
     }
 }

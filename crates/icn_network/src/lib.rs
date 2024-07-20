@@ -1,23 +1,7 @@
-// File: icn_network/src/lib.rs
-
-use icn_types::{IcnResult, IcnError};
+use icn_types::{IcnResult, IcnError, Node, NodeType};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: SocketAddr,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PacketType {
@@ -89,6 +73,27 @@ impl Network {
     pub fn list_nodes(&self) -> Vec<&Node> {
         self.nodes.values().collect()
     }
+
+    pub fn broadcast(&self, packet: Packet) -> IcnResult<()> {
+        for node in self.nodes.values() {
+            let mut broadcast_packet = packet.clone();
+            broadcast_packet.destination = node.id.clone();
+            self.send_packet(broadcast_packet)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_network_topology(&self) -> HashMap<String, Vec<String>> {
+        let mut topology = HashMap::new();
+        for (node_id, _) in &self.nodes {
+            let neighbors: Vec<String> = self.routing_table.iter()
+                .filter(|(_, &ref next_hop)| next_hop == node_id)
+                .map(|(dest, _)| dest.clone())
+                .collect();
+            topology.insert(node_id.clone(), neighbors);
+        }
+        topology
+    }
 }
 
 #[cfg(test)]
@@ -102,12 +107,12 @@ mod tests {
         let node1 = Node {
             id: "node1".to_string(),
             node_type: NodeType::PersonalDevice,
-            address: "127.0.0.1:8000".parse().unwrap(),
+            address: "127.0.0.1:8000".to_string(),
         };
         let node2 = Node {
             id: "node2".to_string(),
             node_type: NodeType::CooperativeServer,
-            address: "127.0.0.1:8001".parse().unwrap(),
+            address: "127.0.0.1:8001".to_string(),
         };
 
         assert!(network.add_node(node1.clone()).is_ok());
@@ -128,5 +133,56 @@ mod tests {
 
         assert!(network.remove_node("node1").is_ok());
         assert_eq!(network.list_nodes().len(), 1);
+
+        // Test adding an existing node
+        assert!(network.add_node(node2.clone()).is_err());
+
+        // Test removing a non-existent node
+        assert!(network.remove_node("non_existent_node").is_err());
+
+        // Test updating routing with a non-existent node
+        assert!(network.update_routing("dest2".to_string(), "non_existent_node".to_string()).is_err());
+
+        // Test broadcast
+        let broadcast_packet = Packet {
+            packet_type: PacketType::Control,
+            source: "node2".to_string(),
+            destination: "broadcast".to_string(),
+            content: vec![5, 6, 7, 8],
+        };
+        assert!(network.broadcast(broadcast_packet).is_ok());
+
+        // Test network topology
+        let topology = network.get_network_topology();
+        assert_eq!(topology.len(), 1);
+        assert!(topology.contains_key("node2"));
+    }
+
+    #[test]
+    fn test_packet_types() {
+        let data_packet = Packet {
+            packet_type: PacketType::Data,
+            source: "source".to_string(),
+            destination: "destination".to_string(),
+            content: vec![1, 2, 3],
+        };
+
+        let interest_packet = Packet {
+            packet_type: PacketType::Interest,
+            source: "source".to_string(),
+            destination: "destination".to_string(),
+            content: vec![4, 5, 6],
+        };
+
+        let control_packet = Packet {
+            packet_type: PacketType::Control,
+            source: "source".to_string(),
+            destination: "destination".to_string(),
+            content: vec![7, 8, 9],
+        };
+
+        assert!(matches!(data_packet.packet_type, PacketType::Data));
+        assert!(matches!(interest_packet.packet_type, PacketType::Interest));
+        assert!(matches!(control_packet.packet_type, PacketType::Control));
     }
 }

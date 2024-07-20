@@ -1,45 +1,6 @@
-// File: icn_currency/src/lib.rs
-
-use icn_types::{IcnResult, IcnError, CurrencyType};
+use icn_types::{IcnResult, IcnError, CurrencyType, Currency, Transaction};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Currency {
-    pub currency_type: CurrencyType,
-    pub total_supply: f64,
-    pub creation_date: DateTime<Utc>,
-    pub last_issuance: DateTime<Utc>,
-    pub issuance_rate: f64,
-}
-
-impl Currency {
-    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
-        let now = Utc::now();
-        Currency {
-            currency_type,
-            total_supply: initial_supply,
-            creation_date: now,
-            last_issuance: now,
-            issuance_rate,
-        }
-    }
-
-    pub fn mint(&mut self, amount: f64) -> IcnResult<()> {
-        self.total_supply += amount;
-        self.last_issuance = Utc::now();
-        Ok(())
-    }
-
-    pub fn burn(&mut self, amount: f64) -> IcnResult<()> {
-        if amount > self.total_supply {
-            return Err(IcnError::Currency("Insufficient supply to burn".to_string()));
-        }
-        self.total_supply -= amount;
-        Ok(())
-    }
-}
 
 pub struct CurrencySystem {
     pub currencies: HashMap<CurrencyType, Currency>,
@@ -63,7 +24,13 @@ impl CurrencySystem {
     }
 
     pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
-        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
+        let currency = Currency {
+            currency_type: currency_type.clone(),
+            total_supply: initial_supply,
+            creation_date: Utc::now(),
+            last_issuance: Utc::now(),
+            issuance_rate,
+        };
         self.currencies.insert(currency_type, currency);
     }
 
@@ -94,6 +61,10 @@ impl CurrencySystem {
         Ok(())
     }
 
+    pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
+        self.transfer(&transaction.from, &transaction.to, &transaction.currency_type, transaction.amount)
+    }
+
     pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> IcnResult<()> {
         let currency_type = CurrencyType::Custom(name.clone());
         if self.currencies.contains_key(&currency_type) {
@@ -108,8 +79,26 @@ impl CurrencySystem {
         for currency in self.currencies.values_mut() {
             let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
             let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
-            currency.mint(issuance_amount)?;
+            currency.total_supply += issuance_amount;
+            currency.last_issuance = now;
         }
+        Ok(())
+    }
+
+    pub fn mint(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let currency = self.currencies.get_mut(currency_type)
+            .ok_or_else(|| IcnError::Currency(format!("Currency {:?} not found", currency_type)))?;
+        currency.total_supply += amount;
+        Ok(())
+    }
+
+    pub fn burn(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let currency = self.currencies.get_mut(currency_type)
+            .ok_or_else(|| IcnError::Currency(format!("Currency {:?} not found", currency_type)))?;
+        if currency.total_supply < amount {
+            return Err(IcnError::Currency("Insufficient supply to burn".to_string()));
+        }
+        currency.total_supply -= amount;
         Ok(())
     }
 }
@@ -141,5 +130,21 @@ mod tests {
         let initial_supply = system.currencies[&CurrencyType::BasicNeeds].total_supply;
         system.adaptive_issuance().unwrap();
         assert!(system.currencies[&CurrencyType::BasicNeeds].total_supply > initial_supply);
+
+        // Test mint and burn
+        let mint_amount = 1000.0;
+        system.mint(&CurrencyType::BasicNeeds, mint_amount).unwrap();
+        let new_supply = system.currencies[&CurrencyType::BasicNeeds].total_supply;
+        assert_eq!(new_supply, initial_supply + mint_amount);
+
+        system.burn(&CurrencyType::BasicNeeds, 500.0).unwrap();
+        let final_supply = system.currencies[&CurrencyType::BasicNeeds].total_supply;
+        assert_eq!(final_supply, new_supply - 500.0);
+
+        // Test insufficient balance error
+        assert!(system.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, 1000.0).is_err());
+
+        // Test non-existent currency error
+        assert!(system.mint(&CurrencyType::Custom("NonExistent".to_string()), 100.0).is_err());
     }
 }

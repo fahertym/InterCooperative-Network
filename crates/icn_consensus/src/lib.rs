@@ -1,6 +1,4 @@
-// File: icn_consensus/src/lib.rs
-
-use icn_types::{IcnResult, IcnError, Block, Transaction};
+use icn_types::{IcnResult, IcnError, Block, Transaction, Node};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
@@ -110,6 +108,7 @@ impl ConsensusAlgorithm for PoCConsensus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
@@ -138,14 +137,20 @@ mod tests {
         consensus.add_member("Bob".to_string(), true).unwrap();
         consensus.add_member("Charlie".to_string(), true).unwrap();
 
-        let block = Block::new(1, vec![Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: icn_types::CurrencyType::BasicNeeds,
+        let block = Block {
+            index: 1,
             timestamp: 0,
-            signature: None,
-        }], "previous_hash".to_string());
+            transactions: vec![Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 100.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: 0,
+                signature: None,
+            }],
+            previous_hash: "previous_hash".to_string(),
+            hash: "hash".to_string(),
+        };
 
         let votes = vec![
             ("Alice", true),

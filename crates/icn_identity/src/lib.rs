@@ -1,7 +1,5 @@
-// File: icn_identity/src/lib.rs
-
 use icn_types::{IcnResult, IcnError};
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -124,8 +122,9 @@ mod tests {
         // This should fail because we're using a different keypair
         assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
         
-        // Create a valid signature
-        let valid_signature = Keypair::from_bytes(&keypair.to_bytes()).unwrap().sign(message);
+        /// Create a valid signature
+        let (_, keypair) = DecentralizedIdentity::new(HashMap::new());
+        let valid_signature = keypair.sign(message);
         
         // This should succeed
         assert!(manager.verify_signature(&identity.id, message, &valid_signature).unwrap());
@@ -156,5 +155,14 @@ mod tests {
         let updated_identity = manager.get_identity(&identity.id).unwrap();
         
         assert_eq!(updated_identity.attributes.get("role"), Some(&"developer".to_string()));
+    }
+
+    #[test]
+    fn test_identity_not_found() {
+        let mut manager = IdentityManager::new();
+        
+        assert!(manager.update_reputation("non_existent_id", 0.5).is_err());
+        assert!(manager.verify_signature("non_existent_id", b"test", &Signature::new([0; 64])).is_err());
+        assert!(manager.update_attributes("non_existent_id", HashMap::new()).is_err());
     }
 }

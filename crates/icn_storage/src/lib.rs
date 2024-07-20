@@ -1,5 +1,3 @@
-// File: icn_storage/src/lib.rs
-
 use icn_types::{IcnResult, IcnError};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
@@ -20,7 +18,7 @@ impl StorageNode {
     }
 
     pub fn store(&mut self, content: Vec<u8>) -> String {
-        let hash = self.calculate_hash(&content);
+        let hash = calculate_hash(&content);
         self.data.insert(hash.clone(), content);
         hash
     }
@@ -35,7 +33,7 @@ impl StorageNode {
 
     pub fn update(&mut self, hash: &str, new_content: Vec<u8>) -> IcnResult<()> {
         if self.data.contains_key(hash) {
-            let new_hash = self.calculate_hash(&new_content);
+            let new_hash = calculate_hash(&new_content);
             if new_hash != hash {
                 return Err(IcnError::Storage("Update would change the hash, use store instead".to_string()));
             }
@@ -44,13 +42,6 @@ impl StorageNode {
         } else {
             Err(IcnError::Storage("Hash not found".to_string()))
         }
-    }
-
-    fn calculate_hash(&self, content: &[u8]) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content);
-        let result = hasher.finalize();
-        hex::encode(result)
     }
 
     pub fn list_hashes(&self) -> Vec<String> {
@@ -116,6 +107,32 @@ impl StorageManager {
         }
         Err(IcnError::Storage("Data not found".to_string()))
     }
+
+    pub fn update_data(&mut self, hash: &str, new_content: Vec<u8>) -> IcnResult<()> {
+        for node in self.nodes.values_mut() {
+            if node.contains(hash) {
+                return node.update(hash, new_content);
+            }
+        }
+        Err(IcnError::Storage("Data not found".to_string()))
+    }
+
+    pub fn list_all_hashes(&self) -> Vec<String> {
+        let mut all_hashes = Vec::new();
+        for node in self.nodes.values() {
+            all_hashes.extend(node.list_hashes());
+        }
+        all_hashes.sort();
+        all_hashes.dedup();
+        all_hashes
+    }
+}
+
+fn calculate_hash(content: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    let result = hasher.finalize();
+    hex::encode(result)
 }
 
 #[cfg(test)]
@@ -149,5 +166,62 @@ mod tests {
         assert_eq!(manager.retrieve_data(&hash).unwrap(), content);
         assert!(manager.delete_data(&hash).is_ok());
         assert!(manager.retrieve_data(&hash).is_err());
+
+        // Test updating data
+        let new_content = b"Updated content".to_vec();
+        let new_hash = manager.store_data(new_content.clone()).unwrap();
+        assert!(manager.update_data(&new_hash, b"Modified content".to_vec()).is_ok());
+        assert_eq!(manager.retrieve_data(&new_hash).unwrap(), b"Modified content".to_vec());
+
+        // Test listing all hashes
+        let content1 = b"Content 1".to_vec();
+        let content2 = b"Content 2".to_vec();
+        let hash1 = manager.store_data(content1).unwrap();
+        let hash2 = manager.store_data(content2).unwrap();
+        let all_hashes = manager.list_all_hashes();
+        assert!(all_hashes.contains(&hash1));
+        assert!(all_hashes.contains(&hash2));
+
+        // Test removing a node
+        assert!(manager.remove_node("node1").is_ok());
+        assert!(manager.remove_node("non_existent_node").is_err());
+    }
+
+    #[test]
+    fn test_content_addressing() {
+        let mut node = StorageNode::new("test_node".to_string());
+        let content1 = b"Content 1".to_vec();
+        let content2 = b"Content 2".to_vec();
+
+        let hash1 = node.store(content1.clone());
+        let hash2 = node.store(content2.clone());
+
+        assert_ne!(hash1, hash2);
+        assert_eq!(node.retrieve(&hash1), Some(&content1));
+        assert_eq!(node.retrieve(&hash2), Some(&content2));
+
+        // Storing the same content should result in the same hash
+        let hash1_duplicate = node.store(content1.clone());
+        assert_eq!(hash1, hash1_duplicate);
+    }
+
+    #[test]
+    fn test_update_data() {
+        let mut manager = StorageManager::new();
+        let node = StorageNode::new("node1".to_string());
+        manager.add_node(node).unwrap();
+
+        let content = b"Original content".to_vec();
+        let hash = manager.store_data(content.clone()).unwrap();
+
+        // Updating with the same content should work
+        assert!(manager.update_data(&hash, content.clone()).is_ok());
+
+        // Updating with different content should fail
+        let new_content = b"New content".to_vec();
+        assert!(manager.update_data(&hash, new_content).is_err());
+
+        // The original content should still be retrievable
+        assert_eq!(manager.retrieve_data(&hash).unwrap(), content);
     }
 }

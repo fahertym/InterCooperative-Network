@@ -1,5 +1,3 @@
-// File: icn_blockchain/src/lib.rs
-
 use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use chrono::Utc;
@@ -42,11 +40,16 @@ impl Blockchain {
 
     pub fn create_block(&mut self, miner: String) -> IcnResult<Block> {
         let previous_block = self.chain.last().ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
-        let new_block = Block::new(
-            self.chain.len() as u64,
-            self.pending_transactions.clone(),
-            previous_block.hash.clone(),
-        );
+        
+        let new_block = Block {
+            index: self.chain.len() as u64,
+            timestamp: Utc::now().timestamp(),
+            transactions: self.pending_transactions.clone(),
+            previous_hash: previous_block.hash.clone(),
+            hash: String::new(), // Will be set in calculate_hash
+        };
+
+        let new_block = self.calculate_hash(new_block);
         self.pending_transactions.clear();
         Ok(new_block)
     }
@@ -80,8 +83,29 @@ impl Blockchain {
             if block.previous_hash != last_block.hash {
                 return false;
             }
+        } else if block.index != 0 {
+            return false;
         }
-        block.hash == block.calculate_hash()
+
+        let calculated_hash = self.calculate_hash(block.clone()).hash;
+        calculated_hash == block.hash
+    }
+
+    fn calculate_hash(&self, mut block: Block) -> Block {
+        let mut hasher = Sha256::new();
+        hasher.update(block.index.to_string());
+        hasher.update(block.timestamp.to_string());
+        for transaction in &block.transactions {
+            hasher.update(transaction.from.as_bytes());
+            hasher.update(transaction.to.as_bytes());
+            hasher.update(transaction.amount.to_string());
+            hasher.update(format!("{:?}", transaction.currency_type));
+        }
+        hasher.update(&block.previous_hash);
+        
+        let hash = format!("{:x}", hasher.finalize());
+        block.hash = hash;
+        block
     }
 
     fn verify_transaction(&self, transaction: &Transaction) -> bool {
@@ -98,42 +122,20 @@ impl Blockchain {
 }
 
 impl Block {
-    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
-        let timestamp = Utc::now().timestamp();
-        let mut block = Block {
-            index,
-            timestamp,
-            transactions,
-            previous_hash,
-            hash: String::new(),
-        };
-        block.hash = block.calculate_hash();
-        block
-    }
-
     pub fn genesis() -> Self {
-        Block::new(0, Vec::new(), String::from("0"))
-    }
-
-    pub fn calculate_hash(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(self.index.to_string());
-        hasher.update(self.timestamp.to_string());
-        for transaction in &self.transactions {
-            hasher.update(transaction.from.as_bytes());
-            hasher.update(transaction.to.as_bytes());
-            hasher.update(transaction.amount.to_string());
-            hasher.update(format!("{:?}", transaction.currency_type));
+        Block {
+            index: 0,
+            timestamp: Utc::now().timestamp(),
+            transactions: Vec::new(),
+            previous_hash: String::from("0"),
+            hash: String::from("genesis_hash"),
         }
-        hasher.update(&self.previous_hash);
-        format!("{:x}", hasher.finalize())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_types::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {

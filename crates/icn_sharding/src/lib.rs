@@ -1,5 +1,3 @@
-// File: icn_sharding/src/lib.rs
-
 use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
@@ -73,12 +71,15 @@ impl ShardingManager {
         let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
         let previous_block = shard.blockchain.last().ok_or_else(|| IcnError::Sharding("No previous block found".to_string()))?;
         
-        let new_block = Block::new(
-            shard.blockchain.len() as u64,
-            shard.pending_transactions.clone(),
-            previous_block.hash.clone(),
-        );
+        let new_block = Block {
+            index: shard.blockchain.len() as u64,
+            timestamp: chrono::Utc::now().timestamp(),
+            transactions: shard.pending_transactions.clone(),
+            previous_hash: previous_block.hash.clone(),
+            hash: String::new(), // Will be set later
+        };
 
+        let new_block = self.calculate_block_hash(new_block);
         shard.blockchain.push(new_block.clone());
         shard.pending_transactions.clear();
 
@@ -96,7 +97,6 @@ impl ShardingManager {
         self.address_to_shard.insert(address, shard_id);
         Ok(())
     }
-
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let shard_id = self.get_shard_for_address(address);
         let shard = self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
@@ -123,6 +123,42 @@ impl ShardingManager {
         let result = hasher.finalize();
         let hash_bytes: [u8; 8] = result[..8].try_into().unwrap_or([0; 8]);
         u64::from_le_bytes(hash_bytes)
+    }
+
+    fn calculate_block_hash(&self, mut block: Block) -> Block {
+        let mut hasher = Sha256::new();
+        hasher.update(block.index.to_string().as_bytes());
+        hasher.update(block.timestamp.to_string().as_bytes());
+        for transaction in &block.transactions {
+            hasher.update(transaction.from.as_bytes());
+            hasher.update(transaction.to.as_bytes());
+            hasher.update(transaction.amount.to_string().as_bytes());
+            hasher.update(format!("{:?}", transaction.currency_type).as_bytes());
+        }
+        hasher.update(block.previous_hash.as_bytes());
+        
+        let hash = format!("{:x}", hasher.finalize());
+        block.hash = hash;
+        block
+    }
+
+    pub fn transfer_between_shards(&mut self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
+        // Deduct from the source shard
+        let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
+        self.update_balances(from_shard, transaction)?;
+
+        // Add to the destination shard
+        let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
+        let mut reverse_transaction = transaction.clone();
+        reverse_transaction.from = transaction.to.clone();
+        reverse_transaction.to = transaction.from.clone();
+        self.update_balances(to_shard, &reverse_transaction)?;
+
+        Ok(())
+    }
+
+    pub fn get_shard_state(&self, shard_id: u64) -> IcnResult<&Shard> {
+        self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))
     }
 }
 
@@ -160,5 +196,27 @@ mod tests {
         let block = manager.create_block(0).unwrap();
         assert_eq!(block.index, 1);
         assert_eq!(block.transactions.len(), 1);
+
+        // Test cross-shard transaction
+        let cross_shard_tx = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1,
+            signature: None,
+        };
+
+        assert!(manager.transfer_between_shards(0, 1, &cross_shard_tx).is_ok());
+        assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 150.0);
+
+        // Test getting shard state
+        let shard_state = manager.get_shard_state(0).unwrap();
+        assert_eq!(shard_state.id, 0);
+        assert_eq!(shard_state.blockchain.len(), 2); // Genesis block + 1 new block
+
+        // Test invalid shard access
+        assert!(manager.get_shard_state(10).is_err());
     }
 }
