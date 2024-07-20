@@ -1,4 +1,4 @@
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
@@ -36,7 +36,7 @@ pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
 }
 
 pub mod time {
-    use chrono::{DateTime, Utc, Duration};
+    use chrono::{DateTime, Duration, Utc};
 
     pub fn now() -> DateTime<Utc> {
         Utc::now()
@@ -52,7 +52,7 @@ pub mod crypto {
     use rand::rngs::OsRng;
 
     pub fn generate_keypair() -> Keypair {
-        let mut csprng = OsRng{};
+        let mut csprng = OsRng {};
         Keypair::generate(&mut csprng)
     }
 

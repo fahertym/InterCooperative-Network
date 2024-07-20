@@ -701,14 +701,15 @@ mod tests {
 //! It includes structures and methods for managing blocks, transactions, and the overall
 //! blockchain state, as well as basic smart contract support.
 
-use icn_common::{CommonResult, CommonError, Block, Transaction, CurrencyType};
-use icn_utils::{hash_data, calculate_merkle_root, crypto};
+use icn_common::{CommonError, CommonResult, Block, Transaction, CurrencyType};
+use icn_utils::{hash_data, calculate_merkle_root};
 use std::collections::HashMap;
 use chrono::Utc;
 use ed25519_dalek::PublicKey;
 use bincode;
 use sha2::Sha256;
 use hex;
+
 
 
 /// Represents the entire blockchain and its current state.
@@ -1374,8 +1375,9 @@ mod tests {
             },
         ];
 
-        let merkle_root = blockchain.calculate_merkle_root(&transactions);
-        assert!(!merkle_root.is_empty());
+        let merkle_root = blockchain.calculate_merkle_root(&transactions[..]);
+        assert_eq!(merkle_root, merkle_root2);
+        assert_ne!(merkle_root, merkle_root3);
 
         // Calculate merkle root again with the same transactions
         let merkle_root2 = blockchain.calculate_merkle_root(&transactions);
@@ -1492,7 +1494,7 @@ mod tests {
         let new_block = blockchain.create_block("Miner1".to_string()).unwrap();
         blockchain.add_block(new_block).unwrap();
 
-        llet alice_transactions = blockchain.get_transactions_for_address("Alice");
+        let alice_transactions = blockchain.get_transactions_for_address("Alice");
         assert_eq!(alice_transactions.len(), 2);
         assert!(alice_transactions.contains(&&transaction1));
         assert!(alice_transactions.contains(&&transaction2));
@@ -1722,12 +1724,13 @@ edition = "2021"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
+chrono = { version = "0.4", features = ["serde"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum CommonError {
@@ -1821,6 +1824,20 @@ pub struct Vote {
     pub in_favor: bool,
     pub weight: f64,
     pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Node {
+    pub id: String,
+    pub node_type: NodeType,
+    pub address: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum NodeType {
+    PersonalDevice,
+    CooperativeServer,
+    GovernmentServer,
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
@@ -4261,7 +4278,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common = { path = "../icn_common" }  # Changed from icn_core to icn_common
+icn_common = { path = "../icn_common" }
 ed25519-dalek = "1.0"
 rand = "0.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -7113,9 +7130,11 @@ rand = "0.7"
 thiserror = "1.0"
 serde_json = "1.0"
 bincode = "1.3"
-hex = "0.4"  # Ensure the hex crate is included
-icn_types = { path = "../icn_types" }  # Ensure icn_types is included
-===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/Cargo.toml =====
+hex = "0.4"
+icn_common = { path = "../icn_common" }  # Changed from icn_types to icn_common
+
+[dev-dependencies]
+serde_json = "1.0"===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/src/error.rs =====
 use thiserror::Error;
@@ -7172,7 +7191,7 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/src/lib.rs =====
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
@@ -7210,7 +7229,7 @@ pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
 }
 
 pub mod time {
-    use chrono::{DateTime, Utc, Duration};
+    use chrono::{DateTime, Duration, Utc};
 
     pub fn now() -> DateTime<Utc> {
         Utc::now()
@@ -7226,7 +7245,7 @@ pub mod crypto {
     use rand::rngs::OsRng;
 
     pub fn generate_keypair() -> Keypair {
-        let mut csprng = OsRng{};
+        let mut csprng = OsRng {};
         Keypair::generate(&mut csprng)
     }
 

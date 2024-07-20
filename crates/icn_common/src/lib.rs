@@ -1,6 +1,7 @@
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum CommonError {
@@ -94,4 +95,18 @@ pub struct Vote {
     pub in_favor: bool,
     pub weight: f64,
     pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Node {
+    pub id: String,
+    pub node_type: NodeType,
+    pub address: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum NodeType {
+    PersonalDevice,
+    CooperativeServer,
+    GovernmentServer,
 }

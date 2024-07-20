@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common = { path = "../icn_common" }  # Changed from icn_core to icn_common
+icn_common = { path = "../icn_common" }
 ed25519-dalek = "1.0"
 rand = "0.7"
 serde = { version = "1.0", features = ["derive"] }

@@ -4,14 +4,15 @@
 //! It includes structures and methods for managing blocks, transactions, and the overall
 //! blockchain state, as well as basic smart contract support.
 
-use icn_common::{CommonResult, CommonError, Block, Transaction, CurrencyType};
-use icn_utils::{hash_data, calculate_merkle_root, crypto};
+use icn_common::{CommonError, CommonResult, Block, Transaction, CurrencyType};
+use icn_utils::{hash_data, calculate_merkle_root};
 use std::collections::HashMap;
 use chrono::Utc;
 use ed25519_dalek::PublicKey;
 use bincode;
 use sha2::Sha256;
 use hex;
+
 
 
 /// Represents the entire blockchain and its current state.
@@ -677,8 +678,9 @@ mod tests {
             },
         ];
 
-        let merkle_root = blockchain.calculate_merkle_root(&transactions);
-        assert!(!merkle_root.is_empty());
+        let merkle_root = blockchain.calculate_merkle_root(&transactions[..]);
+        assert_eq!(merkle_root, merkle_root2);
+        assert_ne!(merkle_root, merkle_root3);
 
         // Calculate merkle root again with the same transactions
         let merkle_root2 = blockchain.calculate_merkle_root(&transactions);
@@ -795,7 +797,7 @@ mod tests {
         let new_block = blockchain.create_block("Miner1".to_string()).unwrap();
         blockchain.add_block(new_block).unwrap();
 
-        llet alice_transactions = blockchain.get_transactions_for_address("Alice");
+        let alice_transactions = blockchain.get_transactions_for_address("Alice");
         assert_eq!(alice_transactions.len(), 2);
         assert!(alice_transactions.contains(&&transaction1));
         assert!(alice_transactions.contains(&&transaction2));
