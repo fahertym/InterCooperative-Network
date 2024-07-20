@@ -1615,70 +1615,85 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use std::sync::{Arc, RwLock};
-use chrono::Utc;
+use icn_types::{IcnResult, IcnError};
+use icn_blockchain::Blockchain;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencySystem;
+use icn_governance::GovernanceSystem;
+use icn_identity::IdentityManager;
+use icn_network::Network;
+use icn_sharding::ShardingManager;
+use icn_storage::StorageManager;
+use icn_vm::ContractManager;
 
-// Placeholder types for now, to be implemented in their respective modules
-pub struct Blockchain;
-pub struct Consensus;
-pub struct CurrencySystem;
-pub struct GovernanceSystem;
+use std::sync::{Arc, Mutex};
 
 pub struct IcnNode {
-    blockchain: Arc<RwLock<Blockchain>>,
-    consensus: Arc<RwLock<Consensus>>,
-    currency_system: Arc<RwLock<CurrencySystem>>,
-    governance_system: Arc<RwLock<GovernanceSystem>>,
+    blockchain: Arc<Mutex<Blockchain>>,
+    consensus: Arc<Mutex<PoCConsensus>>,
+    currency_system: Arc<Mutex<CurrencySystem>>,
+    governance_system: Arc<Mutex<GovernanceSystem>>,
+    identity_manager: Arc<Mutex<IdentityManager>>,
+    network: Arc<Mutex<Network>>,
+    sharding_manager: Arc<Mutex<ShardingManager>>,
+    storage_manager: Arc<Mutex<StorageManager>>,
+    contract_manager: Arc<Mutex<ContractManager>>,
 }
 
 impl IcnNode {
-    pub fn new() -> Self {
-        IcnNode {
-            blockchain: Arc::new(RwLock::new(Blockchain)),
-            consensus: Arc::new(RwLock::new(Consensus)),
-            currency_system: Arc::new(RwLock::new(CurrencySystem)),
-            governance_system: Arc::new(RwLock::new(GovernanceSystem)),
-        }
-    }
-
-    pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
-        let mut blockchain = self.blockchain.write().map_err(|_| IcnError::General("Failed to acquire blockchain write lock".to_string()))?;
-        // Placeholder implementation
-        Ok(())
-    }
-
-    pub fn create_block(&self) -> IcnResult<Block> {
-        let blockchain = self.blockchain.read().map_err(|_| IcnError::General("Failed to acquire blockchain read lock".to_string()))?;
-        let consensus = self.consensus.read().map_err(|_| IcnError::General("Failed to acquire consensus read lock".to_string()))?;
-        
-        // Placeholder implementation
-        Ok(Block {
-            index: 0,
-            timestamp: Utc::now().timestamp(),
-            transactions: vec![],
-            previous_hash: String::new(),
-            hash: String::new(),
+    pub fn new() -> IcnResult<Self> {
+        Ok(IcnNode {
+            blockchain: Arc::new(Mutex::new(Blockchain::new()?)),
+            consensus: Arc::new(Mutex::new(PoCConsensus::new(0.66, 0.51)?)),
+            currency_system: Arc::new(Mutex::new(CurrencySystem::new())),
+            governance_system: Arc::new(Mutex::new(GovernanceSystem::new())),
+            identity_manager: Arc::new(Mutex::new(IdentityManager::new())),
+            network: Arc::new(Mutex::new(Network::new())),
+            sharding_manager: Arc::new(Mutex::new(ShardingManager::new(4)?)),
+            storage_manager: Arc::new(Mutex::new(StorageManager::new())),
+            contract_manager: Arc::new(Mutex::new(ContractManager::new())),
         })
     }
 
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        let currency_system = self.currency_system.read().map_err(|_| IcnError::General("Failed to acquire currency system read lock".to_string()))?;
-        // Placeholder implementation
-        Ok(0.0)
-    }
+    pub fn start(&self) -> IcnResult<()> {
+        // Initialize and start all components
+        self.network.lock().map_err(|_| IcnError::LockError)?.start()?;
+        self.blockchain.lock().map_err(|_| IcnError::LockError)?.start()?;
+        self.consensus.lock().map_err(|_| IcnError::LockError)?.start()?;
+        // Add more component initializations as needed
 
-    pub fn create_proposal(&self, title: String, description: String, proposer: String) -> IcnResult<String> {
-        let mut governance_system = self.governance_system.write().map_err(|_| IcnError::General("Failed to acquire governance system write lock".to_string()))?;
-        // Placeholder implementation
-        Ok(String::new())
-    }
-
-    pub fn vote_on_proposal(&self, proposal_id: &str, voter: &str, vote: bool) -> IcnResult<()> {
-        let mut governance_system = self.governance_system.write().map_err(|_| IcnError::General("Failed to acquire governance system write lock".to_string()))?;
-        // Placeholder implementation
         Ok(())
     }
+
+    pub fn stop(&self) -> IcnResult<()> {
+        // Stop all components
+        self.network.lock().map_err(|_| IcnError::LockError)?.stop()?;
+        self.blockchain.lock().map_err(|_| IcnError::LockError)?.stop()?;
+        self.consensus.lock().map_err(|_| IcnError::LockError)?.stop()?;
+        // Add more component stop calls as needed
+
+        Ok(())
+    }
+
+    // Add more methods to interact with different components
+    pub fn process_transaction(&self, transaction: icn_types::Transaction) -> IcnResult<()> {
+        self.blockchain.lock().map_err(|_| IcnError::LockError)?.add_transaction(transaction)
+    }
+
+    pub fn create_proposal(&self, proposal: icn_types::Proposal) -> IcnResult<String> {
+        self.governance_system.lock().map_err(|_| IcnError::LockError)?.create_proposal(
+            proposal.title,
+            proposal.description,
+            proposal.proposer,
+            proposal.voting_period,
+            proposal.proposal_type,
+            proposal.category,
+            proposal.required_quorum,
+            proposal.execution_timestamp,
+        )
+    }
+
+    // Add more methods as needed
 }
 
 #[cfg(test)]
@@ -1686,12 +1701,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_create_node() {
+    fn test_icn_node_creation() {
         let node = IcnNode::new();
-        // Add more detailed tests as implementations are fleshed out
+        assert!(node.is_ok());
     }
 
-    // Add more tests for other methods
+    #[test]
+    fn test_icn_node_start_stop() {
+        let node = IcnNode::new().unwrap();
+        assert!(node.start().is_ok());
+        assert!(node.stop().is_ok());
+    }
+
+    // Add more tests as needed
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/logging/mod.rs =====
