@@ -1,18 +1,25 @@
 #!/bin/bash
 
-# Name of the output file
+# Constants
 OUTPUT_FILE="all_code_files_content.txt"
+PROJECT_DIR="/home/matt/InterCooperative-Network"
 
 # Function to update changelog
 update_changelog() {
-    git-cliff -o CHANGELOG.md
+    echo "Updating changelog..."
+    if ! git-cliff -o CHANGELOG.md; then
+        echo "Failed to update changelog."
+        exit 1
+    fi
     git add CHANGELOG.md
 }
 
 # Function to process files and append their contents to the output file
 process_files() {
-    for file in "$1"/*; do
+    local dir="$1"
+    for file in "$dir"/*; do
         if [ -f "$file" ] && [[ "$file" == *.rs || "$file" == *.toml ]]; then
+            echo "Processing file: $file"
             echo "===== START OF $file =====" >> $OUTPUT_FILE
             cat "$file" >> $OUTPUT_FILE
             echo "===== END OF $file =====" >> $OUTPUT_FILE
@@ -25,17 +32,30 @@ process_files() {
 
 # Function to generate LLM file
 generate_llm_file() {
+    echo "Generating LLM file..."
+
     # Clear the output file if it already exists
     > $OUTPUT_FILE
 
-    # Process files in the crates directory
-    process_files "crates"
+    # Generate file structure tree
+    echo "Generating file structure tree..."
+    echo "===== START OF FILE STRUCTURE =====" >> $OUTPUT_FILE
+    if ! tree -I 'target|node_modules' $PROJECT_DIR >> $OUTPUT_FILE; then
+        echo "Failed to generate file structure tree."
+        exit 1
+    fi
+    echo "===== END OF FILE STRUCTURE =====" >> $OUTPUT_FILE
+    echo >> $OUTPUT_FILE
 
-    # Include the workspace Cargo.toml file
-    if [ -f "Cargo.toml" ]; then
-        echo "===== START OF Cargo.toml =====" >> $OUTPUT_FILE
-        cat "Cargo.toml" >> $OUTPUT_FILE
-        echo "===== END OF Cargo.toml =====" >> $OUTPUT_FILE
+    # Process files in the project directory
+    process_files "$PROJECT_DIR"
+
+    # Include the workspace Cargo.toml file if it exists
+    if [ -f "$PROJECT_DIR/Cargo.toml" ]; then
+        echo "Processing workspace Cargo.toml..."
+        echo "===== START OF $PROJECT_DIR/Cargo.toml =====" >> $OUTPUT_FILE
+        cat "$PROJECT_DIR/Cargo.toml" >> $OUTPUT_FILE
+        echo "===== END OF $PROJECT_DIR/Cargo.toml =====" >> $OUTPUT_FILE
         echo >> $OUTPUT_FILE
     fi
 
@@ -43,24 +63,48 @@ generate_llm_file() {
     git add $OUTPUT_FILE
 }
 
+# Function to prompt for a commit message
+get_commit_message() {
+    echo "Enter your commit message:"
+    read commit_message
+    echo "$commit_message"
+}
+
 # Main script execution
 main() {
+    set -e
+    echo "Starting script..."
+
+    # Check if PROJECT_DIR exists
+    if [ ! -d "$PROJECT_DIR" ]; then
+        echo "Project directory $PROJECT_DIR does not exist."
+        exit 1
+    fi
+
+    echo "Navigating to project directory..."
+    # Navigate to the project directory
+    cd $PROJECT_DIR
+
+    echo "Checking for changes to commit..."
     # Check if there are any changes to commit
     if [[ -z $(git status -s) ]]; then
         echo "No changes to commit."
         exit 0
     fi
 
+    echo "Prompting for commit message..."
     # Prompt for commit message
-    echo "Enter your commit message:"
-    read commit_message
+    commit_message=$(get_commit_message)
 
+    echo "Generating LLM file..."
     # Generate LLM file
     generate_llm_file
 
+    echo "Updating changelog..."
     # Update changelog
     update_changelog
 
+    echo "Committing changes..."
     # Git operations
     git add .
     git commit -m "$commit_message"

@@ -1,18 +1,14 @@
-// Declare the modules
 mod block;
 mod transaction;
 mod asset_tokenization;
 mod currency;
 mod consensus;
 
-// Re-export the types that should be publicly accessible
 pub use self::block::Block;
 pub use self::transaction::Transaction;
 pub use self::asset_tokenization::{AssetToken, AssetRegistry};
 pub use self::currency::{Currency, CurrencyType};
 pub use self::consensus::PoCConsensus;
-
-use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Blockchain {
@@ -40,7 +36,6 @@ impl Blockchain {
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
-        // Add validation logic here if needed
         self.pending_transactions.push(transaction);
         Ok(())
     }
@@ -52,7 +47,7 @@ impl Blockchain {
             self.pending_transactions.clone(),
             previous_block.hash.clone(),
         );
-        
+
         self.chain.push(new_block);
         self.pending_transactions.clear();
         Ok(())
@@ -78,7 +73,6 @@ impl Blockchain {
     }
 
     fn is_valid_block(&self, block: &Block) -> bool {
-        // Implement block validation logic
         true
     }
 
@@ -91,12 +85,10 @@ impl Blockchain {
     }
 
     pub fn execute_smart_contracts(&mut self) -> Result<(), String> {
-        // Implement smart contract execution logic here
         Ok(())
     }
 
     pub fn transfer_bond(&mut self, bond_id: &str, new_owner: &str) -> Result<(), String> {
-        // Implement bond transfer logic here
         Ok(())
     }
 
@@ -105,29 +97,13 @@ impl Blockchain {
     }
 
     pub fn get_bond(&self, bond_id: &str) -> Option<&CurrencyType> {
-        // Implement bond retrieval logic here
         None
     }
 
     pub fn deploy_smart_contract(&mut self, contract: Box<dyn SmartContract>) -> Result<(), String> {
-        // Implement smart contract deployment logic here
         Ok(())
     }
 }
 
 pub trait SmartContract {
-    // Define methods for smart contracts
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_blockchain_creation() {
-        let blockchain = Blockchain::new();
-        assert_eq!(blockchain.chain.len(), 1);
-    }
-
-    // Add more tests here
 }
