@@ -1,7 +1,10 @@
+// crates/icn_consensus/src/proof_of_cooperation.rs
+
 use icn_common::{Error, Result};
 use sha2::{Sha256, Digest};
+use serde::{Serialize, Deserialize}; // Ensure Serialize and Deserialize are in scope
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProofOfCooperation {
     pub blocks: Vec<Block>,
 }
@@ -32,8 +35,7 @@ impl Block {
         let input = format!("{}{}{}{}", self.index, self.previous_hash, self.timestamp, self.data);
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
-        let result = hasher.finalize();
-        format!("{:x}", result)
+        format!("{:x}", hasher.finalize())
     }
 }
 

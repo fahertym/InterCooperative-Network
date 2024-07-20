@@ -370,6 +370,7 @@ mod tests {
 }===== END OF crates/icn_blockchain/src/asset_tokenization.rs =====
 
 ===== START OF crates/icn_blockchain/src/blockchain.rs =====
+// crates/icn_blockchain/src/blockchain.rs
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::currency::CurrencyType;
@@ -401,7 +402,7 @@ impl Blockchain {
             consensus: PoCConsensus::new(0.5, 0.66),
         };
         
-        let genesis_block = Block::new(0, vec![], String::new());
+        let genesis_block = Block::genesis();
         blockchain.chain.push(genesis_block);
         
         blockchain
@@ -461,158 +462,33 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn get_asset_token(&self, asset_id: &str) -> Option<&CurrencyType> {
-        self.asset_tokens.get(asset_id)
+    pub fn add_asset_token(&mut self, token_id: String, token: CurrencyType) {
+        self.asset_tokens.insert(token_id, token);
     }
 
-    pub fn get_bond(&self, bond_id: &str) -> Option<&CurrencyType> {
-        self.bonds.get(bond_id)
-    }
-
-    pub fn add_asset_token(&mut self, asset_id: String, currency_type: CurrencyType) -> Result<()> {
-        if self.asset_tokens.contains_key(&asset_id) {
-            return Err(Error::BlockchainError("Asset token already exists".to_string()));
-        }
-        self.asset_tokens.insert(asset_id, currency_type);
-        Ok(())
-    }
-
-    pub fn add_bond(&mut self, bond_id: String, currency_type: CurrencyType) -> Result<()> {
-        if self.bonds.contains_key(&bond_id) {
-            return Err(Error::BlockchainError("Bond already exists".to_string()));
-        }
-        self.bonds.insert(bond_id, currency_type);
-        Ok(())
-    }
-
-    pub fn execute_smart_contracts(&mut self) -> Result<()> {
-        // Implement smart contract execution logic here
-        Ok(())
-    }
-
-    pub fn transfer_asset_token(&mut self, asset_id: &str, new_owner: &str) -> Result<()> {
-        // Implement asset token transfer logic here
-        Ok(())
-    }
-
-    pub fn transfer_bond(&mut self, bond_id: &str, new_owner: &str) -> Result<()> {
-        // Implement bond transfer logic here
-        Ok(())
+    pub fn get_asset_token(&self, token_id: &str) -> Option<&CurrencyType> {
+        self.asset_tokens.get(token_id)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_blockchain_creation() {
-        let blockchain = Blockchain::new();
-        assert_eq!(blockchain.chain.len(), 1);
-        assert_eq!(blockchain.chain[0].index, 0);
-    }
-
-    #[test]
-    fn test_add_transaction_and_create_block() {
-        let mut blockchain = Blockchain::new();
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-
-        assert!(blockchain.add_transaction(transaction).is_ok());
-        assert_eq!(blockchain.pending_transactions.len(), 1);
-
-        assert!(blockchain.create_block("Miner1".to_string()).is_ok());
-        assert_eq!(blockchain.chain.len(), 2);
-        assert!(blockchain.pending_transactions.is_empty());
-    }
-
-    #[test]
-    fn test_get_balance() {
-        let mut blockchain = Blockchain::new();
-        let transaction1 = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-        let transaction2 = Transaction::new(
-            "Bob".to_string(),
-            "Alice".to_string(),
-            50.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-
-        blockchain.add_transaction(transaction1).unwrap();
-        blockchain.add_transaction(transaction2).unwrap();
-        blockchain.create_block("Miner1".to_string()).unwrap();
-
-        assert_eq!(blockchain.get_balance("Alice"), -50.0);
-        assert_eq!(blockchain.get_balance("Bob"), 50.0);
-    }
-
-    #[test]
-    fn test_validate_chain() {
-        let mut blockchain = Blockchain::new();
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block("Miner1".to_string()).unwrap();
-
-        assert!(blockchain.validate_chain().is_ok());
-
-        // Tamper with a block
-        blockchain.chain[1].hash = "tampered_hash".to_string();
-        assert!(blockchain.validate_chain().is_err());
-    }
-
-    #[test]
-    fn test_asset_tokens_and_bonds() {
-        let mut blockchain = Blockchain::new();
-        
-        assert!(blockchain.add_asset_token("ASSET1".to_string(), CurrencyType::AssetToken("ASSET1".to_string())).is_ok());
-        assert!(blockchain.add_bond("BOND1".to_string(), CurrencyType::Bond("BOND1".to_string())).is_ok());
-
-        assert!(blockchain.get_asset_token("ASSET1").is_some());
-        assert!(blockchain.get_bond("BOND1").is_some());
-        assert!(blockchain.get_asset_token("NONEXISTENT").is_none());
-        assert!(blockchain.get_bond("NONEXISTENT").is_none());
-    }
-}===== END OF crates/icn_blockchain/src/blockchain.rs =====
+===== END OF crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF crates/icn_blockchain/src/block.rs =====
 // crates/icn_blockchain/src/block.rs
-use crate::Transaction;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
     pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
+    pub transactions: Vec<String>, // Use a simple Vec<String> for transactions for simplicity
     pub previous_hash: String,
     pub hash: String,
     pub nonce: u64,
-    pub gas_used: u64,
-    pub smart_contract_results: HashMap<String, String>,
 }
 
 impl Block {
-    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
+    pub fn new(index: u64, transactions: Vec<String>, previous_hash: String) -> Self {
         let timestamp = chrono::Utc::now().timestamp();
         let mut block = Block {
             index,
@@ -621,8 +497,6 @@ impl Block {
             previous_hash,
             hash: String::new(),
             nonce: 0,
-            gas_used: 0,
-            smart_contract_results: HashMap::new(),
         };
         block.hash = block.calculate_hash();
         block
@@ -633,13 +507,18 @@ impl Block {
         hasher.update(self.index.to_string());
         hasher.update(self.timestamp.to_string());
         for transaction in &self.transactions {
-            hasher.update(transaction.to_string());
+            hasher.update(transaction.as_bytes());
         }
         hasher.update(&self.previous_hash);
         hasher.update(self.nonce.to_string());
         format!("{:x}", hasher.finalize())
     }
-}===== END OF crates/icn_blockchain/src/block.rs =====
+
+    pub fn genesis() -> Self {
+        Block::new(0, vec![], String::from("0"))
+    }
+}
+===== END OF crates/icn_blockchain/src/block.rs =====
 
 ===== START OF crates/icn_blockchain/src/lib.rs =====
 // crates/icn_blockchain/src/lib.rs
@@ -658,6 +537,7 @@ use icn_core::error::{Error, Result};
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencyType;
 
+// Blockchain structure definition
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
@@ -666,6 +546,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
+    // Initialize a new blockchain with genesis block
     pub fn new() -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
@@ -675,6 +556,7 @@ impl Blockchain {
         }
     }
 
+    // Add a block to the blockchain after validating it with consensus
     pub fn add_block(&mut self, block: Block, votes: &[(&str, bool)]) -> Result<()> {
         if self.consensus.validate_block(&block.hash, votes)? {
             if self.is_valid_block(&block) {
@@ -689,6 +571,7 @@ impl Blockchain {
         }
     }
 
+    // Add a transaction to the list of pending transactions
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
         if self.is_valid_transaction(&transaction) {
             self.pending_transactions.push(transaction);
@@ -698,19 +581,20 @@ impl Blockchain {
         }
     }
 
+    // Validate a block
     fn is_valid_block(&self, block: &Block) -> bool {
-        // Implement block validation logic
         block.previous_hash == self.chain.last().unwrap().hash
             && block.hash == block.calculate_hash()
             && block.timestamp > self.chain.last().unwrap().timestamp
     }
 
+    // Validate a transaction
     fn is_valid_transaction(&self, transaction: &Transaction) -> bool {
-        // Implement transaction validation logic
         let sender_balance = self.get_balance(&transaction.from).unwrap_or(0.0);
         sender_balance >= transaction.amount
     }
 
+    // Get balance for a specific address
     pub fn get_balance(&self, address: &str) -> Result<f64> {
         let balance = self.chain.iter()
             .flat_map(|block| &block.transactions)
@@ -726,10 +610,12 @@ impl Blockchain {
         Ok(balance)
     }
 
+    // Create an asset token
     pub fn create_asset_token(&mut self, name: String, description: String, owner: String) -> Result<AssetToken> {
         self.asset_registry.create_token(name, description, owner)
     }
 
+    // Transfer an asset token to a new owner
     pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> Result<()> {
         self.asset_registry.transfer_token(token_id, new_owner.to_string())
     }
@@ -770,9 +656,11 @@ mod tests {
         assert_eq!(blockchain.chain.len(), 2);
         assert!(blockchain.pending_transactions.is_empty());
     }
-}===== END OF crates/icn_blockchain/src/lib.rs =====
+}
+===== END OF crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF crates/icn_blockchain/src/transaction.rs =====
+// crates/icn_blockchain/src/transaction.rs
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use icn_currency::CurrencyType;
@@ -791,13 +679,13 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, gas_limit: u64) -> Self {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType) -> Self {
         Transaction {
             from,
             to,
             amount,
             currency_type,
-            gas_limit,
+            gas_limit: 0,
             smart_contract_id: None,
             signature: None,
             public_key: None,
@@ -850,7 +738,6 @@ impl Transaction {
     }
 
     pub fn get_fee(&self) -> f64 {
-        // This is a simplified fee calculation. In a real system, this would be more complex.
         self.gas_limit as f64 * 0.0001
     }
 }
@@ -866,13 +753,11 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         assert_eq!(tx.from, "Alice");
         assert_eq!(tx.to, "Bob");
         assert_eq!(tx.amount, 100.0);
         assert_eq!(tx.currency_type, CurrencyType::BasicNeeds);
-        assert_eq!(tx.gas_limit, 1000);
     }
 
     #[test]
@@ -882,7 +767,6 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         let mut csprng = OsRng{};
         let keypair: Keypair = Keypair::generate(&mut csprng);
@@ -899,7 +783,6 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         tx.with_smart_contract("contract123".to_string());
         assert_eq!(tx.smart_contract_id, Some("contract123".to_string()));
@@ -912,11 +795,11 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         assert_eq!(tx.get_fee(), 0.1);
     }
-}===== END OF crates/icn_blockchain/src/transaction.rs =====
+}
+===== END OF crates/icn_blockchain/src/transaction.rs =====
 
 ===== START OF crates/icn_blockchain/src/transaction_validator.rs =====
 use crate::{Transaction, Blockchain};
@@ -1539,7 +1422,7 @@ pub struct Bond {
 ===== START OF crates/icn_consensus/src/lib.rs =====
 // crates/icn_consensus/src/lib.rs
 
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize}; // Import Serialize and Deserialize once
 use log::error;
 use icn_common::{Error, Result};
 use std::collections::HashMap;
@@ -1630,87 +1513,7 @@ impl PoCConsensus {
     }
 }
 
-// crates/icn_consensus/src/proof_of_cooperation.rs
-
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProofOfCooperation {
-    pub blocks: Vec<Block>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub previous_hash: String,
-    pub timestamp: u64,
-    pub data: String,
-    pub hash: String,
-}
-
-impl Block {
-    pub fn new(index: u64, previous_hash: String, timestamp: u64, data: String) -> Self {
-        let mut block = Block {
-            index,
-            previous_hash,
-            timestamp,
-            data,
-            hash: String::new(),
-        };
-        block.hash = block.calculate_hash();
-        block
-    }
-
-    pub fn calculate_hash(&self) -> String {
-        let input = format!("{}{}{}{}", self.index, self.previous_hash, self.timestamp, self.data);
-        let mut hasher = Sha256::new();
-        hasher.update(input.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-}
-
-impl ProofOfCooperation {
-    pub fn new() -> Self {
-        ProofOfCooperation {
-            blocks: Vec::new(),
-        }
-    }
-
-    pub fn add_block(&mut self, data: String) -> Result<(), String> {
-        let previous_hash = if let Some(last_block) = self.blocks.last() {
-            last_block.hash.clone()
-        } else {
-            String::new()
-        };
-
-        let new_block = Block::new(
-            self.blocks.len() as u64,
-            previous_hash,
-            chrono::Utc::now().timestamp_millis() as u64,
-            data,
-        );
-
-        self.blocks.push(new_block);
-        Ok(())
-    }
-
-    pub fn validate_chain(&self) -> Result<(), String> {
-        for i in 1..self.blocks.len() {
-            let previous_block = &self.blocks[i - 1];
-            let current_block = &self.blocks[i];
-
-            if current_block.previous_hash != previous_block.hash {
-                return Err("Invalid previous hash".to_string());
-            }
-
-            if current_block.hash != current_block.calculate_hash() {
-                return Err("Invalid block hash".to_string());
-            }
-        }
-        Ok(())
-    }
-}
+// Removed the redundant import of `serde::{Serialize, Deserialize}` from here.
 
 #[cfg(test)]
 mod tests {
@@ -1752,13 +1555,23 @@ mod tests {
         assert!(consensus.validate_block("block_hash", &votes).unwrap());
 
         let insufficient_votes = vec![
-            ("Alice", true),===== END OF crates/icn_consensus/src/lib.rs =====
+            ("Alice", true),
+            ("Bob", true),
+        ];
+
+        assert!(!consensus.validate_block("block_hash", &insufficient_votes).unwrap());
+    }
+}
+===== END OF crates/icn_consensus/src/lib.rs =====
 
 ===== START OF crates/icn_consensus/src/proof_of_cooperation.rs =====
+// crates/icn_consensus/src/proof_of_cooperation.rs
+
 use icn_common::{Error, Result};
 use sha2::{Sha256, Digest};
+use serde::{Serialize, Deserialize}; // Ensure Serialize and Deserialize are in scope
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProofOfCooperation {
     pub blocks: Vec<Block>,
 }
@@ -1789,8 +1602,7 @@ impl Block {
         let input = format!("{}{}{}{}", self.index, self.previous_hash, self.timestamp, self.data);
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
-        let result = hasher.finalize();
-        format!("{:x}", result)
+        format!("{:x}", hasher.finalize())
     }
 }
 

@@ -14,6 +14,7 @@ use icn_core::error::{Error, Result};
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencyType;
 
+// Blockchain structure definition
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
@@ -22,6 +23,7 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
+    // Initialize a new blockchain with genesis block
     pub fn new() -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
@@ -31,6 +33,7 @@ impl Blockchain {
         }
     }
 
+    // Add a block to the blockchain after validating it with consensus
     pub fn add_block(&mut self, block: Block, votes: &[(&str, bool)]) -> Result<()> {
         if self.consensus.validate_block(&block.hash, votes)? {
             if self.is_valid_block(&block) {
@@ -45,6 +48,7 @@ impl Blockchain {
         }
     }
 
+    // Add a transaction to the list of pending transactions
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
         if self.is_valid_transaction(&transaction) {
             self.pending_transactions.push(transaction);
@@ -54,19 +58,20 @@ impl Blockchain {
         }
     }
 
+    // Validate a block
     fn is_valid_block(&self, block: &Block) -> bool {
-        // Implement block validation logic
         block.previous_hash == self.chain.last().unwrap().hash
             && block.hash == block.calculate_hash()
             && block.timestamp > self.chain.last().unwrap().timestamp
     }
 
+    // Validate a transaction
     fn is_valid_transaction(&self, transaction: &Transaction) -> bool {
-        // Implement transaction validation logic
         let sender_balance = self.get_balance(&transaction.from).unwrap_or(0.0);
         sender_balance >= transaction.amount
     }
 
+    // Get balance for a specific address
     pub fn get_balance(&self, address: &str) -> Result<f64> {
         let balance = self.chain.iter()
             .flat_map(|block| &block.transactions)
@@ -82,10 +87,12 @@ impl Blockchain {
         Ok(balance)
     }
 
+    // Create an asset token
     pub fn create_asset_token(&mut self, name: String, description: String, owner: String) -> Result<AssetToken> {
         self.asset_registry.create_token(name, description, owner)
     }
 
+    // Transfer an asset token to a new owner
     pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> Result<()> {
         self.asset_registry.transfer_token(token_id, new_owner.to_string())
     }

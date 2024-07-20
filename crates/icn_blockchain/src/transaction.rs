@@ -1,3 +1,4 @@
+// crates/icn_blockchain/src/transaction.rs
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use icn_currency::CurrencyType;
@@ -16,13 +17,13 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, gas_limit: u64) -> Self {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType) -> Self {
         Transaction {
             from,
             to,
             amount,
             currency_type,
-            gas_limit,
+            gas_limit: 0,
             smart_contract_id: None,
             signature: None,
             public_key: None,
@@ -75,7 +76,6 @@ impl Transaction {
     }
 
     pub fn get_fee(&self) -> f64 {
-        // This is a simplified fee calculation. In a real system, this would be more complex.
         self.gas_limit as f64 * 0.0001
     }
 }
@@ -91,13 +91,11 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         assert_eq!(tx.from, "Alice");
         assert_eq!(tx.to, "Bob");
         assert_eq!(tx.amount, 100.0);
         assert_eq!(tx.currency_type, CurrencyType::BasicNeeds);
-        assert_eq!(tx.gas_limit, 1000);
     }
 
     #[test]
@@ -107,7 +105,6 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         let mut csprng = OsRng{};
         let keypair: Keypair = Keypair::generate(&mut csprng);
@@ -124,7 +121,6 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         tx.with_smart_contract("contract123".to_string());
         assert_eq!(tx.smart_contract_id, Some("contract123".to_string()));
@@ -137,7 +133,6 @@ mod tests {
             "Bob".to_string(),
             100.0,
             CurrencyType::BasicNeeds,
-            1000,
         );
         assert_eq!(tx.get_fee(), 0.1);
     }
