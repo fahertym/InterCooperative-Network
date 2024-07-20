@@ -1,4 +1,5 @@
-use icn_types::{Block, Transaction, IcnResult, IcnError, CurrencyType, Hashable};
+use icn_types::{Block, Transaction, CurrencyType};
+use icn_common::{CommonError, CommonResult};
 use chrono::Utc;
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -11,12 +12,12 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub fn new() -> IcnResult<Self> {
+    pub fn new() -> CommonResult<Self> {
         let mut blockchain = Blockchain {
             chain: Vec::new(),
             pending_transactions: Vec::new(),
-            difficulty: 4, // Starting difficulty
-            mining_reward: 100.0, // Starting mining reward
+            difficulty: 4,
+            mining_reward: 100.0,
         };
 
         blockchain.create_genesis_block()?;
@@ -24,7 +25,7 @@ impl Blockchain {
         Ok(blockchain)
     }
 
-    fn create_genesis_block(&mut self) -> IcnResult<()> {
+    fn create_genesis_block(&mut self) -> CommonResult<()> {
         let genesis_block = Block {
             index: 0,
             timestamp: Utc::now().timestamp(),
@@ -41,16 +42,16 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
+    pub fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()> {
         if !self.validate_transaction(&transaction) {
-            return Err(IcnError::Blockchain("Invalid transaction".into()));
+            return Err(CommonError::BlockchainError("Invalid transaction".into()));
         }
 
         self.pending_transactions.push(transaction);
         Ok(())
     }
 
-    pub fn mine_pending_transactions(&mut self, miner_address: &str) -> IcnResult<Block> {
+    pub fn mine_pending_transactions(&mut self, miner_address: &str) -> CommonResult<Block> {
         let mut block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
@@ -76,15 +77,15 @@ impl Blockchain {
             from: String::from("System"),
             to: miner_address.to_string(),
             amount: self.mining_reward,
-            currency_type: CurrencyType::BasicNeeds, // Assuming mining reward is in BasicNeeds currency
+            currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            signature: None, // System transactions don't need signatures
+            signature: None,
         }];
 
         Ok(block)
     }
 
-    fn calculate_hash(&self, block: &Block) -> IcnResult<String> {
+    fn calculate_hash(&self, block: &Block) -> CommonResult<String> {
         let mut hasher = Sha256::new();
         hasher.update(block.index.to_string());
         hasher.update(block.timestamp.to_string());
@@ -96,7 +97,7 @@ impl Blockchain {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    fn calculate_hash_with_nonce(&self, block: &Block, nonce: u64) -> IcnResult<String> {
+    fn calculate_hash_with_nonce(&self, block: &Block, nonce: u64) -> CommonResult<String> {
         let mut hasher = Sha256::new();
         hasher.update(block.index.to_string());
         hasher.update(block.timestamp.to_string());
@@ -114,11 +115,11 @@ impl Blockchain {
         hash.starts_with(&prefix)
     }
 
-    pub fn get_latest_block(&self) -> IcnResult<&Block> {
-        self.chain.last().ok_or_else(|| IcnError::Blockchain("Blockchain is empty".into()))
+    pub fn get_latest_block(&self) -> CommonResult<&Block> {
+        self.chain.last().ok_or_else(|| CommonError::BlockchainError("Blockchain is empty".into()))
     }
 
-    pub fn validate_chain(&self) -> IcnResult<bool> {
+    pub fn validate_chain(&self) -> CommonResult<bool> {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
@@ -142,7 +143,7 @@ impl Blockchain {
         transaction.amount > 0.0
     }
 
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> f64 {
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64> {
         let mut balance = 0.0;
         for block in &self.chain {
             for transaction in &block.transactions {
@@ -154,7 +155,7 @@ impl Blockchain {
                 }
             }
         }
-        balance
+        Ok(balance)
     }
 
     pub fn adjust_difficulty(&mut self) {
@@ -175,8 +176,8 @@ impl Blockchain {
     }
 }
 
-impl Hashable for Transaction {
-    fn hash(&self) -> String {
+impl Transaction {
+    pub fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.from);
         hasher.update(&self.to);
@@ -186,7 +187,6 @@ impl Hashable for Transaction {
         format!("{:x}", hasher.finalize())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -280,9 +280,9 @@ mod tests {
         blockchain.add_transaction(transaction2).unwrap();
         blockchain.mine_pending_transactions("Miner").unwrap();
 
-        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds), -20.0);
-        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds), 20.0);
-        assert!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds) > 0.0);
+        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), -20.0);
+        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 20.0);
+        assert!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds).unwrap() > 0.0);
     }
 
     #[test]
