@@ -1,9 +1,29 @@
-// crates/icn_utils/src/lib.rs
+mod error;
+pub use error::{Error, Result};
 
-pub mod error;
-pub mod types;
-pub mod utils;
+mod blockchain;
+pub use blockchain::{Blockchain, Block, Transaction};
 
-pub use error::{IcnError, IcnResult};
-pub use types::{Block, Transaction, CurrencyType, Error, Result, Currency, CurrencySystem}; // Add necessary types from types module
-pub use utils::*;
+mod consensus;
+pub use consensus::PoCConsensus;
+
+mod currency;
+pub use currency::CurrencySystem;
+
+mod governance;
+pub use governance::{DemocraticSystem, ProposalCategory, ProposalType, ProposalStatus};
+
+mod identity;
+pub use identity::DecentralizedIdentity;
+
+mod network;
+pub use network::Network;
+
+mod sharding;
+pub use sharding::ShardingManager;
+
+mod vm;
+pub use vm::CoopVM;
+
+mod member;
+pub use member::Member;

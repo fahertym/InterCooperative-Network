@@ -4,16 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common = { path = "../icn_common" }
-icn_blockchain = { path = "../icn_blockchain" }
-icn_vm = { path = "../icn_vm" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = "0.4"
 ed25519-dalek = "1.0"
 rand = "0.7"
+icn_utils = { path = "../icn_utils" }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -1,16 +1,7 @@
-// crates/icn_core/src/lib.rs
-
 mod error;
 pub use error::{Error, Result};
 
-use icn_blockchain::{Blockchain, Block, Transaction};
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencySystem;
-use icn_governance::DemocraticSystem;
-use icn_identity::DecentralizedIdentity;
-use icn_network::Network;
-use icn_sharding::ShardingManager;
-use icn_vm::CoopVM;
+use icn_utils::{Blockchain, Block, Transaction, PoCConsensus, CurrencySystem, DemocraticSystem, DecentralizedIdentity, Network, ShardingManager, CoopVM};
 
 pub struct IcnNode {
     pub blockchain: Blockchain,
@@ -60,7 +51,7 @@ impl IcnNode {
         self.blockchain.add_block(new_block, &votes)
     }
 
-    fn collect_vote(&self, block: &Block, validator: &icn_consensus::Member) -> bool {
+    fn collect_vote(&self, block: &Block, validator: &icn_utils::Member) -> bool {
         // In a real implementation, this would involve network communication
         // and potentially running the block through the VM to verify its validity
         // For now, we'll just return true as a placeholder
@@ -105,6 +96,7 @@ impl IcnNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_utils::CurrencyType;
 
     #[test]
     fn test_icn_node_creation() {
@@ -119,7 +111,7 @@ mod tests {
             "Alice".to_string(),
             "Bob".to_string(),
             100.0,
-            icn_currency::CurrencyType::BasicNeeds,
+            CurrencyType::BasicNeeds,
         );
         assert!(node.process_transaction(transaction).is_ok());
     }
@@ -131,7 +123,7 @@ mod tests {
             "Alice".to_string(),
             "Bob".to_string(),
             100.0,
-            icn_currency::CurrencyType::BasicNeeds,
+            CurrencyType::BasicNeeds,
         );
         node.process_transaction(transaction).unwrap();
         assert!(node.create_block().is_ok());

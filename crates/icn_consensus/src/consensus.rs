@@ -1,205 +1,132 @@
-// src/currency/currency.rs
-
-use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
+use log::error;
+use icn_utils::{error::IcnError, IcnResult};
 use std::collections::HashMap;
-use std::fmt;
-use log::{info, error, debug, warn};
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
-}
-
-impl fmt::Display for CurrencyType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CurrencyType::Custom(name) => write!(f, "Custom({})", name),
-            _ => write!(f, "{:?}", self),
-        }
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Currency {
-    pub currency_type: CurrencyType,
-    pub total_supply: f64,
-    pub creation_date: DateTime<Utc>,
-    pub last_issuance: DateTime<Utc>,
-    pub issuance_rate: f64,
-}
-
-impl Currency {
-    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
-        let now = Utc::now();
-        debug!("Creating new currency: {:?}", currency_type);
-        Currency {
-            currency_type,
-            total_supply: initial_supply,
-            creation_date: now,
-            last_issuance: now,
-            issuance_rate,
-        }
-    }
-
-    pub fn mint(&mut self, amount: f64) {
-        self.total_supply += amount;
-        self.last_issuance = Utc::now();
-        info!("Minted {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
-    }
-
-    pub fn burn(&mut self, amount: f64) -> Result<(), String> {
-        if amount > self.total_supply {
-            error!("Attempted to burn more {:?} than available. Requested: {}, Available: {}", self.currency_type, amount, self.total_supply);
-            return Err("Insufficient supply to burn".to_string());
-        }
-        self.total_supply -= amount;
-        info!("Burned {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
-        Ok(())
-    }
+pub struct Member {
+    pub id: String,
+    pub reputation: f64,
+    pub is_validator: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CurrencySystem {
-    pub currencies: HashMap<CurrencyType, Currency>,
+pub struct PoCConsensus {
+    pub members: HashMap<String, Member>,
+    pub threshold: f64,
+    pub quorum: f64,
 }
 
-impl CurrencySystem {
+impl PoCConsensus {
     pub fn new() -> Self {
-        debug!("Creating new CurrencySystem");
-        let mut system = CurrencySystem {
-            currencies: HashMap::new(),
-        };
-        
-        system.add_currency(CurrencyType::BasicNeeds, 1_000_000.0, 0.01);
-        system.add_currency(CurrencyType::Education, 500_000.0, 0.005);
-        system.add_currency(CurrencyType::Environmental, 750_000.0, 0.008);
-        system.add_currency(CurrencyType::Community, 250_000.0, 0.003);
-        system.add_currency(CurrencyType::Volunteer, 100_000.0, 0.002);
-        system.add_currency(CurrencyType::Storage, 1_000_000.0, 0.01);
-        system.add_currency(CurrencyType::Processing, 500_000.0, 0.005);
-        system.add_currency(CurrencyType::Energy, 750_000.0, 0.008);
-        system.add_currency(CurrencyType::Luxury, 100_000.0, 0.001);
-        system.add_currency(CurrencyType::Service, 200_000.0, 0.004);
-
-        info!("CurrencySystem initialized with {} currencies", system.currencies.len());
-        system
-    }
-
-    pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
-        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
-        self.currencies.insert(currency_type.clone(), currency);
-        info!("Added new currency: {:?}", currency_type);
-    }
-
-    pub fn get_currency(&self, currency_type: &CurrencyType) -> Option<&Currency> {
-        self.currencies.get(currency_type)
-    }
-
-    pub fn get_currency_mut(&mut self, currency_type: &CurrencyType) -> Option<&mut Currency> {
-        self.currencies.get_mut(currency_type)
-    }
-
-    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> Result<(), String> {
-        let currency_type = CurrencyType::Custom(name.clone());
-        if self.currencies.contains_key(&currency_type) {
-            error!("Attempted to create duplicate custom currency: {}", name);
-            return Err(format!("Currency '{}' already exists", name));
+        PoCConsensus {
+            members: HashMap::new(),
+            threshold: 0.66, // 66% agreement required for consensus
+            quorum: 0.51, // 51% participation required for quorum
         }
-        self.add_currency(currency_type, initial_supply, issuance_rate);
+    }
+
+    pub fn add_member(&mut self, id: String, is_validator: bool) -> IcnResult<()> {
+        if self.members.contains_key(&id) {
+            return Err(IcnError::Consensus("Member already exists".to_string()));
+        }
+        self.members.insert(id.clone(), Member {
+            id,
+            reputation: 1.0,
+            is_validator,
+        });
         Ok(())
     }
 
-    pub fn adaptive_issuance(&mut self) {
-        debug!("Performing adaptive issuance for all currencies");
-        let now = Utc::now();
-        for currency in self.currencies.values_mut() {
-            let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
-            let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
-            currency.mint(issuance_amount);
-            debug!("Adaptive issuance for {:?}: {}", currency.currency_type, issuance_amount);
+    pub fn remove_member(&mut self, id: &str) -> IcnResult<()> {
+        if self.members.remove(id).is_none() {
+            return Err(IcnError::Consensus("Member not found".to_string()));
         }
-        info!("Adaptive issuance completed for all currencies");
-    }
-
-    pub fn print_currency_supplies(&self) {
-        info!("Current Currency Supplies:");
-        for (currency_type, currency) in &self.currencies {
-            info!("{:?}: {}", currency_type, currency.total_supply);
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Wallet {
-    balances: HashMap<CurrencyType, f64>,
-}
-
-impl Wallet {
-    pub fn new() -> Self {
-        debug!("Creating new Wallet");
-        Wallet {
-            balances: HashMap::new(),
-        }
-    }
-
-    pub fn deposit(&mut self, currency_type: CurrencyType, amount: f64) {
-        *self.balances.entry(currency_type.clone()).or_insert(0.0) += amount;
-        info!("Deposited {} of {:?} into wallet", amount, currency_type);
-    }
-
-    pub fn withdraw(&mut self, currency_type: CurrencyType, amount: f64) -> Result<(), String> {
-        let balance = self.balances.entry(currency_type.clone()).or_insert(0.0);
-        if *balance < amount {
-            error!("Insufficient balance for withdrawal. Requested: {}, Available: {}", amount, balance);
-            return Err(format!("Insufficient balance for {:?}", currency_type));
-        }
-        *balance -= amount;
-        info!("Withdrawn {} of {:?} from wallet", amount, currency_type);
         Ok(())
     }
 
-    pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
-        *self.balances.get(currency_type).unwrap_or(&0.0)
+    pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
+        let member = self.members.get_mut(id).ok_or_else(|| IcnError::Consensus("Member not found".to_string()))?;
+        member.reputation += change;
+        member.reputation = member.reputation.max(0.0); // Ensure reputation doesn't go negative
+        Ok(())
     }
 
-    pub fn print_balances(&self) {
-        info!("Wallet Balances:");
-        for (currency_type, balance) in &self.balances {
-            info!("{:?}: {}", currency_type, balance);
+    pub fn validate_block(&self, _block_hash: &str, votes: &[(&str, bool)]) -> IcnResult<bool> {
+        let total_reputation: f64 = self.members.values().filter(|m| m.is_validator).map(|m| m.reputation).sum();
+
+        let mut positive_reputation = 0.0;
+        let mut participating_reputation = 0.0;
+
+        for (member_id, vote) in votes {
+            if let Some(member) = self.members.get(*member_id) {
+                if member.is_validator {
+                    participating_reputation += member.reputation;
+                    if *vote {
+                        positive_reputation += member.reputation;
+                    }
+                }
+            } else {
+                return Err(IcnError::Consensus("Invalid member in votes".to_string()));
+            }
         }
+
+        if participating_reputation / total_reputation < self.quorum {
+            return Err(IcnError::Consensus("Quorum not reached".to_string()));
+        }
+
+        Ok(positive_reputation / participating_reputation >= self.threshold)
+    }
+
+    pub fn get_validators(&self) -> Vec<&Member> {
+        self.members.values().filter(|m| m.is_validator).collect()
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AssetToken {
-    pub asset_id: String,
-    pub name: String,
-    pub description: String,
-    pub owner: String,
-    pub value: f64,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Bond {
-    pub bond_id: String,
-    pub name: String,
-    pub description: String,
-    pub issuer: String,
-    pub face_value: f64,
-    pub maturity_date: DateTime<Utc>,
-    pub interest_rate: f64,
-    pub owner: String,
+    #[test]
+    fn test_add_and_remove_member() {
+        let mut consensus = PoCConsensus::new();
+        assert!(consensus.add_member("Alice".to_string(), true).is_ok());
+        assert!(consensus.add_member("Bob".to_string(), false).is_ok());
+        assert_eq!(consensus.members.len(), 2);
+        assert!(consensus.remove_member("Alice").is_ok());
+        assert_eq!(consensus.members.len(), 1);
+        assert!(consensus.remove_member("Charlie").is_err());
+    }
+
+    #[test]
+    fn test_update_reputation() {
+        let mut consensus = PoCConsensus::new();
+        consensus.add_member("Alice".to_string(), true).unwrap();
+        assert!(consensus.update_reputation("Alice", 0.5).is_ok());
+        assert_eq!(consensus.members.get("Alice").unwrap().reputation, 1.5);
+        assert!(consensus.update_reputation("Bob", 1.0).is_err());
+    }
+
+    #[test]
+    fn test_validate_block() {
+        let mut consensus = PoCConsensus::new();
+        consensus.add_member("Alice".to_string(), true).unwrap();
+        consensus.add_member("Bob".to_string(), true).unwrap();
+        consensus.add_member("Charlie".to_string(), true).unwrap();
+
+        let votes = vec![
+            ("Alice", true),
+            ("Bob", true),
+            ("Charlie", false),
+        ];
+
+        assert!(consensus.validate_block("block_hash", &votes).unwrap());
+
+        let insufficient_votes = vec![
+            ("Alice", true),
+            ("Bob", true),
+        ];
+
+        assert!(!consensus.validate_block("block_hash", &insufficient_votes).unwrap());
+    }
 }

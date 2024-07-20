@@ -15,5 +15,4 @@ members = [
     "crates/icn_utils",
     "crates/icn_vm",
 ]
-
 resolver = "2"

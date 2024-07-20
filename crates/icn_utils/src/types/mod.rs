@@ -1,4 +1,8 @@
-// crates/icn_utils/src/types/mod.rs
+pub mod block;
+pub mod transaction;
+
+pub use self::block::Block;
+pub use self::transaction::Transaction;
 
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};

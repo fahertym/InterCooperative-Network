@@ -1,8 +1,7 @@
-// crates/icn_consensus/src/proof_of_cooperation.rs
-
-use icn_common::{Error, Result};
+use icn_utils::{error::IcnError, IcnResult};
 use sha2::{Sha256, Digest};
-use serde::{Serialize, Deserialize}; // Ensure Serialize and Deserialize are in scope
+use serde::{Serialize, Deserialize};
+use chrono::Utc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProofOfCooperation {
@@ -46,7 +45,7 @@ impl ProofOfCooperation {
         }
     }
 
-    pub fn add_block(&mut self, data: String) -> Result<()> {
+    pub fn add_block(&mut self, data: String) -> IcnResult<()> {
         let previous_hash = if let Some(last_block) = self.blocks.last() {
             last_block.hash.clone()
         } else {
@@ -56,7 +55,7 @@ impl ProofOfCooperation {
         let new_block = Block::new(
             self.blocks.len() as u64,
             previous_hash,
-            chrono::Utc::now().timestamp_millis() as u64,
+            Utc::now().timestamp_millis() as u64,
             data,
         );
 
@@ -64,21 +63,17 @@ impl ProofOfCooperation {
         Ok(())
     }
 
-    pub fn validate_chain(&self) -> Result<()> {
+    pub fn validate_chain(&self) -> IcnResult<()> {
         for i in 1..self.blocks.len() {
             let previous_block = &self.blocks[i - 1];
             let current_block = &self.blocks[i];
 
             if current_block.previous_hash != previous_block.hash {
-                return Err(Error {
-                    message: "Invalid previous hash".to_string(),
-                });
+                return Err(IcnError::Blockchain("Invalid previous hash".to_string()));
             }
 
             if current_block.hash != current_block.calculate_hash() {
-                return Err(Error {
-                    message: "Invalid block hash".to_string(),
-                });
+                return Err(IcnError::Blockchain("Invalid block hash".to_string()));
             }
         }
         Ok(())

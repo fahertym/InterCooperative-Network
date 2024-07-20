@@ -1,4 +1,5 @@
-use icn_common::{Error, Result};
+use icn_utils::{error::IcnError, IcnResult};
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug)]
 pub enum ProposalStatus {
@@ -17,6 +18,7 @@ impl Clone for ProposalStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct Proposal {
     pub id: String,
     pub status: ProposalStatus,
@@ -40,11 +42,9 @@ impl BFTPoC {
         }
     }
 
-    pub fn create_proposal(&mut self, proposal_id: String) -> Result<()> {
+    pub fn create_proposal(&mut self, proposal_id: String) -> IcnResult<()> {
         if self.proposals.iter().any(|p| p.id == proposal_id) {
-            return Err(Error {
-                message: "Proposal already exists".to_string(),
-            });
+            return Err(IcnError::Governance("Proposal already exists".to_string()));
         }
 
         let proposal = Proposal {
@@ -57,25 +57,19 @@ impl BFTPoC {
         Ok(())
     }
 
-    pub fn vote_on_proposal(&mut self, proposal_id: &str, member_id: String, vote: bool) -> Result<()> {
-        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| Error {
-            message: "Proposal not found".to_string(),
-        })?;
+    pub fn vote_on_proposal(&mut self, proposal_id: &str, member_id: String, vote: bool) -> IcnResult<()> {
+        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| IcnError::Governance("Proposal not found".to_string()))?;
 
         if proposal.votes.iter().any(|v| v.member_id == member_id) {
-            return Err(Error {
-                message: "Member has already voted".to_string(),
-            });
+            return Err(IcnError::Governance("Member has already voted".to_string()));
         }
 
         proposal.votes.push(Vote { member_id, vote });
         Ok(())
     }
 
-    pub fn finalize_proposal(&mut self, proposal_id: &str) -> Result<ProposalStatus> {
-        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| Error {
-            message: "Proposal not found".to_string(),
-        })?;
+    pub fn finalize_proposal(&mut self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        let proposal = self.proposals.iter_mut().find(|p| p.id == proposal_id).ok_or_else(|| IcnError::Governance("Proposal not found".to_string()))?;
 
         let positive_votes = proposal.votes.iter().filter(|v| v.vote).count();
         let negative_votes = proposal.votes.len() - positive_votes;
@@ -120,19 +114,4 @@ mod tests {
         let mut bft_poc = BFTPoC::new();
         bft_poc.create_proposal("proposal1".to_string()).unwrap();
 
-        bft_poc.vote_on_proposal("proposal1", "member1".to_string(), true).unwrap();
-        bft_poc.vote_on_proposal("proposal1", "member2".to_string(), false).unwrap();
-        bft_poc.vote_on_proposal("proposal1", "member3".to_string(), true).unwrap();
-
-        let status = bft_poc.finalize_proposal("proposal1").unwrap();
-        assert_eq!(status, ProposalStatus::Approved);
-
-        bft_poc.create_proposal("proposal2".to_string()).unwrap();
-        bft_poc.vote_on_proposal("proposal2", "member1".to_string(), false).unwrap();
-        bft_poc.vote_on_proposal("proposal2", "member2".to_string(), false).unwrap();
-        bft_poc.vote_on_proposal("proposal2", "member3".to_string(), true).unwrap();
-
-        let status = bft_poc.finalize_proposal("proposal2").unwrap();
-        assert_eq!(status, ProposalStatus::Rejected);
-    }
-}
+        bft_poc.vote_on_proposal("pro

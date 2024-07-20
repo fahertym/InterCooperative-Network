@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use icn_common::CurrencyType; // Import CurrencyType from icn_common
-// Remove unused import
-// use rand::rngs::OsRng;
+use crate::types::CurrencyType; // Import CurrencyType from crate
+use bincode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -39,10 +38,10 @@ impl Transaction {
     pub fn verify(&self) -> Result<bool, String> {
         let public_key_bytes = self.public_key.as_ref().ok_or("No public key present")?;
         let signature_bytes = self.signature.as_ref().ok_or("No signature present")?;
-        
+
         let public_key = PublicKey::from_bytes(public_key_bytes).map_err(|e| e.to_string())?;
         let signature = Signature::from_bytes(signature_bytes).map_err(|e| e.to_string())?;
-        
+
         let message = self.to_bytes();
         Ok(public_key.verify(&message, &signature).is_ok())
     }

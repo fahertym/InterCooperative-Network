@@ -6,10 +6,8 @@ pub use democracy::{DemocraticSystem, ProposalCategory, ProposalType, ProposalSt
 pub use proposal::Proposal;
 pub use voting::Vote;
 
-use icn_core::error::{Error, Result};
+use icn_utils::error::{Error, Result};
 use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 
 pub struct GovernanceSystem {
     democratic_system: DemocraticSystem,
@@ -69,6 +67,7 @@ impl GovernanceSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     #[test]
     fn test_governance_system() {

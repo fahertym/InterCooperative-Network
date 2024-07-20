@@ -1,6 +1,4 @@
-use crate::proposal::Proposal;
-use crate::voting::Vote;
-use icn_core::error::{Error, Result};
+use icn_utils::{Error, Result, Proposal, Vote};
 use chrono::{DateTime, Utc, Duration};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -155,6 +153,7 @@ impl DemocraticSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_utils::ProposalStatus;
 
     #[test]
     fn test_democratic_system() {

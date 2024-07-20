@@ -1,18 +1,13 @@
-mod currency;
-mod wallet;
-mod asset_token;
-mod bond;
+use icn_utils::{Error, Result, CurrencyType, Currency, CurrencySystem};
 
-pub use currency::{Currency, CurrencyType, CurrencySystem};
-pub use wallet::Wallet;
+pub mod asset_token;
+pub mod bond;
+pub mod wallet;
+
 pub use asset_token::AssetToken;
 pub use bond::Bond;
+pub use wallet::Wallet;
 
-use icn_core::error::{Error, Result};
-
-pub struct CurrencyManager {
-    pub currency_system: CurrencySystem,
-}
 
 impl CurrencyManager {
     pub fn new() -> Self {
