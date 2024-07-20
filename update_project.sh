@@ -3,6 +3,7 @@
 # Constants
 OUTPUT_FILE="all_code_files_content.txt"
 PROJECT_DIR="/home/matt/InterCooperative-Network"
+IGNORE_FILES="CHANGELOG.md"
 
 # Function to update changelog
 update_changelog() {
@@ -18,6 +19,10 @@ update_changelog() {
 process_files() {
     local dir="$1"
     for file in "$dir"/*; do
+        if [[ "$file" == *"$IGNORE_FILES" ]]; then
+            echo "Ignoring file: $file"
+            continue
+        fi
         if [ -f "$file" ] && [[ "$file" == *.rs || "$file" == *.toml ]]; then
             echo "Processing file: $file"
             echo "===== START OF $file =====" >> $OUTPUT_FILE
