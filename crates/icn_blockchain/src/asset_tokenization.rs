@@ -1,9 +1,9 @@
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use icn_core::error::{Error, Result};
+use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetToken {
     pub id: String,
     pub name: String,
@@ -35,33 +35,39 @@ impl AssetToken {
 }
 
 pub struct AssetRegistry {
-    tokens: Vec<AssetToken>,
+    tokens: HashMap<String, AssetToken>,
 }
 
 impl AssetRegistry {
     pub fn new() -> Self {
         AssetRegistry {
-            tokens: Vec::new(),
+            tokens: HashMap::new(),
         }
     }
 
-    pub fn create_token(&mut self, name: String, description: String, owner: String, metadata: serde_json::Value) -> AssetToken {
+    pub fn create_token(&mut self, name: String, description: String, owner: String, metadata: serde_json::Value) -> Result<String, String> {
         let token = AssetToken::new(name, description, owner, metadata);
-        self.tokens.push(token.clone());
-        token
+        let token_id = token.id.clone();
+        self.tokens.insert(token_id.clone(), token);
+        Ok(token_id)
     }
 
-    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<()> {
-        if let Some(token) = self.tokens.iter_mut().find(|t| t.id == token_id) {
-            token.transfer(new_owner);
-            Ok(())
-        } else {
-            Err(Error::BlockchainError("Token not found".to_string()))
-        }
+    pub fn transfer_token(&mut self, token_id: &str, new_owner: String) -> Result<(), String> {
+        self.tokens.get_mut(token_id)
+            .ok_or_else(|| "Token not found".to_string())
+            .map(|token| token.transfer(new_owner))
     }
 
     pub fn get_token(&self, token_id: &str) -> Option<&AssetToken> {
-        self.tokens.iter().find(|t| t.id == token_id)
+        self.tokens.get(token_id)
+    }
+
+    pub fn list_tokens(&self) -> Vec<&AssetToken> {
+        self.tokens.values().collect()
+    }
+
+    pub fn token_exists(&self, token_id: &str) -> bool {
+        self.tokens.contains_key(token_id)
     }
 }
 
@@ -79,18 +85,52 @@ mod tests {
             "square_feet": 2000
         });
         
-        let token = registry.create_token(
+        let token_id = registry.create_token(
             "Main Street Property".to_string(),
             "A beautiful property on Main Street".to_string(),
             "Alice".to_string(),
             metadata
-        );
+        ).unwrap();
         
+        let token = registry.get_token(&token_id).unwrap();
         assert_eq!(token.owner, "Alice");
         
-        registry.transfer_token(&token.id, "Bob".to_string()).unwrap();
+        registry.transfer_token(&token_id, "Bob".to_string()).unwrap();
         
-        let updated_token = registry.get_token(&token.id).unwrap();
+        let updated_token = registry.get_token(&token_id).unwrap();
         assert_eq!(updated_token.owner, "Bob");
+    }
+
+    #[test]
+    fn test_list_tokens() {
+        let mut registry = AssetRegistry::new();
+        
+        let metadata1 = serde_json::json!({"type": "Car"});
+        let metadata2 = serde_json::json!({"type": "Boat"});
+        
+        registry.create_token("Car".to_string(), "A fast car".to_string(), "Alice".to_string(), metadata1).unwrap();
+        registry.create_token("Boat".to_string(), "A luxury yacht".to_string(), "Bob".to_string(), metadata2).unwrap();
+        
+        let tokens = registry.list_tokens();
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn test_token_exists() {
+        let mut registry = AssetRegistry::new();
+        
+        let metadata = serde_json::json!({"type": "Painting"});
+        let token_id = registry.create_token("Mona Lisa".to_string(), "A famous painting".to_string(), "Louvre".to_string(), metadata).unwrap();
+        
+        assert!(registry.token_exists(&token_id));
+        assert!(!registry.token_exists("non_existent_token"));
+    }
+
+    #[test]
+    fn test_transfer_non_existent_token() {
+        let mut registry = AssetRegistry::new();
+        
+        let result = registry.transfer_token("non_existent_token", "Alice".to_string());
+        assert!(result.is_err());
     }
 }

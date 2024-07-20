@@ -1,100 +1,46 @@
-// crates/icn_blockchain/src/lib.rs
+use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
+use crate::transaction::Transaction;
 
-mod block;
-mod transaction;
-mod blockchain;
-mod asset_tokenization;
-
-pub use block::Block;
-pub use transaction::Transaction;
-pub use blockchain::Blockchain;
-pub use asset_tokenization::{AssetToken, AssetRegistry};
-
-use icn_core::error::{Error, Result};
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencyType;
-
-// Blockchain structure definition
-pub struct Blockchain {
-    chain: Vec<Block>,
-    pending_transactions: Vec<Transaction>,
-    asset_registry: AssetRegistry,
-    consensus: PoCConsensus,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+    pub nonce: u64,
 }
 
-impl Blockchain {
-    // Initialize a new blockchain with genesis block
-    pub fn new() -> Self {
-        Blockchain {
-            chain: vec![Block::genesis()],
-            pending_transactions: Vec::new(),
-            asset_registry: AssetRegistry::new(),
-            consensus: PoCConsensus::new(),
+impl Block {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
+        let timestamp = chrono::Utc::now().timestamp();
+        let mut block = Block {
+            index,
+            timestamp,
+            transactions,
+            previous_hash,
+            hash: String::new(),
+            nonce: 0,
+        };
+        block.hash = block.calculate_hash();
+        block
+    }
+
+    pub fn calculate_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(transaction.to_string());
         }
+        hasher.update(&self.previous_hash);
+        hasher.update(self.nonce.to_string());
+        format!("{:x}", hasher.finalize())
     }
 
-    // Add a block to the blockchain after validating it with consensus
-    pub fn add_block(&mut self, block: Block, votes: &[(&str, bool)]) -> Result<()> {
-        if self.consensus.validate_block(&block.hash, votes)? {
-            if self.is_valid_block(&block) {
-                self.chain.push(block);
-                self.pending_transactions.clear();
-                Ok(())
-            } else {
-                Err(Error::BlockchainError("Invalid block".to_string()))
-            }
-        } else {
-            Err(Error::BlockchainError("Block not approved by consensus".to_string()))
-        }
-    }
-
-    // Add a transaction to the list of pending transactions
-    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        if self.is_valid_transaction(&transaction) {
-            self.pending_transactions.push(transaction);
-            Ok(())
-        } else {
-            Err(Error::BlockchainError("Invalid transaction".to_string()))
-        }
-    }
-
-    // Validate a block
-    fn is_valid_block(&self, block: &Block) -> bool {
-        block.previous_hash == self.chain.last().unwrap().hash
-            && block.hash == block.calculate_hash()
-            && block.timestamp > self.chain.last().unwrap().timestamp
-    }
-
-    // Validate a transaction
-    fn is_valid_transaction(&self, transaction: &Transaction) -> bool {
-        let sender_balance = self.get_balance(&transaction.from).unwrap_or(0.0);
-        sender_balance >= transaction.amount
-    }
-
-    // Get balance for a specific address
-    pub fn get_balance(&self, address: &str) -> Result<f64> {
-        let balance = self.chain.iter()
-            .flat_map(|block| &block.transactions)
-            .fold(0.0, |acc, tx| {
-                if tx.from == address {
-                    acc - tx.amount
-                } else if tx.to == address {
-                    acc + tx.amount
-                } else {
-                    acc
-                }
-            });
-        Ok(balance)
-    }
-
-    // Create an asset token
-    pub fn create_asset_token(&mut self, name: String, description: String, owner: String) -> Result<AssetToken> {
-        self.asset_registry.create_token(name, description, owner)
-    }
-
-    // Transfer an asset token to a new owner
-    pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> Result<()> {
-        self.asset_registry.transfer_token(token_id, new_owner.to_string())
+    pub fn genesis() -> Self {
+        Block::new(0, vec![], String::from("0"))
     }
 }
 
