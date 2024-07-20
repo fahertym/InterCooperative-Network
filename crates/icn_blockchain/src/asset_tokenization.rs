@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -34,6 +34,7 @@ impl AssetToken {
     }
 }
 
+#[derive(Debug)] // Add Debug derive
 pub struct AssetRegistry {
     tokens: HashMap<String, AssetToken>,
 }

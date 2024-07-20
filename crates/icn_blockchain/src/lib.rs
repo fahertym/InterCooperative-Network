@@ -1,33 +1,12 @@
-use icn_utils::error::{IcnError, IcnResult};
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize}; // Import Serialize and Deserialize
+use std::collections::HashMap; // Import HashMap
+
+use icn_utils::error::{IcnError, IcnResult}; // Import IcnError and IcnResult
+use icn_utils::types::{Block, Transaction}; // Import Block and Transaction from icn_utils
 
 mod asset_tokenization;
-mod transaction;
-mod block;
 
 pub use self::asset_tokenization::{AssetToken, AssetRegistry};
-pub use self::transaction::Transaction;
-pub use self::block::Block;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -71,7 +50,6 @@ impl Blockchain {
             self.chain.len() as u64,
             self.pending_transactions.clone(),
             previous_block.hash.clone(),
-            miner,
         );
         self.pending_transactions.clear();
         Ok(new_block)
@@ -128,7 +106,7 @@ impl Blockchain {
         }
 
         // Verify transaction signature
-        transaction.verify()
+        transaction.verify().unwrap_or(false)
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
@@ -223,7 +201,6 @@ mod tests {
             999, // Invalid index
             vec![],
             "invalid_previous_hash".to_string(),
-            "Miner1".to_string(),
         );
         assert!(blockchain.add_block(invalid_block).is_err());
     }

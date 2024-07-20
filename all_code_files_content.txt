@@ -17,7 +17,6 @@
 │   │       ├── asset_tokenization.rs
 │   │       ├── blockchain.rs
 │   │       ├── lib.rs
-│   │       ├── transaction.rs
 │   │       └── transaction_validator.rs
 │   ├── icn_common
 │   │   ├── Cargo.toml
@@ -82,7 +81,7 @@
 │   │       ├── protocol.rs
 │   │       ├── routing.rs
 │   │       └── security.rs
-│   ├── icn_node_managment
+│   ├── icn_node_management
 │   │   ├── Cargo.toml
 │   │   └── src
 │   │       ├── content_store.rs
@@ -136,7 +135,7 @@
 ├── README.md
 └── update_project.sh
 
-38 directories, 98 files
+38 directories, 97 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -150,11 +149,12 @@ members = [
     "crates/icn_governance",
     "crates/icn_identity",
     "crates/icn_network",
-    "crates/icn_node_managment",
+    "crates/icn_node_management",
     "crates/icn_sharding",
     "crates/icn_storage",
     "crates/icn_testnet",
-    "crates/icn_vm", "icn_utils",
+    "crates/icn_vm",
+    "crates/icn_utils"
 ]
 resolver = "2"
 ===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -414,7 +414,10 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
-
+[package]
+name = "icn_blockchain"
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
 icn_utils = { path = "../icn_utils" }
@@ -431,7 +434,7 @@ tokio-test = "0.4"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -467,6 +470,7 @@ impl AssetToken {
     }
 }
 
+#[derive(Debug)] // Add Debug derive
 pub struct AssetRegistry {
     tokens: HashMap<String, AssetToken>,
 }
@@ -566,7 +570,8 @@ mod tests {
         let result = registry.transfer_token("non_existent_token", "Alice".to_string());
         assert!(result.is_err());
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 // crates/icn_blockchain/src/blockchain.rs
@@ -790,36 +795,15 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-use icn_utils::error::{IcnError, IcnResult};
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize}; // Import Serialize and Deserialize
+use std::collections::HashMap; // Import HashMap
+
+use icn_utils::error::{IcnError, IcnResult}; // Import IcnError and IcnResult
+use icn_utils::types::{Block, Transaction}; // Import Block and Transaction from icn_utils
 
 mod asset_tokenization;
-mod transaction;
-mod block;
 
 pub use self::asset_tokenization::{AssetToken, AssetRegistry};
-pub use self::transaction::Transaction;
-pub use self::block::Block;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -863,7 +847,6 @@ impl Blockchain {
             self.chain.len() as u64,
             self.pending_transactions.clone(),
             previous_block.hash.clone(),
-            miner,
         );
         self.pending_transactions.clear();
         Ok(new_block)
@@ -920,7 +903,7 @@ impl Blockchain {
         }
 
         // Verify transaction signature
-        transaction.verify()
+        transaction.verify().unwrap_or(false)
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
@@ -1015,7 +998,6 @@ mod tests {
             999, // Invalid index
             vec![],
             "invalid_previous_hash".to_string(),
-            "Miner1".to_string(),
         );
         assert!(blockchain.add_block(invalid_block).is_err());
     }
@@ -1090,156 +1072,6 @@ mod tests {
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction.rs =====
-use serde::{Deserialize, Serialize};
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use rand::rngs::OsRng;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub gas_limit: u64,
-    pub signature: Option<Vec<u8>>,
-    pub public_key: Option<Vec<u8>>,
-}
-
-impl Transaction {
-    pub fn new(from: String, to: String, amount: f64, gas_limit: u64) -> Self {
-        Transaction {
-            from,
-            to,
-            amount,
-            gas_limit,
-            signature: None,
-            public_key: None,
-        }
-    }
-
-    pub fn sign(&mut self, keypair: &Keypair) -> Result<(), String> {
-        let message = self.to_bytes();
-        let signature = keypair.sign(&message);
-        self.signature = Some(signature.to_bytes().to_vec());
-        self.public_key = Some(keypair.public.to_bytes().to_vec());
-        Ok(())
-    }
-
-    pub fn verify(&self) -> Result<bool, String> {
-        let public_key_bytes = self.public_key.as_ref().ok_or("No public key present")?;
-        let signature_bytes = self.signature.as_ref().ok_or("No signature present")?;
-        
-        let public_key = PublicKey::from_bytes(public_key_bytes).map_err(|e| e.to_string())?;
-        let signature = Signature::from_bytes(signature_bytes).map_err(|e| e.to_string())?;
-        
-        let message = self.to_bytes();
-        Ok(public_key.verify(&message, &signature).is_ok())
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(self.from.as_bytes());
-        bytes.extend_from_slice(self.to.as_bytes());
-        bytes.extend_from_slice(&self.amount.to_le_bytes());
-        bytes.extend_from_slice(&self.gas_limit.to_le_bytes());
-        bytes
-    }
-
-    pub fn to_string(&self) -> String {
-        format!("{}{}{}{}", self.from, self.to, self.amount, self.gas_limit)
-    }
-
-    pub fn is_signed(&self) -> bool {
-        self.signature.is_some() && self.public_key.is_some()
-    }
-
-    pub fn get_fee(&self) -> f64 {
-        self.gas_limit as f64 * 0.0001
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_new_transaction() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        assert_eq!(tx.from, "Alice");
-        assert_eq!(tx.to, "Bob");
-        assert_eq!(tx.amount, 100.0);
-        assert_eq!(tx.gas_limit, 1000);
-    }
-
-    #[test]
-    fn test_sign_and_verify_transaction() {
-        let mut tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        let mut csprng = OsRng{};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-
-        assert!(tx.sign(&keypair).is_ok());
-        assert!(tx.is_signed());
-        assert!(tx.verify().unwrap());
-    }
-
-    #[test]
-    fn test_get_fee() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        assert_eq!(tx.get_fee(), 0.1);
-    }
-
-    #[test]
-    fn test_to_bytes() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        let bytes = tx.to_bytes();
-        assert!(!bytes.is_empty());
-    }
-
-    #[test]
-    fn test_to_string() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        let string_representation = tx.to_string();
-        assert_eq!(string_representation, "AliceBob100.01000");
-    }
-
-    #[test]
-    fn test_verify_unsigned_transaction() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            1000,
-        );
-        assert!(!tx.is_signed());
-        assert!(tx.verify().is_err());
-    }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
 use crate::{Transaction, Blockchain};
@@ -3232,7 +3064,7 @@ impl Wallet {
         *balance -= amount;
         info!("Withdrawn {} of {:?} from wallet", amount, currency_type);
         Ok(())
-    }
+    }/home/matt/InterCooperative-Network/crates/icn_currency
 
     pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
         *self.balances.get(currency_type).unwrap_or(&0.0)
@@ -4392,7 +4224,7 @@ impl SecurityManager {
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/security.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/Cargo.toml =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/Cargo.toml =====
 [package]
 name = "icn_node_management"
 version = "0.1.0"
@@ -4408,9 +4240,9 @@ thiserror = "1.0"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/Cargo.toml =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/Cargo.toml =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/content_store.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/content_store.rs =====
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -4514,9 +4346,9 @@ mod tests {
         assert_eq!(cs.get("test2"), Some(vec![5, 6, 7, 8]));
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/content_store.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/content_store.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/fib.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/fib.rs =====
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
@@ -4618,9 +4450,9 @@ mod tests {
         assert_eq!(entry.next_hops[0], addr2);
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/fib.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/fib.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/icn_node.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/icn_node.rs =====
 // ===============================================
 // ICN Node Implementation
 // ===============================================
@@ -4782,9 +4614,9 @@ impl ICNNode {
         Ok(vec![])
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/icn_node.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/icn_node.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/lib.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/lib.rs =====
 mod content_store;
 mod fib;
 mod pit;
@@ -4850,9 +4682,9 @@ impl IcnNodeManager {
         Ok(())
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/lib.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/lib.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/node.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/node.rs =====
 // ===============================================
 // Content Store, FIB, and PIT Implementation
 // ===============================================
@@ -4994,9 +4826,9 @@ impl PendingInterestTable {
         self.table.is_empty()
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/node.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/node.rs =====
 
-===== START OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/pit.rs =====
+===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/pit.rs =====
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -5088,7 +4920,7 @@ mod tests {
         assert!(!pit.has_pending_interest("test_expired"));
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_node_managment/src/pit.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/pit.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/Cargo.toml =====
 [package]
@@ -6254,6 +6086,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.9"
+ed25519-dalek = "1.0"
+rand = "0.7"
+thiserror = "1.0"
+serde_json = "1.0"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/src/error.rs =====
@@ -6366,8 +6205,6 @@ impl Block {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/src/types/block.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/src/types/transaction.rs =====
-// icn_utils/src/types/transaction.rs
-
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
@@ -6378,17 +6215,19 @@ pub struct Transaction {
     pub to: String,
     pub amount: f64,
     pub gas_limit: u64,
+    pub currency_type: CurrencyType, // Add this field
     pub signature: Option<Vec<u8>>,
     pub public_key: Option<Vec<u8>>,
 }
 
 impl Transaction {
-    pub fn new(from: String, to: String, amount: f64, gas_limit: u64) -> Self {
+    pub fn new(from: String, to: String, amount: f64, gas_limit: u64, currency_type: CurrencyType) -> Self {
         Transaction {
             from,
             to,
             amount,
             gas_limit,
+            currency_type, // Initialize the field
             signature: None,
             public_key: None,
         }
@@ -6407,18 +6246,18 @@ impl Transaction {
         let signature_bytes = self.signature.as_ref().ok_or("No signature present")?;
         
         let public_key = PublicKey::from_bytes(public_key_bytes).map_err(|e| e.to_string())?;
-        let signature = Signature::from_bytes(signature_bytes).map.err(|e| e.to_string())?;
+        let signature = Signature::from_bytes(signature_bytes).map_err(|e| e.to_string())?;
         
         let message = self.to_bytes();
-        Ok(public_key.verify(&message, &signature).is.ok())
+        Ok(public_key.verify(&message, &signature).is_ok())
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend.from_slice(self.from.as_bytes());
-        bytes.extend.from_slice(self.to.as_bytes());
-        bytes.extend.from_slice(&self.amount.to_le_bytes());
-        bytes.extend.from_slice(&self.gas_limit.to_le_bytes());
+        bytes.extend_from_slice(self.from.as_bytes());
+        bytes.extend_from_slice(self.to.as_bytes());
+        bytes.extend_from_slice(&self.amount.to_le_bytes());
+        bytes.extend_from_slice(&self.gas_limit.to_le_bytes());
         bytes
     }
 
@@ -7803,11 +7642,12 @@ members = [
     "crates/icn_governance",
     "crates/icn_identity",
     "crates/icn_network",
-    "crates/icn_node_managment",
+    "crates/icn_node_management",
     "crates/icn_sharding",
     "crates/icn_storage",
     "crates/icn_testnet",
-    "crates/icn_vm", "icn_utils",
+    "crates/icn_vm",
+    "crates/icn_utils"
 ]
 resolver = "2"
 ===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====

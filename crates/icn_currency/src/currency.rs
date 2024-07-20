@@ -169,7 +169,7 @@ impl Wallet {
         *balance -= amount;
         info!("Withdrawn {} of {:?} from wallet", amount, currency_type);
         Ok(())
-    }
+    }/home/matt/InterCooperative-Network/crates/icn_currency
 
     pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
         *self.balances.get(currency_type).unwrap_or(&0.0)

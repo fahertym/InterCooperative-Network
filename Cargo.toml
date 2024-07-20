@@ -8,10 +8,11 @@ members = [
     "crates/icn_governance",
     "crates/icn_identity",
     "crates/icn_network",
-    "crates/icn_node_managment",
+    "crates/icn_node_management",
     "crates/icn_sharding",
     "crates/icn_storage",
     "crates/icn_testnet",
-    "crates/icn_vm", "icn_utils",
+    "crates/icn_vm",
+    "crates/icn_utils"
 ]
 resolver = "2"
