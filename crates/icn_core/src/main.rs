@@ -1,277 +1,149 @@
+use icn_core::{IcnNode, Config};
+use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use std::io::{self, Write};
+use chrono::{Duration, Utc};
 use log::{info, warn, error};
-use chrono::Utc;
-use std::collections::HashMap;
-use std::error::Error;
-use std::sync::Arc;
 
-use icn_core::{IcnNode, Error as IcnNodeError};
-use icn_blockchain::Transaction;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencyType;
-use icn_governance::{DemocraticSystem, ProposalType, ProposalCategory};
-use icn_identity::DecentralizedIdentity;
-use icn_network::Network;
-use icn_network::node::{Node, NodeType};
-use icn_vm::CSCLCompiler;
-
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> IcnResult<()> {
     env_logger::init();
-    info!("Starting ICN Node");
 
-    let node = Arc::new(IcnNode::new());
-    let mut network = Network::new();
-    let mut consensus = PoCConsensus::new(0.5, 0.66);
-    let mut democratic_system = DemocraticSystem::new();
+    let config = Config::load("config.json").unwrap_or_else(|_| {
+        warn!("Failed to load config.json, using default configuration");
+        Config::default()
+    });
 
-    setup_network_and_consensus(&mut network, &mut consensus)?;
-    process_initial_transactions(Arc::clone(&node))?;
-    create_and_vote_on_proposal(&mut democratic_system)?;
-    compile_and_run_cscl(Arc::clone(&node))?;
-    simulate_cross_shard_transaction(Arc::clone(&node))?;
-    print_final_state(&node, &consensus, &democratic_system);
+    info!("Starting InterCooperative Network node...");
+    let node = IcnNode::new(config)?;
+    node.start()?;
 
-    info!("ICN Node simulation completed.");
-    Ok(())
-}
+    info!("Node started successfully. Type 'help' for available commands.");
 
-fn setup_network_and_consensus(network: &mut Network, consensus: &mut PoCConsensus) -> Result<(), Box<dyn Error>> {
-    let node1 = Node::new("Node1", NodeType::PersonalDevice, "127.0.0.1:8000");
-    let node2 = Node::new("Node2", NodeType::PersonalDevice, "127.0.0.1:8001");
-    network.add_node(node1);
-    network.add_node(node2);
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
 
-    consensus.add_member("Alice".to_string(), false)?;
-    consensus.add_member("Bob".to_string(), false)?;
-    consensus.add_member("Charlie".to_string(), false)?;
-    consensus.add_member("CorpX".to_string(), true)?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
 
-    Ok(())
-}
-
-fn process_initial_transactions(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    let (alice_did, _) = DecentralizedIdentity::new(HashMap::new());
-    let (bob_did, _) = DecentralizedIdentity::new(HashMap::new());
-
-    let tx = Transaction::new(
-        alice_did.id.clone(),
-        bob_did.id.clone(),
-        100.0,
-        CurrencyType::BasicNeeds,
-        1000,
-    );
-
-    node.with_blockchain(|blockchain| {
-        blockchain.add_transaction(tx.clone())?;
-        blockchain.create_block("Alice".to_string())?;
-        if let Some(latest_block) = blockchain.get_latest_block() {
-            info!("New block created: {:?}", latest_block);
-        } else {
-            warn!("No blocks in the blockchain to broadcast");
+        match input {
+            "help" => print_help(),
+            "exit" => break,
+            "transaction" => process_transaction(&node)?,
+            "proposal" => create_proposal(&node)?,
+            "balance" => check_balance(&node)?,
+            _ => println!("Unknown command. Type 'help' for available commands."),
         }
-        Ok(())
-    })?;
+    }
+
+    info!("Stopping node...");
+    node.stop()?;
+    info!("Node stopped. Goodbye!");
 
     Ok(())
 }
 
-fn create_and_vote_on_proposal(democratic_system: &mut DemocraticSystem) -> Result<(), Box<dyn Error>> {
-    let proposal_id = democratic_system.create_proposal(
-        "Community Garden".to_string(),
-        "Create a community garden in the local park".to_string(),
-        "Alice".to_string(),
-        chrono::Duration::weeks(1),
-        ProposalType::Constitutional,
-        ProposalCategory::Economic,
-        0.51,
-        Some(Utc::now() + chrono::Duration::days(30)),
-    )?;
-
-    democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
-    democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
-    democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
-    democratic_system.tally_votes(&proposal_id)?;
-
-    let proposal = democratic_system.get_proposal(&proposal_id)
-        .ok_or("Proposal not found after voting")?;
-    info!("Proposal status after voting: {:?}", proposal.status);
-
-    Ok(())
+fn print_help() {
+    println!("Available commands:");
+    println!("  help        - Show this help message");
+    println!("  transaction - Create a new transaction");
+    println!("  proposal    - Create a new proposal");
+    println!("  balance     - Check account balance");
+    println!("  exit        - Exit the application");
 }
 
-fn compile_and_run_cscl(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    let cscl_code = r#"
-    x = 100 + 50;
-    y = 200 - 25;
-    z = x * y / 10;
-    emit("Result", z);
-    "#;
-
-    let mut compiler = CSCLCompiler::new(cscl_code);
-    let opcodes = compiler.compile()?;
+fn process_transaction(node: &IcnNode) -> IcnResult<()> {
+    info!("Processing a new transaction");
     
-    node.with_coop_vm(|coop_vm| {
-        coop_vm.load_program(opcodes);
-        coop_vm.run().map_err(IcnNodeError::VmError)
-    })?;
+    print!("From: ");
+    io::stdout().flush().unwrap();
+    let mut from = String::new();
+    io::stdin().read_line(&mut from).unwrap();
+    
+    print!("To: ");
+    io::stdout().flush().unwrap();
+    let mut to = String::new();
+    io::stdin().read_line(&mut to).unwrap();
+    
+    print!("Amount: ");
+    io::stdout().flush().unwrap();
+    let mut amount_str = String::new();
+    io::stdin().read_line(&mut amount_str).unwrap();
+    let amount: f64 = amount_str.trim().parse().map_err(|_| IcnError::InvalidInput("Invalid amount".to_string()))?;
 
+    let transaction = Transaction {
+        from: from.trim().to_string(),
+        to: to.trim().to_string(),
+        amount,
+        currency_type: CurrencyType::BasicNeeds,
+        timestamp: Utc::now().timestamp(),
+        signature: None,
+    };
+
+    node.process_transaction(transaction)?;
+    info!("Transaction processed successfully");
     Ok(())
 }
 
-fn simulate_cross_shard_transaction(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
-    node.process_cross_shard_transaction(|sharding_manager| {
-        sharding_manager.add_address_to_shard("Alice".to_string(), 0);
-        sharding_manager.add_address_to_shard("Bob".to_string(), 1);
-        sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
-    })?;
+fn create_proposal(node: &IcnNode) -> IcnResult<()> {
+    info!("Creating a new proposal");
+    
+    print!("Title: ");
+    io::stdout().flush().unwrap();
+    let mut title = String::new();
+    io::stdin().read_line(&mut title).unwrap();
+    
+    print!("Description: ");
+    io::stdout().flush().unwrap();
+    let mut description = String::new();
+    io::stdin().read_line(&mut description).unwrap();
+    
+    print!("Proposer: ");
+    io::stdout().flush().unwrap();
+    let mut proposer = String::new();
+    io::stdin().read_line(&mut proposer).unwrap();
 
-    let transaction = Transaction::new(
-        "Alice".to_string(),
-        "Bob".to_string(),
-        500.0,
-        CurrencyType::BasicNeeds,
-        1000,
-    );
+    let proposal = Proposal {
+        id: String::new(),
+        title: title.trim().to_string(),
+        description: description.trim().to_string(),
+        proposer: proposer.trim().to_string(),
+        created_at: Utc::now(),
+        voting_ends_at: Utc::now() + Duration::days(7),
+        status: icn_types::ProposalStatus::Active,
+        proposal_type: ProposalType::Constitutional,
+        category: ProposalCategory::Economic,
+        required_quorum: 0.51,
+        execution_timestamp: None,
+    };
 
-    node.process_cross_shard_transaction(|sharding_manager| {
-        sharding_manager.transfer_between_shards(0, 1, &transaction)
-    })?;
-
-    let alice_balance = node.with_sharding_manager(|sharding_manager| {
-        sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
-    })?;
-
-    let bob_balance = node.with_sharding_manager(|sharding_manager| {
-        sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
-    })?;
-
-    info!("Alice's balance after cross-shard transaction: {:?}", alice_balance);
-    info!("Bob's balance after cross-shard transaction: {:?}", bob_balance);
-
+    let proposal_id = node.create_proposal(proposal)?;
+    info!("Proposal created successfully. Proposal ID: {}", proposal_id);
     Ok(())
 }
 
-fn print_final_state(node: &Arc<IcnNode>, consensus: &PoCConsensus, democratic_system: &DemocraticSystem) {
-    info!("Blockchain state:");
-    if let Err(e) = node.with_blockchain(|blockchain| {
-        info!("Number of blocks: {}", blockchain.chain.len());
-        if let Some(latest_block) = blockchain.get_latest_block() {
-            info!("Latest block hash: {}", latest_block.hash);
-        } else {
-            warn!("No blocks in the blockchain");
-        }
-        Ok(())
-    }) {
-        error!("Failed to read blockchain state: {}", e);
-    }
+fn check_balance(node: &IcnNode) -> IcnResult<()> {
+    info!("Checking account balance");
+    
+    print!("Address: ");
+    io::stdout().flush().unwrap();
+    let mut address = String::new();
+    io::stdin().read_line(&mut address).unwrap();
 
-    info!("Consensus state:");
-    info!("Number of members: {}", consensus.members.len());
-    info!("Current vote threshold: {}", consensus.threshold);
+    print!("Currency Type (BasicNeeds, Education, etc.): ");
+    io::stdout().flush().unwrap();
+    let mut currency_type_str = String::new();
+    io::stdin().read_line(&mut currency_type_str).unwrap();
 
-    info!("Democratic system state:");
-    info!("Number of active proposals: {}", democratic_system.list_active_proposals().len());
+    let currency_type = match currency_type_str.trim() {
+        "BasicNeeds" => CurrencyType::BasicNeeds,
+        "Education" => CurrencyType::Education,
+        // Add more currency types as needed
+        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
+    };
 
-    info!("Sharding state:");
-    if let Err(e) = node.with_sharding_manager(|sharding_manager| {
-        info!("Number of shards: {}", sharding_manager.get_shard_count());
-        Ok(())
-    }) {
-        error!("Failed to read sharding state: {}", e);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use icn_governance::democracy::ProposalStatus;
-    use ed25519_dalek::Keypair;
-    use rand::rngs::OsRng;
-
-    #[test]
-    fn test_icn_node_creation() {
-        let node = Arc::new(IcnNode::new());
-        assert!(node.with_blockchain(|blockchain| Ok(blockchain.chain.len() == 1)).unwrap());
-        info!("ICN Node creation test passed");
-    }
-
-    #[test]
-    fn test_cross_shard_transaction() -> Result<(), Box<dyn Error>> {
-        let node = Arc::new(IcnNode::new());
-
-        node.process_cross_shard_transaction(|sharding_manager| {
-            sharding_manager.add_address_to_shard("Alice".to_string(), 0);
-            sharding_manager.add_address_to_shard("Bob".to_string(), 1);
-            sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
-        })?;
-
-        let mut csprng = OsRng{};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-
-        let mut transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            500.0,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-        transaction.sign(&keypair)?;
-
-        node.process_cross_shard_transaction(|sharding_manager| {
-            sharding_manager.transfer_between_shards(0, 1, &transaction)
-        })?;
-
-        let alice_balance = node.with_sharding_manager(|sharding_manager| {
-            sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
-        })?;
-
-        let bob_balance = node.with_sharding_manager(|sharding_manager| {
-            sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
-        })?;
-
-        assert_eq!(alice_balance, 500.0);
-        assert_eq!(bob_balance, 500.0);
-
-        info!("Cross-shard transaction test passed");
-        Ok(())
-    }
-
-    #[test]
-    fn test_smart_contract_execution() -> Result<(), Box<dyn Error>> {
-        let node = Arc::new(IcnNode::new());
-        compile_and_run_cscl(Arc::clone(&node))?;
-        info!("Smart contract execution test passed");
-        Ok(())
-    }
-
-    #[test]
-    fn test_democratic_system() -> Result<(), Box<dyn Error>> {
-        let mut democratic_system = DemocraticSystem::new();
-        
-        let proposal_id = democratic_system.create_proposal(
-            "Community Garden".to_string(),
-            "Create a community garden in the local park".to_string(),
-            "Alice".to_string(),
-            chrono::Duration::seconds(5), // Shorter duration for testing
-            ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            0.51,
-            Some(Utc::now() + chrono::Duration::days(30)),
-        )?;
-
-        democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
-        democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
-        democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
-
-        // Wait for the voting period to end
-        std::thread::sleep(std::time::Duration::from_secs(6));
-
-        democratic_system.tally_votes(&proposal_id)?;
-
-        let proposal = democratic_system.get_proposal(&proposal_id)
-            .ok_or("Proposal not found after voting")?;
-        assert_eq!(proposal.status, ProposalStatus::Passed);
-        
-        info!("Democratic system test passed");
-        Ok(())
-    }
+    let balance = node.get_balance(address.trim(), &currency_type)?;
+    println!("Balance: {}", balance);
+    info!("Balance query successful");
+    Ok(())
 }
