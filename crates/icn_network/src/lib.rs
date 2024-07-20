@@ -1,72 +1,132 @@
-mod node;
-mod packet;
-mod routing;
-mod protocol;
-mod security;
-mod discovery;
-mod naming;
+// File: icn_network/src/lib.rs
 
-pub use node::{Node, NodeType};
-pub use packet::{Packet, PacketType};
-pub use routing::RoutingTable;
-pub use protocol::NetworkProtocol;
-pub use security::SecurityManager;
-pub use discovery::DiscoveryService;
-pub use naming::NamingService;
+use icn_types::{IcnResult, IcnError};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 
-use icn_core::error::{Error, Result};
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum NodeType {
+    PersonalDevice,
+    CooperativeServer,
+    GovernmentServer,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Node {
+    pub id: String,
+    pub node_type: NodeType,
+    pub address: SocketAddr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PacketType {
+    Data,
+    Interest,
+    Control,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Packet {
+    pub packet_type: PacketType,
+    pub source: String,
+    pub destination: String,
+    pub content: Vec<u8>,
+}
 
 pub struct Network {
-    nodes: Vec<Node>,
-    routing_table: RoutingTable,
-    protocol: NetworkProtocol,
-    security_manager: SecurityManager,
-    discovery_service: DiscoveryService,
-    naming_service: NamingService,
+    nodes: HashMap<String, Node>,
+    routing_table: HashMap<String, String>,
 }
 
 impl Network {
     pub fn new() -> Self {
         Network {
-            nodes: Vec::new(),
-            routing_table: RoutingTable::new(),
-            protocol: NetworkProtocol::new(),
-            security_manager: SecurityManager::new(),
-            discovery_service: DiscoveryService::new(),
-            naming_service: NamingService::new(),
+            nodes: HashMap::new(),
+            routing_table: HashMap::new(),
         }
     }
 
-    pub fn add_node(&mut self, node: Node) -> Result<()> {
-        self.nodes.push(node);
-        self.discovery_service.register_node(&node)?;
-        self.routing_table.update(&self.nodes)?;
+    pub fn add_node(&mut self, node: Node) -> IcnResult<()> {
+        if self.nodes.contains_key(&node.id) {
+            return Err(IcnError::Network("Node already exists".to_string()));
+        }
+        self.nodes.insert(node.id.clone(), node);
         Ok(())
     }
 
-    pub fn remove_node(&mut self, node_id: &str) -> Result<()> {
-        self.nodes.retain(|n| n.id != node_id);
-        self.discovery_service.unregister_node(node_id)?;
-        self.routing_table.update(&self.nodes)?;
+    pub fn remove_node(&mut self, node_id: &str) -> IcnResult<()> {
+        if self.nodes.remove(node_id).is_none() {
+            return Err(IcnError::Network("Node not found".to_string()));
+        }
+        self.routing_table.retain(|_, v| v != node_id);
         Ok(())
     }
 
-    pub fn send_packet(&self, packet: Packet) -> Result<()> {
-        self.security_manager.validate_packet(&packet)?;
-        let route = self.routing_table.get_route(&packet.destination)?;
-        self.protocol.send_packet(&packet, &route)
+    pub fn send_packet(&self, packet: Packet) -> IcnResult<()> {
+        let next_hop = self.routing_table.get(&packet.destination)
+            .ok_or_else(|| IcnError::Network("Destination not found in routing table".to_string()))?;
+        let node = self.nodes.get(next_hop)
+            .ok_or_else(|| IcnError::Network("Next hop node not found".to_string()))?;
+        
+        // In a real implementation, this would send the packet to the next hop
+        println!("Sending packet to {}: {:?}", node.address, packet);
+        Ok(())
     }
 
-    pub fn receive_packet(&self, packet: Packet) -> Result<()> {
-        self.security_manager.validate_packet(&packet)?;
-        self.protocol.process_packet(packet)
+    pub fn update_routing(&mut self, destination: String, next_hop: String) -> IcnResult<()> {
+        if !self.nodes.contains_key(&next_hop) {
+            return Err(IcnError::Network("Next hop node not found".to_string()));
+        }
+        self.routing_table.insert(destination, next_hop);
+        Ok(())
     }
 
-    pub fn resolve_name(&self, name: &str) -> Result<String> {
-        self.naming_service.resolve(name)
+    pub fn get_node(&self, node_id: &str) -> Option<&Node> {
+        self.nodes.get(node_id)
     }
 
-    pub fn register_name(&mut self, name: &str, address: &str) -> Result<()> {
-        self.naming_service.register(name, address)
+    pub fn list_nodes(&self) -> Vec<&Node> {
+        self.nodes.values().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_network_operations() {
+        let mut network = Network::new();
+
+        let node1 = Node {
+            id: "node1".to_string(),
+            node_type: NodeType::PersonalDevice,
+            address: "127.0.0.1:8000".parse().unwrap(),
+        };
+        let node2 = Node {
+            id: "node2".to_string(),
+            node_type: NodeType::CooperativeServer,
+            address: "127.0.0.1:8001".parse().unwrap(),
+        };
+
+        assert!(network.add_node(node1.clone()).is_ok());
+        assert!(network.add_node(node2.clone()).is_ok());
+
+        assert_eq!(network.list_nodes().len(), 2);
+
+        assert!(network.update_routing("dest1".to_string(), "node2".to_string()).is_ok());
+
+        let packet = Packet {
+            packet_type: PacketType::Data,
+            source: "node1".to_string(),
+            destination: "dest1".to_string(),
+            content: vec![1, 2, 3, 4],
+        };
+
+        assert!(network.send_packet(packet).is_ok());
+
+        assert!(network.remove_node("node1").is_ok());
+        assert_eq!(network.list_nodes().len(), 1);
     }
 }

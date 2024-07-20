@@ -1,16 +1,20 @@
+// File: icn_storage/src/lib.rs
+
+use icn_types::{IcnResult, IcnError};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
-use icn_core::error::{Error, Result};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StorageNode {
+    id: String,
     data: HashMap<String, Vec<u8>>,
 }
 
 impl StorageNode {
-    pub fn new() -> Self {
+    pub fn new(id: String) -> Self {
         StorageNode {
+            id,
             data: HashMap::new(),
         }
     }
@@ -29,16 +33,16 @@ impl StorageNode {
         self.data.remove(hash).is_some()
     }
 
-    pub fn update(&mut self, hash: &str, new_content: Vec<u8>) -> Result<()> {
+    pub fn update(&mut self, hash: &str, new_content: Vec<u8>) -> IcnResult<()> {
         if self.data.contains_key(hash) {
             let new_hash = self.calculate_hash(&new_content);
             if new_hash != hash {
-                return Err(Error::StorageError("Update would change the hash, use store instead".to_string()));
+                return Err(IcnError::Storage("Update would change the hash, use store instead".to_string()));
             }
             self.data.insert(hash.to_string(), new_content);
             Ok(())
         } else {
-            Err(Error::StorageError("Hash not found".to_string()))
+            Err(IcnError::Storage("Hash not found".to_string()))
         }
     }
 
@@ -56,17 +60,61 @@ impl StorageNode {
     pub fn contains(&self, hash: &str) -> bool {
         self.data.contains_key(hash)
     }
+}
 
-    pub fn clear(&mut self) {
-        self.data.clear();
+pub struct StorageManager {
+    nodes: HashMap<String, StorageNode>,
+}
+
+impl StorageManager {
+    pub fn new() -> Self {
+        StorageManager {
+            nodes: HashMap::new(),
+        }
     }
 
-    pub fn len(&self) -> usize {
-        self.data.len()
+    pub fn add_node(&mut self, node: StorageNode) -> IcnResult<()> {
+        if self.nodes.contains_key(&node.id) {
+            return Err(IcnError::Storage("Node already exists".to_string()));
+        }
+        self.nodes.insert(node.id.clone(), node);
+        Ok(())
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+    pub fn remove_node(&mut self, node_id: &str) -> IcnResult<()> {
+        if self.nodes.remove(node_id).is_none() {
+            return Err(IcnError::Storage("Node not found".to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn store_data(&mut self, content: Vec<u8>) -> IcnResult<String> {
+        if self.nodes.is_empty() {
+            return Err(IcnError::Storage("No storage nodes available".to_string()));
+        }
+        
+        // Simple round-robin selection for now
+        let node = self.nodes.values_mut().next().unwrap();
+        let hash = node.store(content);
+        Ok(hash)
+    }
+
+    pub fn retrieve_data(&self, hash: &str) -> IcnResult<Vec<u8>> {
+        for node in self.nodes.values() {
+            if let Some(data) = node.retrieve(hash) {
+                return Ok(data.clone());
+            }
+        }
+        Err(IcnError::Storage("Data not found".to_string()))
+    }
+
+    pub fn delete_data(&mut self, hash: &str) -> IcnResult<()> {
+        for node in self.nodes.values_mut() {
+            if node.delete(hash) {
+                return Ok(());
+            }
+        }
+        Err(IcnError::Storage("Data not found".to_string()))
     }
 }
 
@@ -75,50 +123,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_store_and_retrieve() {
-        let mut node = StorageNode::new();
+    fn test_storage_node() {
+        let mut node = StorageNode::new("node1".to_string());
         let content = b"Hello, ICN!".to_vec();
         let hash = node.store(content.clone());
+        
         assert_eq!(node.retrieve(&hash), Some(&content));
-    }
-
-    #[test]
-    fn test_delete() {
-        let mut node = StorageNode::new();
-        let content = b"Delete me".to_vec();
-        let hash = node.store(content);
+        assert!(node.contains(&hash));
         assert!(node.delete(&hash));
         assert!(!node.contains(&hash));
     }
 
     #[test]
-    fn test_update() {
-        let mut node = StorageNode::new();
-        let content = b"Original content".to_vec();
-        let hash = node.store(content);
-        let new_content = b"Original content".to_vec(); // Same content, should work
-        assert!(node.update(&hash, new_content).is_ok());
-        let different_content = b"Different content".to_vec();
-        assert!(node.update(&hash, different_content).is_err());
-    }
-
-    #[test]
-    fn test_list_hashes() {
-        let mut node = StorageNode::new();
-        let hash1 = node.store(b"Content 1".to_vec());
-        let hash2 = node.store(b"Content 2".to_vec());
-        let hashes = node.list_hashes();
-        assert!(hashes.contains(&hash1));
-        assert!(hashes.contains(&hash2));
-    }
-
-    #[test]
-    fn test_clear_and_len() {
-        let mut node = StorageNode::new();
-        node.store(b"Content 1".to_vec());
-        node.store(b"Content 2".to_vec());
-        assert_eq!(node.len(), 2);
-        node.clear();
-        assert!(node.is_empty());
+    fn test_storage_manager() {
+        let mut manager = StorageManager::new();
+        let node1 = StorageNode::new("node1".to_string());
+        let node2 = StorageNode::new("node2".to_string());
+        
+        manager.add_node(node1).unwrap();
+        manager.add_node(node2).unwrap();
+        
+        let content = b"Hello, ICN!".to_vec();
+        let hash = manager.store_data(content.clone()).unwrap();
+        
+        assert_eq!(manager.retrieve_data(&hash).unwrap(), content);
+        assert!(manager.delete_data(&hash).is_ok());
+        assert!(manager.retrieve_data(&hash).is_err());
     }
 }

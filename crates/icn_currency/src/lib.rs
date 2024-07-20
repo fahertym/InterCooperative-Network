@@ -1,77 +1,145 @@
-use icn_utils::{Error, Result, CurrencyType, Currency, CurrencySystem};
+// File: icn_currency/src/lib.rs
 
-pub mod asset_token;
-pub mod bond;
-pub mod wallet;
+use icn_types::{IcnResult, IcnError, CurrencyType};
+use std::collections::HashMap;
+use chrono::{DateTime, Utc, Duration};
+use serde::{Serialize, Deserialize};
 
-pub use asset_token::AssetToken;
-pub use bond::Bond;
-pub use wallet::Wallet;
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Currency {
+    pub currency_type: CurrencyType,
+    pub total_supply: f64,
+    pub creation_date: DateTime<Utc>,
+    pub last_issuance: DateTime<Utc>,
+    pub issuance_rate: f64,
+}
 
-
-impl CurrencyManager {
-    pub fn new() -> Self {
-        CurrencyManager {
-            currency_system: CurrencySystem::new(),
+impl Currency {
+    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
+        let now = Utc::now();
+        Currency {
+            currency_type,
+            total_supply: initial_supply,
+            creation_date: now,
+            last_issuance: now,
+            issuance_rate,
         }
     }
 
-    pub fn create_wallet(&self) -> Wallet {
-        Wallet::new()
+    pub fn mint(&mut self, amount: f64) -> IcnResult<()> {
+        self.total_supply += amount;
+        self.last_issuance = Utc::now();
+        Ok(())
     }
 
-    pub fn create_asset_token(&self, asset_id: String, name: String, description: String, owner: String, value: f64) -> AssetToken {
-        AssetToken::new(asset_id, name, description, owner, value)
+    pub fn burn(&mut self, amount: f64) -> IcnResult<()> {
+        if amount > self.total_supply {
+            return Err(IcnError::Currency("Insufficient supply to burn".to_string()));
+        }
+        self.total_supply -= amount;
+        Ok(())
+    }
+}
+
+pub struct CurrencySystem {
+    pub currencies: HashMap<CurrencyType, Currency>,
+    balances: HashMap<String, HashMap<CurrencyType, f64>>,
+}
+
+impl CurrencySystem {
+    pub fn new() -> Self {
+        let mut system = CurrencySystem {
+            currencies: HashMap::new(),
+            balances: HashMap::new(),
+        };
+        
+        system.add_currency(CurrencyType::BasicNeeds, 1_000_000.0, 0.01);
+        system.add_currency(CurrencyType::Education, 500_000.0, 0.005);
+        system.add_currency(CurrencyType::Environmental, 750_000.0, 0.008);
+        system.add_currency(CurrencyType::Community, 250_000.0, 0.003);
+        system.add_currency(CurrencyType::Volunteer, 100_000.0, 0.002);
+
+        system
     }
 
-    pub fn create_bond(&self, bond_id: String, name: String, description: String, issuer: String, face_value: f64, maturity_date: chrono::DateTime<chrono::Utc>, interest_rate: f64, owner: String) -> Bond {
-        Bond::new(bond_id, name, description, issuer, face_value, maturity_date, interest_rate, owner)
+    pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
+        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
+        self.currencies.insert(currency_type, currency);
     }
 
-    pub fn perform_adaptive_issuance(&mut self) -> Result<()> {
-        self.currency_system.adaptive_issuance()
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> f64 {
+        self.balances
+            .get(address)
+            .and_then(|balances| balances.get(currency_type))
+            .cloned()
+            .unwrap_or(0.0)
+    }
+
+    pub fn update_balance(&mut self, address: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let balance = self.balances
+            .entry(address.to_string())
+            .or_insert_with(HashMap::new)
+            .entry(currency_type.clone())
+            .or_insert(0.0);
+        *balance += amount;
+        if *balance < 0.0 {
+            return Err(IcnError::Currency("Insufficient balance".to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn transfer(&mut self, from: &str, to: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        self.update_balance(from, currency_type, -amount)?;
+        self.update_balance(to, currency_type, amount)?;
+        Ok(())
+    }
+
+    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> IcnResult<()> {
+        let currency_type = CurrencyType::Custom(name.clone());
+        if self.currencies.contains_key(&currency_type) {
+            return Err(IcnError::Currency(format!("Currency '{}' already exists", name)));
+        }
+        self.add_currency(currency_type, initial_supply, issuance_rate);
+        Ok(())
+    }
+
+    pub fn adaptive_issuance(&mut self) -> IcnResult<()> {
+        let now = Utc::now();
+        for currency in self.currencies.values_mut() {
+            let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
+            let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
+            currency.mint(issuance_amount)?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     #[test]
-    fn test_currency_manager() {
-        let mut manager = CurrencyManager::new();
+    fn test_currency_system() {
+        let mut system = CurrencySystem::new();
         
-        // Test wallet creation and operations
-        let mut wallet = manager.create_wallet();
-        assert!(wallet.deposit(CurrencyType::BasicNeeds, 100.0).is_ok());
-        assert_eq!(wallet.get_balance(&CurrencyType::BasicNeeds), 100.0);
+        // Test balance operations
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds), 0.0);
+        system.update_balance("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds), 100.0);
 
-        // Test asset token creation
-        let asset = manager.create_asset_token(
-            "ASSET1".to_string(),
-            "Test Asset".to_string(),
-            "A test asset".to_string(),
-            "Alice".to_string(),
-            1000.0
-        );
-        assert_eq!(asset.owner, "Alice");
+        // Test transfer
+        system.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, 50.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds), 50.0);
+        assert_eq!(system.get_balance("Bob", &CurrencyType::BasicNeeds), 50.0);
 
-        // Test bond creation
-        let maturity_date = Utc::now() + chrono::Duration::days(365);
-        let bond = manager.create_bond(
-            "BOND1".to_string(),
-            "Test Bond".to_string(),
-            "A test bond".to_string(),
-            "ICN".to_string(),
-            1000.0,
-            maturity_date,
-            0.05,
-            "Bob".to_string()
-        );
-        assert_eq!(bond.owner, "Bob");
+        // Test custom currency creation
+        system.create_custom_currency("LocalCoin".to_string(), 10_000.0, 0.005).unwrap();
+        let local_coin = CurrencyType::Custom("LocalCoin".to_string());
+        assert!(system.currencies.contains_key(&local_coin));
 
         // Test adaptive issuance
-        assert!(manager.perform_adaptive_issuance().is_ok());
+        let initial_supply = system.currencies[&CurrencyType::BasicNeeds].total_supply;
+        system.adaptive_issuance().unwrap();
+        assert!(system.currencies[&CurrencyType::BasicNeeds].total_supply > initial_supply);
     }
 }
