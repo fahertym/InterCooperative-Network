@@ -14,7 +14,4 @@ members = [
     "crates/icn_testnet",
     "crates/icn_vm",
 ]
-
-[profile.release]
-opt-level = 3
-lto = true
+resolver = "2"
