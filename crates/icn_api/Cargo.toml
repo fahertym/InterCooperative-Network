@@ -6,13 +6,16 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" } 
 icn_utils = { path = "../icn_utils" }
-icn_core = { path = "../icn_core" }
+icn_types = { path = "../icn_types" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
+
+# Remove the direct dependency on icn_core
+# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio-test = "0.4"

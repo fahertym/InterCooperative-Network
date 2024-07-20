@@ -17,12 +17,11 @@ icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
 icn_governance = { path = "../icn_governance" }
-icn_network = { path = "../icn_network" }
-icn_sharding = { path = "../icn_sharding" }
-icn_storage = { path = "../icn_storage" }
 icn_vm = { path = "../icn_vm" }
-icn_common = { path = "../icn_common" }  # Added dependency
+icn_common = { path = "../icn_common" }
 
+# Remove the dependency on icn_storage
+# icn_storage = { path = "../icn_storage" }
 
 [dev-dependencies]
 tokio-test = "0.4"

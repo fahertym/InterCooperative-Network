@@ -1,9 +1,8 @@
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// File: crates/icn_common/src/lib.rs
+
 use thiserror::Error;
 
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug)]
 pub enum CommonError {
     #[error("Blockchain error: {0}")]
     Blockchain(String),
@@ -33,80 +32,34 @@ pub enum CommonError {
 
 pub type CommonResult<T> = Result<T, CommonError>;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
+pub mod logging {
+    use log::{info, warn, error, debug};
+
+    pub fn log_info(message: &str) {
+        info!("{}", message);
+    }
+
+    pub fn log_warn(message: &str) {
+        warn!("{}", message);
+    }
+
+    pub fn log_error(message: &str) {
+        error!("{}", message);
+    }
+
+    pub fn log_debug(message: &str) {
+        debug!("{}", message);
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-}
+pub mod serialization {
+    use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
+    pub fn to_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
+        serde_json::to_string(value)
+    }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
+    pub fn from_json<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 }

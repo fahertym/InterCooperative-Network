@@ -1,4 +1,9 @@
+// File: crates/icn_utils/src/lib.rs
+
 use sha2::{Digest, Sha256};
+use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
+use chrono::{DateTime, Duration, Utc};
 
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
@@ -36,7 +41,7 @@ pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
 }
 
 pub mod time {
-    use chrono::{DateTime, Duration, Utc};
+    use super::*;
 
     pub fn now() -> DateTime<Utc> {
         Utc::now()
@@ -48,8 +53,7 @@ pub mod time {
 }
 
 pub mod crypto {
-    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
-    use rand::rngs::OsRng;
+    use super::*;
 
     pub fn generate_keypair() -> Keypair {
         let mut csprng = OsRng {};
@@ -66,5 +70,46 @@ pub mod crypto {
 
     pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> bool {
         public_key.verify(message, signature).is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_encode_decode() {
+        let data = vec![0x12, 0x34, 0x56, 0x78];
+        let encoded = hex_encode(&data);
+        assert_eq!(encoded, "12345678");
+        let decoded = hex_decode(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_hash_data() {
+        let data = b"test data";
+        let hash = hash_data(data);
+        assert_eq!(hash.len(), 32); // SHA256 produces a 32-byte hash
+    }
+
+    #[test]
+    fn test_calculate_merkle_root() {
+        let hashes = vec![
+            vec![1; 32],
+            vec![2; 32],
+            vec![3; 32],
+            vec![4; 32],
+        ];
+        let root = calculate_merkle_root(&hashes);
+        assert_eq!(root.len(), 32);
+    }
+
+    #[test]
+    fn test_crypto_operations() {
+        let keypair = crypto::generate_keypair();
+        let message = b"test message";
+        let signature = crypto::sign(&keypair.secret, message);
+        assert!(crypto::verify(&keypair.public, message, &signature));
     }
 }

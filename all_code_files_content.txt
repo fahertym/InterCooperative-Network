@@ -178,7 +178,7 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" } 
 icn_utils = { path = "../icn_utils" }
-icn_core = { path = "../icn_core" }
+icn_types = { path = "../icn_types" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 serde = { version = "1.0", features = ["derive"] }
@@ -186,9 +186,11 @@ tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 
+# Remove the direct dependency on icn_core
+# icn_core = { path = "../icn_core" }
+
 [dev-dependencies]
-tokio-test = "0.4"
-===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
+tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 // crates/icn_api/src/lib.rs
@@ -379,12 +381,16 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
+# File: crates/icn_blockchain/Cargo.toml
+
 [package]
 name = "icn_blockchain"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_types = { path = "../icn_types" }
+icn_common = { path = "../icn_common" }
 icn_utils = { path = "../icn_utils" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -392,12 +398,9 @@ sha2 = "0.9"
 ed25519-dalek = "1.0"
 rand = "0.7"
 uuid = { version = "0.8", features = ["v4"] }
-serde_json = "1.0"
-icn_types = { path = "../icn_types" }
 
 [dev-dependencies]
-tokio-test = "0.4"
-===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
+tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
 use serde::{Deserialize, Serialize};
@@ -701,10 +704,11 @@ mod tests {
 //! It includes structures and methods for managing blocks, transactions, and the overall
 //! blockchain state, as well as basic smart contract support.
 
-use icn_common::{CommonError, CommonResult, Block, Transaction, CurrencyType};
-use icn_utils::{hash_data, calculate_merkle_root};
-use std::collections::HashMap;
+use icn_types::{Block, Transaction, CurrencyType};
+use icn_common::{CommonError, CommonResult};
+use icn_utils::{hash_data, calculate_merkle_root, crypto};
 use chrono::Utc;
+use std::collections::HashMap;
 use ed25519_dalek::PublicKey;
 use bincode;
 use sha2::Sha256;
@@ -726,15 +730,13 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new blockchain with a genesis block.
-    pub fn new() -> Self {
-        let mut chain = Vec::new();
-        chain.push(Block::genesis());
-        Blockchain {
-            chain,
+    pub fn new() -> CommonResult<Self> {
+        Ok(Blockchain {
+            chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
             balances: HashMap::new(),
             contracts: HashMap::new(),
-        }
+        })
     }
 
     /// Adds a new block to the blockchain.
@@ -965,12 +967,12 @@ impl Blockchain {
     ///
     /// A vector of bytes representing the merkle root.
     pub fn calculate_merkle_root(&self, transactions: &[Transaction]) -> Vec<u8> {
-        let transaction_hashes: Vec<Vec<u8>> = transactions
-            .iter()
-            .map(|tx| hash_data(&bincode::serialize(tx).unwrap()))
-            .collect();
-        calculate_merkle_root(&transaction_hashes)
-    }
+    let transaction_hashes: Vec<Vec<u8>> = transactions
+        .iter()
+        .map(|tx| icn_utils::hash_data(&bincode::serialize(tx).unwrap()))
+        .collect();
+    icn_utils::calculate_merkle_root(&transaction_hashes)
+}
 
     /// Adjusts the mining difficulty based on the time taken to mine recent blocks.
     ///
@@ -1033,7 +1035,7 @@ impl Blockchain {
         if let Some(signature) = &transaction.signature {
             let public_key = self.get_public_key(&transaction.from);
             let message = self.create_transaction_message(transaction);
-            crypto::verify(&public_key, &message, signature)
+            icn_utils::crypto::verify(&public_key, &message, signature)
         } else {
             false
         }
@@ -1727,12 +1729,11 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// File: crates/icn_common/src/lib.rs
+
 use thiserror::Error;
 
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug)]
 pub enum CommonError {
     #[error("Blockchain error: {0}")]
     Blockchain(String),
@@ -1762,82 +1763,36 @@ pub enum CommonError {
 
 pub type CommonResult<T> = Result<T, CommonError>;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
+pub mod logging {
+    use log::{info, warn, error, debug};
+
+    pub fn log_info(message: &str) {
+        info!("{}", message);
+    }
+
+    pub fn log_warn(message: &str) {
+        warn!("{}", message);
+    }
+
+    pub fn log_error(message: &str) {
+        error!("{}", message);
+    }
+
+    pub fn log_debug(message: &str) {
+        debug!("{}", message);
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-}
+pub mod serialization {
+    use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
+    pub fn to_json<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
+        serde_json::to_string(value)
+    }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
+    pub fn from_json<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, serde_json::Error> {
+        serde_json::from_str(json)
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
@@ -2455,16 +2410,14 @@ icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
 icn_governance = { path = "../icn_governance" }
-icn_network = { path = "../icn_network" }
-icn_sharding = { path = "../icn_sharding" }
-icn_storage = { path = "../icn_storage" }
 icn_vm = { path = "../icn_vm" }
-icn_common = { path = "../icn_common" }  # Added dependency
+icn_common = { path = "../icn_common" }
 
+# Remove the dependency on icn_storage
+# icn_storage = { path = "../icn_storage" }
 
 [dev-dependencies]
-tokio-test = "0.4"
-===== END OF /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml =====
+tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/config.rs =====
 // icn_core/src/config.rs
@@ -4601,15 +4554,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_types = { path = "../icn_types" }
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
 
+# Remove the dependency on icn_core
+# icn_core = { path = "../icn_core" }
+
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
+tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 use crate::node::Node;
@@ -5730,7 +5686,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_types = { path = "../icn_types" }
+icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -5739,6 +5696,9 @@ thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 sha2 = "0.9"
+
+# Remove the dependency on icn_core
+# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/Cargo.toml =====
@@ -6388,12 +6348,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_types = { path = "../icn_types" }
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 sha2 = "0.9"
+
+# Remove the dependency on icn_core
+# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/Cargo.toml =====
@@ -6910,38 +6874,13 @@ serde_json = "1.0"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_types/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_types/src/lib.rs =====
+// File: crates/icn_types/src/lib.rs
+
 use serde::{Serialize, Deserialize};
-use thiserror::Error;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-#[derive(Error, Debug, Serialize, Deserialize)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Sharding error: {0}")]
-    Sharding(String),
-    #[error("Storage error: {0}")]
-    Storage(String),
-    #[error("VM error: {0}")]
-    VM(String),
-    #[error("General error: {0}")]
-    General(String),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CurrencyType {
     BasicNeeds,
     Education,
@@ -6958,7 +6897,7 @@ pub enum CurrencyType {
     Bond(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: String,
     pub to: String,
@@ -6968,7 +6907,7 @@ pub struct Transaction {
     pub signature: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
     pub timestamp: i64,
@@ -6977,7 +6916,7 @@ pub struct Block {
     pub hash: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
     pub id: String,
     pub title: String,
@@ -6992,7 +6931,7 @@ pub struct Proposal {
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalStatus {
     Active,
     Passed,
@@ -7000,21 +6939,21 @@ pub enum ProposalStatus {
     Implemented,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalType {
     Constitutional,
     EconomicAdjustment,
     NetworkUpgrade,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalCategory {
     Constitutional,
     Economic,
     Technical,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     pub voter: String,
     pub proposal_id: String,
@@ -7023,21 +6962,21 @@ pub struct Vote {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
     pub node_type: NodeType,
     pub address: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeType {
     PersonalDevice,
     CooperativeServer,
     GovernmentServer,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetToken {
     pub id: String,
     pub name: String,
@@ -7048,7 +6987,7 @@ pub struct AssetToken {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bond {
     pub id: String,
     pub name: String,
@@ -7060,7 +6999,7 @@ pub struct Bond {
     pub owner: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Currency {
     pub currency_type: CurrencyType,
     pub total_supply: f64,
@@ -7069,13 +7008,13 @@ pub struct Currency {
     pub issuance_rate: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wallet {
     pub address: String,
     pub balances: HashMap<CurrencyType, f64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -7085,7 +7024,7 @@ pub enum Value {
     List(Vec<Value>),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Opcode {
     Push(Value),
     Pop,
@@ -7191,7 +7130,12 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_utils/src/lib.rs =====
+// File: crates/icn_utils/src/lib.rs
+
 use sha2::{Digest, Sha256};
+use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
+use chrono::{DateTime, Duration, Utc};
 
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
@@ -7229,7 +7173,7 @@ pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
 }
 
 pub mod time {
-    use chrono::{DateTime, Duration, Utc};
+    use super::*;
 
     pub fn now() -> DateTime<Utc> {
         Utc::now()
@@ -7241,8 +7185,7 @@ pub mod time {
 }
 
 pub mod crypto {
-    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
-    use rand::rngs::OsRng;
+    use super::*;
 
     pub fn generate_keypair() -> Keypair {
         let mut csprng = OsRng {};
@@ -7259,6 +7202,47 @@ pub mod crypto {
 
     pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> bool {
         public_key.verify(message, signature).is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_encode_decode() {
+        let data = vec![0x12, 0x34, 0x56, 0x78];
+        let encoded = hex_encode(&data);
+        assert_eq!(encoded, "12345678");
+        let decoded = hex_decode(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_hash_data() {
+        let data = b"test data";
+        let hash = hash_data(data);
+        assert_eq!(hash.len(), 32); // SHA256 produces a 32-byte hash
+    }
+
+    #[test]
+    fn test_calculate_merkle_root() {
+        let hashes = vec![
+            vec![1; 32],
+            vec![2; 32],
+            vec![3; 32],
+            vec![4; 32],
+        ];
+        let root = calculate_merkle_root(&hashes);
+        assert_eq!(root.len(), 32);
+    }
+
+    #[test]
+    fn test_crypto_operations() {
+        let keypair = crypto::generate_keypair();
+        let message = b"test message";
+        let signature = crypto::sign(&keypair.secret, message);
+        assert!(crypto::verify(&keypair.public, message, &signature));
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/src/lib.rs =====
 

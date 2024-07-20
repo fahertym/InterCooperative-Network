@@ -4,10 +4,11 @@
 //! It includes structures and methods for managing blocks, transactions, and the overall
 //! blockchain state, as well as basic smart contract support.
 
-use icn_common::{CommonError, CommonResult, Block, Transaction, CurrencyType};
-use icn_utils::{hash_data, calculate_merkle_root};
-use std::collections::HashMap;
+use icn_types::{Block, Transaction, CurrencyType};
+use icn_common::{CommonError, CommonResult};
+use icn_utils::{hash_data, calculate_merkle_root, crypto};
 use chrono::Utc;
+use std::collections::HashMap;
 use ed25519_dalek::PublicKey;
 use bincode;
 use sha2::Sha256;
@@ -29,15 +30,13 @@ pub struct Blockchain {
 
 impl Blockchain {
     /// Creates a new blockchain with a genesis block.
-    pub fn new() -> Self {
-        let mut chain = Vec::new();
-        chain.push(Block::genesis());
-        Blockchain {
-            chain,
+    pub fn new() -> CommonResult<Self> {
+        Ok(Blockchain {
+            chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
             balances: HashMap::new(),
             contracts: HashMap::new(),
-        }
+        })
     }
 
     /// Adds a new block to the blockchain.
@@ -268,12 +267,12 @@ impl Blockchain {
     ///
     /// A vector of bytes representing the merkle root.
     pub fn calculate_merkle_root(&self, transactions: &[Transaction]) -> Vec<u8> {
-        let transaction_hashes: Vec<Vec<u8>> = transactions
-            .iter()
-            .map(|tx| hash_data(&bincode::serialize(tx).unwrap()))
-            .collect();
-        calculate_merkle_root(&transaction_hashes)
-    }
+    let transaction_hashes: Vec<Vec<u8>> = transactions
+        .iter()
+        .map(|tx| icn_utils::hash_data(&bincode::serialize(tx).unwrap()))
+        .collect();
+    icn_utils::calculate_merkle_root(&transaction_hashes)
+}
 
     /// Adjusts the mining difficulty based on the time taken to mine recent blocks.
     ///
@@ -336,7 +335,7 @@ impl Blockchain {
         if let Some(signature) = &transaction.signature {
             let public_key = self.get_public_key(&transaction.from);
             let message = self.create_transaction_message(transaction);
-            crypto::verify(&public_key, &message, signature)
+            icn_utils::crypto::verify(&public_key, &message, signature)
         } else {
             false
         }

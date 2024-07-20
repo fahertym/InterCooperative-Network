@@ -1,35 +1,10 @@
+// File: crates/icn_types/src/lib.rs
+
 use serde::{Serialize, Deserialize};
-use thiserror::Error;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-#[derive(Error, Debug, Serialize, Deserialize)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Sharding error: {0}")]
-    Sharding(String),
-    #[error("Storage error: {0}")]
-    Storage(String),
-    #[error("VM error: {0}")]
-    VM(String),
-    #[error("General error: {0}")]
-    General(String),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CurrencyType {
     BasicNeeds,
     Education,
@@ -46,7 +21,7 @@ pub enum CurrencyType {
     Bond(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: String,
     pub to: String,
@@ -56,7 +31,7 @@ pub struct Transaction {
     pub signature: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
     pub timestamp: i64,
@@ -65,7 +40,7 @@ pub struct Block {
     pub hash: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
     pub id: String,
     pub title: String,
@@ -80,7 +55,7 @@ pub struct Proposal {
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalStatus {
     Active,
     Passed,
@@ -88,21 +63,21 @@ pub enum ProposalStatus {
     Implemented,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalType {
     Constitutional,
     EconomicAdjustment,
     NetworkUpgrade,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalCategory {
     Constitutional,
     Economic,
     Technical,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     pub voter: String,
     pub proposal_id: String,
@@ -111,21 +86,21 @@ pub struct Vote {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
     pub node_type: NodeType,
     pub address: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeType {
     PersonalDevice,
     CooperativeServer,
     GovernmentServer,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetToken {
     pub id: String,
     pub name: String,
@@ -136,7 +111,7 @@ pub struct AssetToken {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bond {
     pub id: String,
     pub name: String,
@@ -148,7 +123,7 @@ pub struct Bond {
     pub owner: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Currency {
     pub currency_type: CurrencyType,
     pub total_supply: f64,
@@ -157,13 +132,13 @@ pub struct Currency {
     pub issuance_rate: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Wallet {
     pub address: String,
     pub balances: HashMap<CurrencyType, f64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Int(i64),
     Float(f64),
@@ -173,7 +148,7 @@ pub enum Value {
     List(Vec<Value>),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Opcode {
     Push(Value),
     Pop,
