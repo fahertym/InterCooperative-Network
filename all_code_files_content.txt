@@ -388,6 +388,7 @@ ed25519-dalek = "1.0"
 rand = "0.7"
 uuid = { version = "0.8", features = ["v4"] }
 serde_json = "1.0"
+icn_types = { path = "../icn_types" }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -1555,12 +1556,20 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 ed25519-dalek = "1.0"
 rand = "0.7"
 icn_utils = { path = "../icn_utils" }
-icn_types = { path = "../icn_types" }  # Add this line
-log = "0.4"
+icn_types = { path = "../icn_types" }
+icn_blockchain = { path = "../icn_blockchain" }
+icn_consensus = { path = "../icn_consensus" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_sharding = { path = "../icn_sharding" }
+icn_storage = { path = "../icn_storage" }
+icn_vm = { path = "../icn_vm" }
 env_logger = "0.9"
 
 [dev-dependencies]
@@ -1569,9 +1578,11 @@ tokio-test = "0.4"
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/config.rs =====
 // icn_core/src/config.rs
+
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::fs;
-use icn_types::IcnResult;
+use icn_types::{IcnResult, IcnError};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -1583,14 +1594,14 @@ pub struct Config {
 
 impl Config {
     pub fn load(path: &str) -> IcnResult<Self> {
-        let config_str = fs::read_to_string(path)?;
-        let config: Config = serde_json::from_str(&config_str)?;
+        let config_str = fs::read_to_string(path).map_err(|e| IcnError::ConfigError(e.to_string()))?;
+        let config: Config = serde_json::from_str(&config_str).map_err(|e| IcnError::ConfigError(e.to_string()))?;
         Ok(config)
     }
 
     pub fn save(&self, path: &str) -> IcnResult<()> {
-        let config_str = serde_json::to_string_pretty(self)?;
-        fs::write(path, config_str)?;
+        let config_str = serde_json::to_string_pretty(self).map_err(|e| IcnError::ConfigError(e.to_string()))?;
+        fs::write(path, config_str).map_err(|e| IcnError::ConfigError(e.to_string()))?;
         Ok(())
     }
 }
@@ -1604,7 +1615,8 @@ impl Default for Config {
             network_port: 8080,
         }
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/config.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/config.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 use thiserror::Error;
@@ -1676,6 +1688,21 @@ use log::{info, warn, error};
 mod config;
 pub use config::Config;
 
+#[derive(Debug, thiserror::Error)]
+pub enum IcnError {
+    #[error("Lock error: {0}")]
+    LockError(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
+    #[error("Config error: {0}")]
+    ConfigError(String),
+    // Add other error types as needed
+}
+
+pub type IcnResult<T> = Result<T, IcnError>;
+
 pub struct IcnNode {
     config: Config,
     blockchain: Arc<Mutex<Blockchain>>,
@@ -1728,7 +1755,39 @@ impl IcnNode {
 
     pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         info!("Processing transaction: {:?}", transaction);
-        self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?.add_transaction(transaction)
+        let mut blockchain = self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?;
+        let mut currency_system = self.currency_system.lock().map_err(|_| IcnError::LockError("Currency system lock error".into()))?;
+
+        // Verify transaction
+        if !self.verify_transaction(&transaction)? {
+            return Err(IcnError::InvalidTransaction("Transaction verification failed".into()));
+        }
+
+        // Update balances
+        currency_system.transfer(
+            &transaction.from,
+            &transaction.to,
+            transaction.amount,
+            &transaction.currency_type,
+        )?;
+
+        // Add transaction to blockchain
+        blockchain.add_transaction(transaction)?;
+
+        Ok(())
+    }
+
+    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        // Implement transaction verification logic
+        // For example, check if the sender has sufficient balance
+        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+        if sender_balance < transaction.amount {
+            return Ok(false);
+        }
+
+        // TODO: Implement signature verification
+
+        Ok(true)
     }
 
     pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
@@ -1776,7 +1835,8 @@ mod tests {
     }
 
     // Add more unit tests as needed
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/logging/mod.rs =====
 use log::{info, warn, error, debug};
@@ -1798,11 +1858,14 @@ pub fn log_debug(message: &str) {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/logging/mod.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/main.rs =====
+// icn_core/src/main.rs
+
 use icn_core::{IcnNode, Config};
-use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
+use uuid::Uuid;
 
 fn main() -> IcnResult<()> {
     env_logger::init();
@@ -1904,49 +1967,37 @@ fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     io::stdin().read_line(&mut proposer).unwrap();
 
     let proposal = Proposal {
-        id: String::new(),
+        id: Uuid::new_v4().to_string(),
         title: title.trim().to_string(),
         description: description.trim().to_string(),
         proposer: proposer.trim().to_string(),
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
-        status: icn_types::ProposalStatus::Active,
+        status: ProposalStatus::Active,
         proposal_type: ProposalType::Constitutional,
         category: ProposalCategory::Economic,
-        required_quorum: 0.51,
+        required_quorum: 0.66,
         execution_timestamp: None,
     };
 
-    let proposal_id = node.create_proposal(proposal)?;
-    info!("Proposal created successfully. Proposal ID: {}", proposal_id);
+    node.create_proposal(proposal)?;
+    info!("Proposal created successfully");
     Ok(())
 }
 
 fn check_balance(node: &IcnNode) -> IcnResult<()> {
-    info!("Checking account balance");
+    info!("Checking balance");
     
     print!("Address: ");
     io::stdout().flush().unwrap();
     let mut address = String::new();
     io::stdin().read_line(&mut address).unwrap();
-
-    print!("Currency Type (BasicNeeds, Education, etc.): ");
-    io::stdout().flush().unwrap();
-    let mut currency_type_str = String::new();
-    io::stdin().read_line(&mut currency_type_str).unwrap();
-
-    let currency_type = match currency_type_str.trim() {
-        "BasicNeeds" => CurrencyType::BasicNeeds,
-        "Education" => CurrencyType::Education,
-        // Add more currency types as needed
-        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
-    };
-
-    let balance = node.get_balance(address.trim(), &currency_type)?;
+    
+    let balance = node.get_balance(address.trim(), &CurrencyType::BasicNeeds)?;
     println!("Balance: {}", balance);
-    info!("Balance query successful");
     Ok(())
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/main.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/main.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/security/mod.rs =====
 use crate::error::Result;
@@ -2153,137 +2204,147 @@ fn test_packet_processing() {
 // icn_core/tests/integration_tests.rs
 
 use icn_core::{IcnNode, Config};
-use icn_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult};
-use chrono::{Utc, Duration};
+use icn_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use chrono::Duration;
+use log::info;
+use uuid::Uuid;
 
-fn setup() -> IcnResult<IcnNode> {
-    let config = Config::default();
-    let node = IcnNode::new(config)?;
-    node.start()?;
-    Ok(node)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup() -> IcnResult<IcnNode> {
+        let config = Config::default();
+        let node = IcnNode::new(config)?;
+        node.start()?;
+        Ok(node)
+    }
+
+    fn teardown(node: &IcnNode) -> IcnResult<()> {
+        node.stop()
+    }
+
+    #[test]
+    fn test_node_initialization() {
+        let config = Config::default();
+        let node = IcnNode::new(config);
+        assert!(node.is_ok());
+    }
+
+    #[test]
+    fn test_node_start_stop() {
+        let config = Config::default();
+        let node = IcnNode::new(config).unwrap();
+        assert!(node.start().is_ok());
+        assert!(node.stop().is_ok());
+    }
+
+    #[test]
+    fn test_process_transaction() {
+        let config = Config::default();
+        let node = IcnNode::new(config).unwrap();
+        node.start().unwrap();
+
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(node.process_transaction(transaction).is_ok());
+        node.stop().unwrap();
+    }
+
+    #[test]
+    fn test_create_proposal() {
+        let config = Config::default();
+        let node = IcnNode::new(config).unwrap();
+        node.start().unwrap();
+
+        let proposal = Proposal {
+            id: Uuid::new_v4().to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: chrono::Utc::now(),
+            voting_ends_at: chrono::Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+
+        assert!(node.create_proposal(proposal).is_ok());
+        node.stop().unwrap();
+    }
+
+    #[test]
+    fn test_get_balance() {
+        let node = setup().unwrap();
+
+        // First, we need to add some balance to an account
+        let deposit_transaction = Transaction {
+            from: "Genesis".to_string(),
+            to: "Alice".to_string(),
+            amount: 1000.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+
+        node.process_transaction(deposit_transaction).unwrap();
+
+        // Now, let's check the balance
+        let balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
+        assert_eq!(balance, 1000.0, "Balance should be 1000.0 after deposit");
+
+        teardown(&node).unwrap();
+    }
+
+    #[test]
+    fn test_cross_shard_transaction() {
+        let node = setup().unwrap();
+
+        // Assume Alice and Bob are on different shards
+        // First, add balance to Alice's account
+        let deposit_transaction = Transaction {
+            from: "Genesis".to_string(),
+            to: "Alice".to_string(),
+            amount: 1000.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+
+        node.process_transaction(deposit_transaction).unwrap();
+
+        // Now, perform a cross-shard transaction from Alice to Bob
+        let cross_shard_transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 500.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+
+        node.process_transaction(cross_shard_transaction).unwrap();
+
+        // Check balances after the transaction
+        let alice_balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
+        let bob_balance = node.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap();
+
+        assert_eq!(alice_balance, 500.0, "Alice's balance should be 500.0 after transfer");
+        assert_eq!(bob_balance, 500.0, "Bob's balance should be 500.0 after receiving transfer");
+
+        teardown(&node).unwrap();
+    }
 }
-
-fn teardown(node: &IcnNode) -> IcnResult<()> {
-    node.stop()
-}
-
-#[test]
-fn test_node_lifecycle() -> IcnResult<()> {
-    let node = setup()?;
-    teardown(&node)
-}
-
-#[test]
-fn test_transaction_processing() -> IcnResult<()> {
-    let node = setup()?;
-
-    let transaction = Transaction {
-        from: "Alice".to_string(),
-        to: "Bob".to_string(),
-        amount: 100.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None, // In a real scenario, this should be signed
-    };
-
-    node.process_transaction(transaction)?;
-
-    // TODO: Add assertions to verify the transaction was processed correctly
-    // This might involve querying the blockchain or checking account balances
-
-    teardown(&node)
-}
-
-#[test]
-fn test_proposal_creation() -> IcnResult<()> {
-    let node = setup()?;
-
-    let proposal = Proposal {
-        id: String::new(), // This will be set by the system
-        title: "Test Proposal".to_string(),
-        description: "This is a test proposal".to_string(),
-        proposer: "Alice".to_string(),
-        created_at: Utc::now(),
-        voting_ends_at: Utc::now() + Duration::days(7),
-        status: ProposalStatus::Active,
-        proposal_type: ProposalType::Constitutional,
-        category: ProposalCategory::Economic,
-        required_quorum: 0.51,
-        execution_timestamp: None,
-    };
-
-    let proposal_id = node.create_proposal(proposal)?;
-    assert!(!proposal_id.is_empty(), "Proposal ID should not be empty");
-
-    // TODO: Add more assertions to verify the proposal was created correctly
-    // This might involve querying the governance system for the proposal details
-
-    teardown(&node)
-}
-
-#[test]
-fn test_get_balance() -> IcnResult<()> {
-    let node = setup()?;
-
-    // First, we need to add some balance to an account
-    let deposit_transaction = Transaction {
-        from: "Genesis".to_string(),
-        to: "Alice".to_string(),
-        amount: 1000.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None,
-    };
-
-    node.process_transaction(deposit_transaction)?;
-
-    // Now, let's check the balance
-    let balance = node.get_balance("Alice", &CurrencyType::BasicNeeds)?;
-    assert_eq!(balance, 1000.0, "Balance should be 1000.0 after deposit");
-
-    teardown(&node)
-}
-
-#[test]
-fn test_cross_shard_transaction() -> IcnResult<()> {
-    let node = setup()?;
-
-    // Assume Alice and Bob are on different shards
-    // First, add balance to Alice's account
-    let deposit_transaction = Transaction {
-        from: "Genesis".to_string(),
-        to: "Alice".to_string(),
-        amount: 1000.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None,
-    };
-
-    node.process_transaction(deposit_transaction)?;
-
-    // Now, perform a cross-shard transaction from Alice to Bob
-    let cross_shard_transaction = Transaction {
-        from: "Alice".to_string(),
-        to: "Bob".to_string(),
-        amount: 500.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None,
-    };
-
-    node.process_transaction(cross_shard_transaction)?;
-
-    // Check balances after the transaction
-    let alice_balance = node.get_balance("Alice", &CurrencyType::BasicNeeds)?;
-    let bob_balance = node.get_balance("Bob", &CurrencyType::BasicNeeds)?;
-
-    assert_eq!(alice_balance, 500.0, "Alice's balance should be 500.0 after transfer");
-    assert_eq!(bob_balance, 500.0, "Bob's balance should be 500.0 after receiving transfer");
-
-    teardown(&node)
-}
-
-// TODO: Add more integration tests as needed===== END OF /home/matt/InterCooperative-Network/crates/icn_core/tests/integration_tests.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_core/tests/integration_tests.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/tests/mod.rs =====
 // ===============================================
@@ -6140,6 +6201,7 @@ edition = "2021"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 chrono = "0.4"
+serde_json = "1.0"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_types/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_types/src/lib.rs =====
@@ -6798,6 +6860,7 @@ tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+icn_types = { path = "../icn_types" }
 
 [dev-dependencies]
 tokio-test = "0.4"

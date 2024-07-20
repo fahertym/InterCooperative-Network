@@ -17,6 +17,21 @@ use log::{info, warn, error};
 mod config;
 pub use config::Config;
 
+#[derive(Debug, thiserror::Error)]
+pub enum IcnError {
+    #[error("Lock error: {0}")]
+    LockError(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    #[error("Invalid transaction: {0}")]
+    InvalidTransaction(String),
+    #[error("Config error: {0}")]
+    ConfigError(String),
+    // Add other error types as needed
+}
+
+pub type IcnResult<T> = Result<T, IcnError>;
+
 pub struct IcnNode {
     config: Config,
     blockchain: Arc<Mutex<Blockchain>>,
@@ -69,7 +84,39 @@ impl IcnNode {
 
     pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         info!("Processing transaction: {:?}", transaction);
-        self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?.add_transaction(transaction)
+        let mut blockchain = self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?;
+        let mut currency_system = self.currency_system.lock().map_err(|_| IcnError::LockError("Currency system lock error".into()))?;
+
+        // Verify transaction
+        if !self.verify_transaction(&transaction)? {
+            return Err(IcnError::InvalidTransaction("Transaction verification failed".into()));
+        }
+
+        // Update balances
+        currency_system.transfer(
+            &transaction.from,
+            &transaction.to,
+            transaction.amount,
+            &transaction.currency_type,
+        )?;
+
+        // Add transaction to blockchain
+        blockchain.add_transaction(transaction)?;
+
+        Ok(())
+    }
+
+    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        // Implement transaction verification logic
+        // For example, check if the sender has sufficient balance
+        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+        if sender_balance < transaction.amount {
+            return Ok(false);
+        }
+
+        // TODO: Implement signature verification
+
+        Ok(true)
     }
 
     pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {

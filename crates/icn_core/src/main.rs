@@ -1,8 +1,11 @@
+// icn_core/src/main.rs
+
 use icn_core::{IcnNode, Config};
-use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
+use uuid::Uuid;
 
 fn main() -> IcnResult<()> {
     env_logger::init();
@@ -104,46 +107,33 @@ fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     io::stdin().read_line(&mut proposer).unwrap();
 
     let proposal = Proposal {
-        id: String::new(),
+        id: Uuid::new_v4().to_string(),
         title: title.trim().to_string(),
         description: description.trim().to_string(),
         proposer: proposer.trim().to_string(),
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
-        status: icn_types::ProposalStatus::Active,
+        status: ProposalStatus::Active,
         proposal_type: ProposalType::Constitutional,
         category: ProposalCategory::Economic,
-        required_quorum: 0.51,
+        required_quorum: 0.66,
         execution_timestamp: None,
     };
 
-    let proposal_id = node.create_proposal(proposal)?;
-    info!("Proposal created successfully. Proposal ID: {}", proposal_id);
+    node.create_proposal(proposal)?;
+    info!("Proposal created successfully");
     Ok(())
 }
 
 fn check_balance(node: &IcnNode) -> IcnResult<()> {
-    info!("Checking account balance");
+    info!("Checking balance");
     
     print!("Address: ");
     io::stdout().flush().unwrap();
     let mut address = String::new();
     io::stdin().read_line(&mut address).unwrap();
-
-    print!("Currency Type (BasicNeeds, Education, etc.): ");
-    io::stdout().flush().unwrap();
-    let mut currency_type_str = String::new();
-    io::stdin().read_line(&mut currency_type_str).unwrap();
-
-    let currency_type = match currency_type_str.trim() {
-        "BasicNeeds" => CurrencyType::BasicNeeds,
-        "Education" => CurrencyType::Education,
-        // Add more currency types as needed
-        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
-    };
-
-    let balance = node.get_balance(address.trim(), &currency_type)?;
+    
+    let balance = node.get_balance(address.trim(), &CurrencyType::BasicNeeds)?;
     println!("Balance: {}", balance);
-    info!("Balance query successful");
     Ok(())
 }

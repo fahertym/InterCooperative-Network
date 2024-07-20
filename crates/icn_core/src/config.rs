@@ -1,7 +1,9 @@
 // icn_core/src/config.rs
+
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::fs;
-use icn_types::IcnResult;
+use icn_types::{IcnResult, IcnError};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -13,14 +15,14 @@ pub struct Config {
 
 impl Config {
     pub fn load(path: &str) -> IcnResult<Self> {
-        let config_str = fs::read_to_string(path)?;
-        let config: Config = serde_json::from_str(&config_str)?;
+        let config_str = fs::read_to_string(path).map_err(|e| IcnError::ConfigError(e.to_string()))?;
+        let config: Config = serde_json::from_str(&config_str).map_err(|e| IcnError::ConfigError(e.to_string()))?;
         Ok(config)
     }
 
     pub fn save(&self, path: &str) -> IcnResult<()> {
-        let config_str = serde_json::to_string_pretty(self)?;
-        fs::write(path, config_str)?;
+        let config_str = serde_json::to_string_pretty(self).map_err(|e| IcnError::ConfigError(e.to_string()))?;
+        fs::write(path, config_str).map_err(|e| IcnError::ConfigError(e.to_string()))?;
         Ok(())
     }
 }
