@@ -1,106 +1,70 @@
-// File: icn_utils/src/lib.rs
-
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use thiserror::Error;
-use hex;
-use icn_types::{IcnResult, IcnError}; // Ensure to use the correct path to import IcnResult and IcnError
-
-#[derive(Error, Debug)]
-pub enum IcnUtilsError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-
-    #[error("Currency error: {0}")]
-    Currency(String),
-
-    #[error("Governance error: {0}")]
-    Governance(String),
-
-    #[error("Identity error: {0}")]
-    Identity(String),
-
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("Storage error: {0}")]
-    Storage(String),
-
-    #[error("VM error: {0}")]
-    VM(String),
-
-    #[error("API error: {0}")]
-    API(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    #[error("I/O error: {0}")]
-    IO(#[from] std::io::Error),
-}
-
-pub type IcnUtilsResult<T> = Result<T, IcnUtilsError>;
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
+use sha2::{Sha256, Digest};
 
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
 }
 
-pub fn hex_decode(s: &str) -> IcnResult<Vec<u8>> {
-    hex::decode(s).map_err(|e| IcnError::Blockchain(format!("Hex decode error: {}", e)))
+pub fn hex_decode(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
+    hex::decode(s)
+}
+
+pub fn hash_data(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().to_vec()
+}
+
+pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
+    if hashes.is_empty() {
+        return vec![];
+    }
+    if hashes.len() == 1 {
+        return hashes[0].clone();
+    }
+    let mut next_level = Vec::new();
+    for chunk in hashes.chunks(2) {
+        let mut hasher = Sha256::new();
+        hasher.update(&chunk[0]);
+        if chunk.len() > 1 {
+            hasher.update(&chunk[1]);
+        } else {
+            hasher.update(&chunk[0]);
+        }
+        next_level.push(hasher.finalize().to_vec());
+    }
+    calculate_merkle_root(&next_level)
+}
+
+pub mod time {
+    use chrono::{DateTime, Utc, Duration};
+
+    pub fn now() -> DateTime<Utc> {
+        Utc::now()
+    }
+
+    pub fn is_expired(timestamp: DateTime<Utc>, duration: Duration) -> bool {
+        now() > timestamp + duration
+    }
+}
+
+pub mod crypto {
+    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+    use rand::rngs::OsRng;
+
+    pub fn generate_keypair() -> Keypair {
+        let mut csprng = OsRng{};
+        Keypair::generate(&mut csprng)
+    }
+
+    pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
+        let keypair = Keypair {
+            public: PublicKey::from(secret_key),
+            secret: *secret_key,
+        };
+        keypair.sign(message)
+    }
+
+    pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> bool {
+        public_key.verify(message, signature).is_ok()
+    }
 }
