@@ -1,235 +1,279 @@
 // File: icn_testnet/src/main.rs
 
-use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use icn_blockchain::Blockchain;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencySystem;
-use icn_governance::DemocraticSystem;
-use icn_identity::IdentityManager;
-use icn_network::Network;
-use icn_sharding::ShardingManager;
-use icn_storage::StorageManager;
-use icn_vm::CoopVM;
-use icn_api::ApiLayer;
-
+use log::{info, warn, error};
+use chrono::Utc;
+use std::collections::HashMap;
+use std::error::Error;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use log::{info, error};
 
-#[tokio::main]
-async fn main() -> IcnResult<()> {
-    // Initialize logging
+use icn_core::{IcnNode, Error as IcnNodeError};
+use icn_blockchain::Transaction;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencyType;
+use icn_governance::{DemocraticSystem, ProposalType, ProposalCategory};
+use icn_identity::DecentralizedIdentity;
+use icn_network::Network;
+use icn_network::node::{Node, NodeType};
+use icn_vm::CSCLCompiler;
+
+fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
+    info!("Starting ICN Node");
 
-    info!("Starting ICN TestNet");
+    let node = Arc::new(IcnNode::new());
+    let mut network = Network::new();
+    let mut consensus = PoCConsensus::new(0.5, 0.66);
+    let mut democratic_system = DemocraticSystem::new();
 
-    // Initialize components
-    let blockchain = Arc::new(RwLock::new(Blockchain::new()));
-    let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51)));
-    let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
-    let governance = Arc::new(RwLock::new(DemocraticSystem::new()));
-    let identity_manager = Arc::new(RwLock::new(IdentityManager::new()));
-    let network = Arc::new(RwLock::new(Network::new()));
-    let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(4)));
-    let storage_manager = Arc::new(RwLock::new(StorageManager::new()));
-    let vm = Arc::new(RwLock::new(CoopVM::new(vec![])));
+    setup_network_and_consensus(&mut network, &mut consensus)?;
+    process_initial_transactions(Arc::clone(&node))?;
+    create_and_vote_on_proposal(&mut democratic_system)?;
+    compile_and_run_cscl(Arc::clone(&node))?;
+    simulate_cross_shard_transaction(Arc::clone(&node))?;
+    print_final_state(&node, &consensus, &democratic_system);
 
-    // Initialize API layer
-    let api = ApiLayer::new(
-        blockchain.clone(),
-        consensus.clone(),
-        currency_system.clone(),
-        governance.clone(),
+    info!("ICN Node simulation completed.");
+    Ok(())
+}
+
+fn setup_network_and_consensus(network: &mut Network, consensus: &mut PoCConsensus) -> Result<(), Box<dyn Error>> {
+    let node1 = Node::new("Node1", NodeType::PersonalDevice, "127.0.0.1:8000");
+    let node2 = Node::new("Node2", NodeType::PersonalDevice, "127.0.0.1:8001");
+    network.add_node(node1);
+    network.add_node(node2);
+
+    consensus.add_member("Alice".to_string(), false)?;
+    consensus.add_member("Bob".to_string(), false)?;
+    consensus.add_member("Charlie".to_string(), false)?;
+    consensus.add_member("CorpX".to_string(), true)?;
+
+    Ok(())
+}
+
+fn process_initial_transactions(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
+    let (alice_did, _) = DecentralizedIdentity::new(HashMap::new());
+    let (bob_did, _) = DecentralizedIdentity::new(HashMap::new());
+
+    let tx = Transaction::new(
+        alice_did.id.clone(),
+        bob_did.id.clone(),
+        100.0,
+        CurrencyType::BasicNeeds,
+        1000,
     );
 
-    // Simulate network setup
-    setup_network(network.clone()).await?;
+    node.with_blockchain(|blockchain| {
+        blockchain.add_transaction(tx.clone())?;
+        blockchain.create_block("Alice".to_string())?;
+        if let Some(latest_block) = blockchain.get_latest_block() {
+            info!("New block created: {:?}", latest_block);
+        } else {
+            warn!("No blocks in the blockchain to broadcast");
+        }
+        Ok(())
+    })?;
 
-    // Simulate initial transactions
-    process_initial_transactions(blockchain.clone(), currency_system.clone()).await?;
-
-    // Simulate governance actions
-    simulate_governance(governance.clone()).await?;
-
-    // Simulate smart contract execution
-    simulate_smart_contract(vm.clone()).await?;
-
-    // Simulate cross-shard transaction
-    simulate_cross_shard_transaction(sharding_manager.clone()).await?;
-
-    // Print final state
-    print_final_state(
-        blockchain.clone(),
-        consensus.clone(),
-        currency_system.clone(),
-        governance.clone(),
-        sharding_manager.clone(),
-    ).await?;
-
-    info!("ICN TestNet simulation completed successfully");
     Ok(())
 }
 
-async fn setup_network(network: Arc<RwLock<Network>>) -> IcnResult<()> {
-    let mut net = network.write().await;
-    // Add nodes to the network
-    net.add_node("Node1".to_string(), "127.0.0.1:8001".parse().unwrap())?;
-    net.add_node("Node2".to_string(), "127.0.0.1:8002".parse().unwrap())?;
-    net.add_node("Node3".to_string(), "127.0.0.1:8003".parse().unwrap())?;
-    info!("Network setup completed");
-    Ok(())
-}
-
-async fn process_initial_transactions(
-    blockchain: Arc<RwLock<Blockchain>>,
-    currency_system: Arc<RwLock<CurrencySystem>>,
-) -> IcnResult<()> {
-    let mut chain = blockchain.write().await;
-    let mut currency = currency_system.write().await;
-
-    // Create some initial transactions
-    let tx1 = Transaction::new("Alice".to_string(), "Bob".to_string(), 100.0, CurrencyType::BasicNeeds, 0);
-    let tx2 = Transaction::new("Bob".to_string(), "Charlie".to_string(), 50.0, CurrencyType::Education, 1);
-
-    chain.add_transaction(tx1.clone())?;
-    chain.add_transaction(tx2.clone())?;
-
-    // Update balances
-    currency.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, 100.0)?;
-    currency.transfer("Bob", "Charlie", &CurrencyType::Education, 50.0)?;
-
-    info!("Initial transactions processed");
-    Ok(())
-}
-
-async fn simulate_governance(governance: Arc<RwLock<DemocraticSystem>>) -> IcnResult<()> {
-    let mut gov = governance.write().await;
-
-    // Create a proposal
-    let proposal_id = gov.create_proposal(
+fn create_and_vote_on_proposal(democratic_system: &mut DemocraticSystem) -> Result<(), Box<dyn Error>> {
+    let proposal_id = democratic_system.create_proposal(
         "Community Garden".to_string(),
         "Create a community garden in the local park".to_string(),
         "Alice".to_string(),
-        chrono::Duration::days(7),
-        icn_types::ProposalType::Community,
-        icn_types::ProposalCategory::Environmental,
+        chrono::Duration::weeks(1),
+        ProposalType::Constitutional,
+        ProposalCategory::Economic,
         0.51,
-        None,
+        Some(Utc::now() + chrono::Duration::days(30)),
     )?;
 
-    // Simulate voting
-    gov.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
-    gov.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
-    gov.vote("Dave".to_string(), proposal_id.clone(), true, 1.0)?;
+    democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
+    democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
+    democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
+    democratic_system.tally_votes(&proposal_id)?;
 
-    // Tally votes
-    gov.tally_votes(&proposal_id)?;
+    let proposal = democratic_system.get_proposal(&proposal_id)
+        .ok_or("Proposal not found after voting")?;
+    info!("Proposal status after voting: {:?}", proposal.status);
 
-    info!("Governance simulation completed");
     Ok(())
 }
 
-async fn simulate_smart_contract(vm: Arc<RwLock<CoopVM>>) -> IcnResult<()> {
-    let mut coop_vm = vm.write().await;
+fn compile_and_run_cscl(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
+    let cscl_code = r#"
+    x = 100 + 50;
+    y = 200 - 25;
+    z = x * y / 10;
+    emit("Result", z);
+    "#;
 
-    // Simple smart contract to add two numbers
-    let contract = vec![
-        icn_vm::Opcode::Push(icn_vm::Value::Int(5)),
-        icn_vm::Opcode::Push(icn_vm::Value::Int(3)),
-        icn_vm::Opcode::Add,
-    ];
+    let mut compiler = CSCLCompiler::new(cscl_code);
+    let opcodes = compiler.compile()?;
+    
+    node.with_coop_vm(|coop_vm| {
+        coop_vm.load_program(opcodes);
+        coop_vm.run().map_err(IcnNodeError::VmError)
+    })?;
 
-    coop_vm.load_program(contract);
-    coop_vm.run()?;
-
-    info!("Smart contract simulation completed");
     Ok(())
 }
 
-async fn simulate_cross_shard_transaction(sharding_manager: Arc<RwLock<ShardingManager>>) -> IcnResult<()> {
-    let mut sharding = sharding_manager.write().await;
+fn simulate_cross_shard_transaction(node: Arc<IcnNode>) -> Result<(), Box<dyn Error>> {
+    node.process_cross_shard_transaction(|sharding_manager| {
+        sharding_manager.add_address_to_shard("Alice".to_string(), 0);
+        sharding_manager.add_address_to_shard("Bob".to_string(), 1);
+        sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
+    })?;
 
-    // Simulate a cross-shard transaction
-    let tx = Transaction::new("Alice".to_string(), "Bob".to_string(), 75.0, CurrencyType::BasicNeeds, 2);
-    sharding.process_cross_shard_transaction(0, 1, &tx)?;
+    let transaction = Transaction::new(
+        "Alice".to_string(),
+        "Bob".to_string(),
+        500.0,
+        CurrencyType::BasicNeeds,
+        1000,
+    );
 
-    info!("Cross-shard transaction simulation completed");
+    node.process_cross_shard_transaction(|sharding_manager| {
+        sharding_manager.transfer_between_shards(0, 1, &transaction)
+    })?;
+
+    let alice_balance = node.with_sharding_manager(|sharding_manager| {
+        sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
+    })?;
+
+    let bob_balance = node.with_sharding_manager(|sharding_manager| {
+        sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
+    })?;
+
+    info!("Alice's balance after cross-shard transaction: {:?}", alice_balance);
+    info!("Bob's balance after cross-shard transaction: {:?}", bob_balance);
+
     Ok(())
 }
 
-async fn print_final_state(
-    blockchain: Arc<RwLock<Blockchain>>,
-    consensus: Arc<RwLock<PoCConsensus>>,
-    currency_system: Arc<RwLock<CurrencySystem>>,
-    governance: Arc<RwLock<DemocraticSystem>>,
-    sharding_manager: Arc<RwLock<ShardingManager>>,
-) -> IcnResult<()> {
-    let chain = blockchain.read().await;
-    let cons = consensus.read().await;
-    let curr = currency_system.read().await;
-    let gov = governance.read().await;
-    let shard = sharding_manager.read().await;
-
-    info!("Final State of ICN TestNet:");
-    info!("Blockchain:");
-    info!("  - Number of blocks: {}", chain.chain.len());
-    if let Some(last_block) = chain.chain.last() {
-        info!("  - Last block hash: {}", last_block.hash);
+fn print_final_state(node: &Arc<IcnNode>, consensus: &PoCConsensus, democratic_system: &DemocraticSystem) {
+    info!("Blockchain state:");
+    if let Err(e) = node.with_blockchain(|blockchain| {
+        info!("Number of blocks: {}", blockchain.chain.len());
+        if let Some(latest_block) = blockchain.get_latest_block() {
+            info!("Latest block hash: {}", latest_block.hash);
+        } else {
+            warn!("No blocks in the blockchain");
+        }
+        Ok(())
+    }) {
+        error!("Failed to read blockchain state: {}", e);
     }
 
-    info!("Consensus:");
-    info!("  - Number of validators: {}", cons.get_validators().len());
-    info!("  - Consensus threshold: {}", cons.threshold);
+    info!("Consensus state:");
+    info!("Number of members: {}", consensus.members.len());
+    info!("Current vote threshold: {}", consensus.threshold);
 
-    info!("Currency System:");
-    for (currency_type, currency) in &curr.currencies {
-        info!("  - {}: Total supply: {}", currency_type, currency.total_supply);
+    info!("Democratic system state:");
+    info!("Number of active proposals: {}", democratic_system.list_active_proposals().len());
+
+    info!("Sharding state:");
+    if let Err(e) = node.with_sharding_manager(|sharding_manager| {
+        info!("Number of shards: {}", sharding_manager.get_shard_count());
+        Ok(())
+    }) {
+        error!("Failed to read sharding state: {}", e);
     }
-
-    info!("Governance:");
-    info!("  - Number of active proposals: {}", gov.list_active_proposals().len());
-
-    info!("Sharding:");
-    info!("  - Number of shards: {}", shard.get_shard_count());
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_governance::democracy::ProposalStatus;
+    use ed25519_dalek::Keypair;
+    use rand::rngs::OsRng;
 
-    #[tokio::test]
-    async fn test_testnet_simulation() -> IcnResult<()> {
-        // Initialize components for testing
-        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51)));
-        let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
-        let governance = Arc::new(RwLock::new(DemocraticSystem::new()));
-        let network = Arc::new(RwLock::new(Network::new()));
-        let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(4)));
-        let vm = Arc::new(RwLock::new(CoopVM::new(vec![])));
+    #[test]
+    fn test_icn_node_creation() {
+        let node = Arc::new(IcnNode::new());
+        assert!(node.with_blockchain(|blockchain| Ok(blockchain.chain.len() == 1)).unwrap());
+        info!("ICN Node creation test passed");
+    }
 
-        // Run test simulations
-        setup_network(network.clone()).await?;
-        process_initial_transactions(blockchain.clone(), currency_system.clone()).await?;
-        simulate_governance(governance.clone()).await?;
-        simulate_smart_contract(vm.clone()).await?;
-        simulate_cross_shard_transaction(sharding_manager.clone()).await?;
+    #[test]
+    fn test_cross_shard_transaction() -> Result<(), Box<dyn Error>> {
+        let node = Arc::new(IcnNode::new());
 
-        // Verify final state
-        let chain = blockchain.read().await;
-        assert!(chain.chain.len() > 1, "Blockchain should have more than one block");
+        node.process_cross_shard_transaction(|sharding_manager| {
+            sharding_manager.add_address_to_shard("Alice".to_string(), 0);
+            sharding_manager.add_address_to_shard("Bob".to_string(), 1);
+            sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0)
+        })?;
 
-        let curr = currency_system.read().await;
-        assert!(!curr.currencies.is_empty(), "Currency system should have currencies");
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
 
-        let gov = governance.read().await;
-        assert!(!gov.list_active_proposals().is_empty(), "There should be active proposals");
+        let mut transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            500.0,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        transaction.sign(&keypair)?;
 
-        let shard = sharding_manager.read().await;
-        assert_eq!(shard.get_shard_count(), 4, "There should be 4 shards");
+        node.process_cross_shard_transaction(|sharding_manager| {
+            sharding_manager.transfer_between_shards(0, 1, &transaction)
+        })?;
 
+        let alice_balance = node.with_sharding_manager(|sharding_manager| {
+            sharding_manager.get_balance("Alice".to_string(), CurrencyType::BasicNeeds)
+        })?;
+
+        let bob_balance = node.with_sharding_manager(|sharding_manager| {
+            sharding_manager.get_balance("Bob".to_string(), CurrencyType::BasicNeeds)
+        })?;
+
+        assert_eq!(alice_balance, 500.0);
+        assert_eq!(bob_balance, 500.0);
+
+        info!("Cross-shard transaction test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_smart_contract_execution() -> Result<(), Box<dyn Error>> {
+        let node = Arc::new(IcnNode::new());
+        compile_and_run_cscl(Arc::clone(&node))?;
+        info!("Smart contract execution test passed");
+        Ok(())
+    }
+
+    #[test]
+    fn test_democratic_system() -> Result<(), Box<dyn Error>> {
+        let mut democratic_system = DemocraticSystem::new();
+        
+        let proposal_id = democratic_system.create_proposal(
+            "Community Garden".to_string(),
+            "Create a community garden in the local park".to_string(),
+            "Alice".to_string(),
+            chrono::Duration::seconds(5), // Shorter duration for testing
+            ProposalType::Constitutional,
+            ProposalCategory::Economic,
+            0.51,
+            Some(Utc::now() + chrono::Duration::days(30)),
+        )?;
+
+        democratic_system.vote("Bob".to_string(), proposal_id.clone(), true, 1.0)?;
+        democratic_system.vote("Charlie".to_string(), proposal_id.clone(), false, 1.0)?;
+        democratic_system.vote("David".to_string(), proposal_id.clone(), true, 1.0)?;
+
+        // Wait for the voting period to end
+        std::thread::sleep(std::time::Duration::from_secs(6));
+
+        democratic_system.tally_votes(&proposal_id)?;
+
+        let proposal = democratic_system.get_proposal(&proposal_id)
+            .ok_or("Proposal not found after voting")?;
+        assert_eq!(proposal.status, ProposalStatus::Passed);
+        
+        info!("Democratic system test passed");
         Ok(())
     }
 }

@@ -133,6 +133,7 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_types::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {

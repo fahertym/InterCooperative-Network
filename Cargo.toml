@@ -1,18 +1,24 @@
+# File: Cargo.toml
+
 [workspace]
 members = [
-    "crates/icn_api",
+    "crates/icn_utils",
     "crates/icn_blockchain",
     "crates/icn_consensus",
-    "crates/icn_core",
     "crates/icn_currency",
     "crates/icn_governance",
     "crates/icn_identity",
     "crates/icn_network",
-    "crates/icn_node_management",
     "crates/icn_sharding",
     "crates/icn_storage",
-    "crates/icn_testnet",
-    "crates/icn_utils",
     "crates/icn_vm",
+    "crates/icn_api",
+    "crates/icn_testnet",
+    "crates/icn_types",
+    "crates/icn_core",
 ]
+
+
+
+
 resolver = "2"

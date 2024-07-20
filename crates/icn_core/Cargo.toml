@@ -12,6 +12,7 @@ chrono = "0.4"
 ed25519-dalek = "1.0"
 rand = "0.7"
 icn_utils = { path = "../icn_utils" }
+icn_types = { path = "../icn_types" }  # Add this line
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -1,3 +1,5 @@
+// File: icn_types/src/lib.rs
+
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use chrono::{DateTime, Utc};
