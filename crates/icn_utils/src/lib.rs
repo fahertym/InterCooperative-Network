@@ -1,8 +1,4 @@
-// File: crates/icn_utils/src/lib.rs
-
 use sha2::{Digest, Sha256};
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
-use rand::rngs::OsRng;
 use chrono::{DateTime, Duration, Utc};
 
 pub fn hex_encode(data: &[u8]) -> String {
@@ -53,7 +49,8 @@ pub mod time {
 }
 
 pub mod crypto {
-    use super::*;
+    use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+    use rand::rngs::OsRng;
 
     pub fn generate_keypair() -> Keypair {
         let mut csprng = OsRng {};
@@ -90,7 +87,7 @@ mod tests {
     fn test_hash_data() {
         let data = b"test data";
         let hash = hash_data(data);
-        assert_eq!(hash.len(), 32); // SHA256 produces a 32-byte hash
+        assert_eq!(hash.len(), 32);
     }
 
     #[test]
@@ -103,13 +100,34 @@ mod tests {
         ];
         let root = calculate_merkle_root(&hashes);
         assert_eq!(root.len(), 32);
+
+        // Test with odd number of hashes
+        let odd_hashes = vec![
+            vec![1; 32],
+            vec![2; 32],
+            vec![3; 32],
+        ];
+        let odd_root = calculate_merkle_root(&odd_hashes);
+        assert_eq!(odd_root.len(), 32);
     }
 
     #[test]
-    fn test_crypto_operations() {
+    fn test_time_utils() {
+        let now = time::now();
+        let duration = Duration::seconds(10);
+        assert!(!time::is_expired(now, duration));
+        assert!(time::is_expired(now - Duration::seconds(20), duration));
+    }
+
+    #[test]
+    fn test_crypto_utils() {
         let keypair = crypto::generate_keypair();
         let message = b"test message";
         let signature = crypto::sign(&keypair.secret, message);
         assert!(crypto::verify(&keypair.public, message, &signature));
+        
+        // Test with incorrect message
+        let wrong_message = b"wrong message";
+        assert!(!crypto::verify(&keypair.public, wrong_message, &signature));
     }
 }

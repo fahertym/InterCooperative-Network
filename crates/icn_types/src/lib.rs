@@ -1,8 +1,5 @@
-// File: crates/icn_types/src/lib.rs
-
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CurrencyType {
@@ -87,13 +84,6 @@ pub struct Vote {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodeType {
     PersonalDevice,
     CooperativeServer,
@@ -101,77 +91,16 @@ pub enum NodeType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssetToken {
+pub struct Node {
     pub id: String,
-    pub name: String,
-    pub description: String,
-    pub owner: String,
-    pub created_at: DateTime<Utc>,
-    pub last_transferred: DateTime<Utc>,
-    pub metadata: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bond {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub issuer: String,
-    pub face_value: f64,
-    pub maturity_date: DateTime<Utc>,
-    pub interest_rate: f64,
-    pub owner: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Currency {
-    pub currency_type: CurrencyType,
-    pub total_supply: f64,
-    pub creation_date: DateTime<Utc>,
-    pub last_issuance: DateTime<Utc>,
-    pub issuance_rate: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Wallet {
+    pub node_type: NodeType,
     pub address: String,
-    pub balances: HashMap<CurrencyType, f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    String(String),
-    Address(String),
-    List(Vec<Value>),
+pub trait Validator<T> {
+    fn validate(&self, item: &T) -> bool;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Opcode {
-    Push(Value),
-    Pop,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Eq,
-    Lt,
-    Gt,
-    And,
-    Or,
-    Not,
-    Store(String),
-    Load(String),
-    Call(String),
-    Return,
-    JumpIf(usize),
-    Jump(usize),
-    Vote(String),
-    AllocateResource(String),
-    UpdateReputation(String),
-    CreateProposal,
-    GetProposalStatus,
-    Emit(String),
+pub trait Hashable {
+    fn hash(&self) -> String;
 }
