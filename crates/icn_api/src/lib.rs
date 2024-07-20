@@ -1,4 +1,4 @@
-// File: icn_api/src/lib.rs
+// crates/icn_api/src/lib.rs
 
 use icn_types::{IcnResult, IcnError, Block, Transaction, CurrencyType, Proposal, ProposalStatus};
 use serde::{Serialize, Deserialize};

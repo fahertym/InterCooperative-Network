@@ -18,11 +18,11 @@ pub struct PoCConsensus {
 }
 
 impl PoCConsensus {
-    pub fn new() -> Self {
+    pub fn new(threshold: f64, quorum: f64) -> Self {
         PoCConsensus {
             members: HashMap::new(),
-            threshold: 0.66, // 66% agreement required for consensus
-            quorum: 0.51, // 51% participation required for quorum
+            threshold,
+            quorum,
         }
     }
 
@@ -52,7 +52,16 @@ impl PoCConsensus {
         Ok(())
     }
 
-    pub fn validate_block(&self, _block_hash: &str, votes: &[(&str, bool)]) -> IcnResult<bool> {
+    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        // In a real implementation, this would involve more complex validation logic
+        // For now, we'll just check if the block has any transactions
+        if block.transactions.is_empty() {
+            return Err(IcnError::Consensus("Block has no transactions".to_string()));
+        }
+        Ok(true)
+    }
+
+    pub fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
         let total_reputation: f64 = self.members.values().filter(|m| m.is_validator).map(|m| m.reputation).sum();
 
         let mut positive_reputation = 0.0;
@@ -83,13 +92,29 @@ impl PoCConsensus {
     }
 }
 
+pub trait ConsensusAlgorithm {
+    fn validate_block(&self, block: &Block) -> IcnResult<bool>;
+    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool>;
+}
+
+impl ConsensusAlgorithm for PoCConsensus {
+    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        self.validate_block(block)
+    }
+
+    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
+        self.reach_consensus(block, votes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
-        let mut consensus = PoCConsensus::new();
+        let mut consensus = PoCConsensus::new(0.66, 0.51);
         assert!(consensus.add_member("Alice".to_string(), true).is_ok());
         assert!(consensus.add_member("Bob".to_string(), false).is_ok());
         assert_eq!(consensus.members.len(), 2);
@@ -100,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_update_reputation() {
-        let mut consensus = PoCConsensus::new();
+        let mut consensus = PoCConsensus::new(0.66, 0.51);
         consensus.add_member("Alice".to_string(), true).unwrap();
         assert!(consensus.update_reputation("Alice", 0.5).is_ok());
         assert_eq!(consensus.members.get("Alice").unwrap().reputation, 1.5);
@@ -108,11 +133,26 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_block() {
-        let mut consensus = PoCConsensus::new();
+    fn test_reach_consensus() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51);
         consensus.add_member("Alice".to_string(), true).unwrap();
         consensus.add_member("Bob".to_string(), true).unwrap();
         consensus.add_member("Charlie".to_string(), true).unwrap();
+
+        let block = Block {
+            index: 1,
+            timestamp: 0,
+            transactions: vec![Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 100.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: 0,
+                signature: None,
+            }],
+            previous_hash: "previous_hash".to_string(),
+            hash: "hash".to_string(),
+        };
 
         let votes = vec![
             ("Alice", true),
@@ -120,13 +160,13 @@ mod tests {
             ("Charlie", false),
         ];
 
-        assert!(consensus.validate_block("block_hash", &votes).unwrap());
+        assert!(consensus.reach_consensus(&block, &votes).unwrap());
 
         let insufficient_votes = vec![
             ("Alice", true),
             ("Bob", true),
         ];
 
-        assert!(!consensus.validate_block("block_hash", &insufficient_votes).unwrap());
+        assert!(consensus.reach_consensus(&block, &insufficient_votes).is_err());
     }
 }

@@ -75,40 +75,40 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new().unwrap();
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block("Miner".to_string()).unwrap();
+        blockchain.create_block().unwrap();
 
         assert!(TransactionValidator::validate_transaction(&tx, &blockchain));
     }
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new().unwrap();
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         // Add some balance to Alice's account, but not enough
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block("Miner".to_string()).unwrap();
+        blockchain.create_block().unwrap();
 
         assert!(!TransactionValidator::validate_transaction(&tx, &blockchain));
     }
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new().unwrap();
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block("Miner".to_string()).unwrap();
+        blockchain.create_block().unwrap();
 
         // Add the transaction to the blockchain
         blockchain.add_transaction(tx.clone()).unwrap();
-        blockchain.create_block("Miner".to_string()).unwrap();
+        blockchain.create_block().unwrap();
 
         // Try to validate the same transaction again
         assert!(!TransactionValidator::validate_transaction(&tx, &blockchain));

@@ -15,10 +15,8 @@ members = [
     "crates/icn_api",
     "crates/icn_testnet",
     "crates/icn_types",
-    "crates/icn_core", "crates/icn_common",
+    "crates/icn_core", 
+    "crates/icn_common",
 ]
-
-
-
 
 resolver = "2"

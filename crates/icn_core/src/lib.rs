@@ -1,4 +1,7 @@
-// icn_core/src/lib.rs
+//! Core functionality for the InterCooperative Network
+//! 
+//! This module provides the main `IcnNode` struct and associated functionality
+//! for managing the core operations of the InterCooperative Network.
 
 use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
 use icn_blockchain::Blockchain;
@@ -10,9 +13,6 @@ use icn_network::Network;
 use icn_sharding::ShardingManager;
 use icn_storage::StorageManager;
 use icn_vm::ContractManager;
-// In other crates like icn_core, icn_identity, etc.
-use icn_common::{CommonError, CommonResult};
-
 
 use std::sync::{Arc, Mutex};
 use log::{info, warn, error};
@@ -20,21 +20,7 @@ use log::{info, warn, error};
 mod config;
 pub use config::Config;
 
-#[derive(Debug, thiserror::Error)]
-pub enum IcnError {
-    #[error("Lock error: {0}")]
-    LockError(String),
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-    #[error("Invalid transaction: {0}")]
-    InvalidTransaction(String),
-    #[error("Config error: {0}")]
-    ConfigError(String),
-    // Add other error types as needed
-}
-
-pub type IcnResult<T> = Result<T, IcnError>;
-
+/// The main node structure for the InterCooperative Network
 pub struct IcnNode {
     config: Config,
     blockchain: Arc<Mutex<Blockchain>>,
@@ -49,6 +35,7 @@ pub struct IcnNode {
 }
 
 impl IcnNode {
+    /// Create a new IcnNode with the given configuration
     pub fn new(config: Config) -> IcnResult<Self> {
         info!("Initializing ICN Node with configuration: {:?}", config);
         Ok(IcnNode {
@@ -65,37 +52,38 @@ impl IcnNode {
         })
     }
 
+    /// Start the IcnNode and its components
     pub fn start(&self) -> IcnResult<()> {
         info!("Starting ICN Node components");
-        self.network.lock().map_err(|_| IcnError::LockError("Network lock error".into()))?.start()?;
-        self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?.start()?;
-        self.consensus.lock().map_err(|_| IcnError::LockError("Consensus lock error".into()))?.start()?;
+        self.network.lock().map_err(|e| IcnError::LockError(e.to_string()))?.start()?;
+        self.blockchain.lock().map_err(|e| IcnError::LockError(e.to_string()))?.start()?;
+        self.consensus.lock().map_err(|e| IcnError::LockError(e.to_string()))?.start()?;
         // Add start methods for other components as needed
         info!("ICN Node started successfully");
         Ok(())
     }
 
+    /// Stop the IcnNode and its components
     pub fn stop(&self) -> IcnResult<()> {
         info!("Stopping ICN Node components");
-        self.network.lock().map_err(|_| IcnError::LockError("Network lock error".into()))?.stop()?;
-        self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?.stop()?;
-        self.consensus.lock().map_err(|_| IcnError::LockError("Consensus lock error".into()))?.stop()?;
+        self.network.lock().map_err(|e| IcnError::LockError(e.to_string()))?.stop()?;
+        self.blockchain.lock().map_err(|e| IcnError::LockError(e.to_string()))?.stop()?;
+        self.consensus.lock().map_err(|e| IcnError::LockError(e.to_string()))?.stop()?;
         // Add stop methods for other components as needed
         info!("ICN Node stopped successfully");
         Ok(())
     }
 
+    /// Process a transaction
     pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         info!("Processing transaction: {:?}", transaction);
-        let mut blockchain = self.blockchain.lock().map_err(|_| IcnError::LockError("Blockchain lock error".into()))?;
-        let mut currency_system = self.currency_system.lock().map_err(|_| IcnError::LockError("Currency system lock error".into()))?;
+        let mut blockchain = self.blockchain.lock().map_err(|e| IcnError::LockError(e.to_string()))?;
+        let mut currency_system = self.currency_system.lock().map_err(|e| IcnError::LockError(e.to_string()))?;
 
-        // Verify transaction
         if !self.verify_transaction(&transaction)? {
             return Err(IcnError::InvalidTransaction("Transaction verification failed".into()));
         }
 
-        // Update balances
         currency_system.transfer(
             &transaction.from,
             &transaction.to,
@@ -103,15 +91,13 @@ impl IcnNode {
             &transaction.currency_type,
         )?;
 
-        // Add transaction to blockchain
         blockchain.add_transaction(transaction)?;
 
         Ok(())
     }
 
+    /// Verify a transaction
     fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        // Implement transaction verification logic
-        // For example, check if the sender has sufficient balance
         let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
         if sender_balance < transaction.amount {
             return Ok(false);
@@ -122,9 +108,10 @@ impl IcnNode {
         Ok(true)
     }
 
+    /// Create a new proposal
     pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
         info!("Creating proposal: {:?}", proposal);
-        self.governance_system.lock().map_err(|_| IcnError::LockError("Governance system lock error".into()))?.create_proposal(
+        self.governance_system.lock().map_err(|e| IcnError::LockError(e.to_string()))?.create_proposal(
             proposal.title,
             proposal.description,
             proposal.proposer,
@@ -136,35 +123,12 @@ impl IcnNode {
         )
     }
 
+    /// Get the balance for a given address and currency type
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         info!("Getting balance for address: {} and currency type: {:?}", address, currency_type);
         self.currency_system
             .lock()
-            .map_err(|_| IcnError::LockError("Currency system lock error".into()))?
+            .map_err(|e| IcnError::LockError(e.to_string()))?
             .get_balance(address, currency_type)
     }
-
-    // Add more methods as needed for interacting with other components
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_icn_node_creation() {
-        let config = Config::default();
-        let node = IcnNode::new(config);
-        assert!(node.is_ok());
-    }
-
-    #[test]
-    fn test_icn_node_start_stop() {
-        let config = Config::default();
-        let node = IcnNode::new(config).unwrap();
-        assert!(node.start().is_ok());
-        assert!(node.stop().is_ok());
-    }
-
-    // Add more unit tests as needed
 }

@@ -10,11 +10,11 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub fn new() -> Self {
-        Blockchain {
+    pub fn new() -> IcnResult<Self> {
+        Ok(Blockchain {
             chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
-        }
+        })
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
@@ -108,14 +108,14 @@ mod tests {
 
     #[test]
     fn test_new_blockchain() {
-        let blockchain = Blockchain::new();
+        let blockchain = Blockchain::new().unwrap();
         assert_eq!(blockchain.chain.len(), 1);
         assert_eq!(blockchain.chain[0].index, 0);
     }
 
     #[test]
     fn test_add_transaction() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new().unwrap();
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_create_and_add_block() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new().unwrap();
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
