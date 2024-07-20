@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
-use rand::rngs::OsRng;
+use icn_common::CurrencyType; // Import CurrencyType from icn_common
+// Remove unused import
+// use rand::rngs::OsRng;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -51,6 +53,9 @@ impl Transaction {
         bytes.extend_from_slice(self.to.as_bytes());
         bytes.extend_from_slice(&self.amount.to_le_bytes());
         bytes.extend_from_slice(&self.gas_limit.to_le_bytes());
+        // Serialize currency_type and append to bytes
+        let currency_type_bytes = bincode::serialize(&self.currency_type).unwrap();
+        bytes.extend_from_slice(&currency_type_bytes);
         bytes
     }
 

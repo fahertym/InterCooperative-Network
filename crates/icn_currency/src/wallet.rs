@@ -58,6 +58,7 @@ impl Wallet {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;

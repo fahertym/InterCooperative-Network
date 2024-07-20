@@ -1,8 +1,6 @@
-// crates/icn_consensus/src/lib.rs
-
 use serde::{Serialize, Deserialize}; // Import Serialize and Deserialize once
 use log::error;
-use icn_common::{Error, Result};
+use icn_utils::{Error, Result}; // Update the import to use icn_utils
 use std::collections::HashMap;
 
 mod proof_of_cooperation;
@@ -90,8 +88,6 @@ impl PoCConsensus {
         self.members.values().filter(|m| m.is_validator).collect()
     }
 }
-
-// Removed the redundant import of `serde::{Serialize, Deserialize}` from here.
 
 #[cfg(test)]
 mod tests {

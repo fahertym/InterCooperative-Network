@@ -34,7 +34,7 @@ impl AssetToken {
     }
 }
 
-#[derive(Debug)] // Add Debug derive
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AssetRegistry {
     tokens: HashMap<String, AssetToken>,
 }

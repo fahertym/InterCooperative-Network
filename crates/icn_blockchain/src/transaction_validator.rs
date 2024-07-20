@@ -1,5 +1,5 @@
 use crate::{Transaction, Blockchain};
-use icn_core::error::{Error, Result};
+use icn_utils::error::{Error, Result};
 
 pub struct TransactionValidator;
 
@@ -32,7 +32,7 @@ impl TransactionValidator {
     }
 
     fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> bool {
-        let balance = blockchain.get_balance(&transaction.from);
+        let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type);
         balance >= transaction.amount + transaction.get_fee()
     }
 

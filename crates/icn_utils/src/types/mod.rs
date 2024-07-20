@@ -1,4 +1,4 @@
-// crates/icn_common/src/lib.rs
+// crates/icn_utils/src/types/mod.rs
 
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};

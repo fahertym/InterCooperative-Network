@@ -1,12 +1,13 @@
-use serde::{Deserialize, Serialize}; // Import Serialize and Deserialize
-use std::collections::HashMap; // Import HashMap
-
-use icn_utils::error::{IcnError, IcnResult}; // Import IcnError and IcnResult
-use icn_utils::types::{Block, Transaction}; // Import Block and Transaction from icn_utils
-
+// crates/icn_blockchain/src/lib.rs
 mod asset_tokenization;
 
 pub use self::asset_tokenization::{AssetToken, AssetRegistry};
+
+use icn_utils::{error::{IcnError, IcnResult}, types::{Block, Transaction, CurrencyType}};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+
+// Rest of your code
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
@@ -44,7 +45,7 @@ impl Blockchain {
         }
     }
 
-    pub fn create_block(&mut self, miner: String) -> IcnResult<Block> {
+    pub fn create_block(&mut self, _miner: String) -> IcnResult<Block> {
         let previous_block = self.chain.last().ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
         let new_block = Block::new(
             self.chain.len() as u64,
@@ -77,8 +78,9 @@ impl Blockchain {
     }
 
     pub fn create_asset_token(&mut self, name: String, description: String, owner: String) -> IcnResult<AssetToken> {
-        self.asset_registry.create_token(name, description, owner, serde_json::json!({}))
-            .map_err(|e| IcnError::Blockchain(e.to_string()))
+        let token_id = self.asset_registry.create_token(name, description, owner, serde_json::json!({}))
+            .map_err(|e| IcnError::Blockchain(e.to_string()))?;
+        self.asset_registry.get_token(&token_id).cloned().ok_or_else(|| IcnError::Blockchain("Failed to create asset token".to_string()))
     }
 
     pub fn transfer_asset_token(&mut self, token_id: &str, new_owner: &str) -> IcnResult<()> {
@@ -133,7 +135,7 @@ mod tests {
     fn create_signed_transaction(from: &str, to: &str, amount: f64, currency_type: CurrencyType) -> Transaction {
         let mut csprng = OsRng{};
         let keypair: Keypair = Keypair::generate(&mut csprng);
-        let mut transaction = Transaction::new(from.to_string(), to.to_string(), amount, currency_type);
+        let mut transaction = Transaction::new(from.to_string(), to.to_string(), amount, 1000, currency_type);
         transaction.sign(&keypair).unwrap();
         transaction
     }
