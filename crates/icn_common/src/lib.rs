@@ -1,7 +1,10 @@
+// File: icn_common/src/lib.rs
+
 use thiserror::Error;
 use serde::{Serialize, Deserialize};
 use log::{info, warn, error, debug};
 
+// Define common errors used throughout the project
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum CommonError {
     #[error("Blockchain error: {0}")]
@@ -30,46 +33,57 @@ pub enum CommonError {
     IO(String),
 }
 
+// Define a result type using the CommonError
 pub type CommonResult<T> = Result<T, CommonError>;
 
+// Logging utilities
 pub mod logging {
     use super::*;
 
+    // Log an info message
     pub fn log_info(message: &str) {
         info!("{}", message);
     }
 
+    // Log a warning message
     pub fn log_warn(message: &str) {
         warn!("{}", message);
     }
 
+    // Log an error message
     pub fn log_error(message: &str) {
         error!("{}", message);
     }
 
+    // Log a debug message
     pub fn log_debug(message: &str) {
         debug!("{}", message);
     }
 }
 
+// Serialization utilities
 pub mod serialization {
     use serde::{Serialize, Deserialize};
     use super::CommonResult;
 
+    // Serialize a value to a JSON string
     pub fn to_json<T: Serialize>(value: &T) -> CommonResult<String> {
-        serde_json::to_string(value).map_err(|e| CommonError::Serialization(e.to_string()))
+        serde_json::to_string(value).map_err(|e| crate::CommonError::Serialization(e.to_string()))
     }
 
+    // Deserialize a JSON string to a value
     pub fn from_json<T: for<'de> Deserialize<'de>>(json: &str) -> CommonResult<T> {
-        serde_json::from_str(json).map_err(|e| CommonError::Serialization(e.to_string()))
+        serde_json::from_str(json).map_err(|e| crate::CommonError::Serialization(e.to_string()))
     }
 }
 
+// Configuration management utilities
 pub mod config {
     use serde::{Serialize, Deserialize};
     use std::fs;
     use super::{CommonResult, CommonError};
 
+    // Define the configuration structure
     #[derive(Debug, Serialize, Deserialize)]
     pub struct Config {
         pub shard_count: u64,
@@ -79,6 +93,7 @@ pub mod config {
     }
 
     impl Config {
+        // Load configuration from a file
         pub fn load(path: &str) -> CommonResult<Self> {
             let config_str = fs::read_to_string(path)
                 .map_err(|e| CommonError::IO(e.to_string()))?;
@@ -87,6 +102,7 @@ pub mod config {
             Ok(config)
         }
 
+        // Save configuration to a file
         pub fn save(&self, path: &str) -> CommonResult<()> {
             let config_str = serde_json::to_string_pretty(self)
                 .map_err(|e| CommonError::Serialization(e.to_string()))?;
@@ -96,6 +112,7 @@ pub mod config {
         }
     }
 
+    // Provide a default configuration
     impl Default for Config {
         fn default() -> Self {
             Config {
@@ -108,6 +125,7 @@ pub mod config {
     }
 }
 
+// Unit tests for the common utilities
 #[cfg(test)]
 mod tests {
     use super::*;

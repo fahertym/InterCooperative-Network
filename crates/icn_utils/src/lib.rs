@@ -1,20 +1,28 @@
+// File: icn_utils/src/lib.rs
+
+// Import necessary modules and crates
 use sha2::{Digest, Sha256};
 use chrono::{DateTime, Duration, Utc};
+use hex::FromHexError;
 
+// Function to encode data to a hexadecimal string
 pub fn hex_encode(data: &[u8]) -> String {
     hex::encode(data)
 }
 
-pub fn hex_decode(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
+// Function to decode a hexadecimal string to data
+pub fn hex_decode(s: &str) -> Result<Vec<u8>, FromHexError> {
     hex::decode(s)
 }
 
+// Function to hash data using SHA-256
 pub fn hash_data(data: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().to_vec()
 }
 
+// Function to calculate the Merkle root from a list of hashes
 pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
     if hashes.is_empty() {
         return vec![];
@@ -36,27 +44,33 @@ pub fn calculate_merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
     calculate_merkle_root(&next_level)
 }
 
+// Time-related utilities
 pub mod time {
     use super::*;
 
+    // Function to get the current UTC time
     pub fn now() -> DateTime<Utc> {
         Utc::now()
     }
 
+    // Function to check if a given timestamp is expired based on a duration
     pub fn is_expired(timestamp: DateTime<Utc>, duration: Duration) -> bool {
         now() > timestamp + duration
     }
 }
 
+// Cryptographic utilities
 pub mod crypto {
     use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
     use rand::rngs::OsRng;
 
+    // Function to generate a new key pair (public and private keys)
     pub fn generate_keypair() -> Keypair {
         let mut csprng = OsRng {};
         Keypair::generate(&mut csprng)
     }
 
+    // Function to sign a message with a given secret key
     pub fn sign(secret_key: &SecretKey, message: &[u8]) -> Signature {
         let keypair = Keypair {
             public: PublicKey::from(secret_key),
@@ -65,11 +79,13 @@ pub mod crypto {
         keypair.sign(message)
     }
 
+    // Function to verify a signature with a given public key and message
     pub fn verify(public_key: &PublicKey, message: &[u8], signature: &Signature) -> bool {
         public_key.verify(message, signature).is_ok()
     }
 }
 
+// Unit tests for the utility functions
 #[cfg(test)]
 mod tests {
     use super::*;
