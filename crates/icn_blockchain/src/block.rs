@@ -43,3 +43,28 @@ impl Block {
         Block::new(0, vec![], String::from("0"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_creation() {
+        let transactions = vec![
+            Transaction::new("Alice".to_string(), "Bob".to_string(), 50.0, 1000),
+            Transaction::new("Bob".to_string(), "Charlie".to_string(), 30.0, 1000),
+        ];
+        let block = Block::new(1, transactions, "previous_hash".to_string());
+        assert_eq!(block.index, 1);
+        assert_eq!(block.previous_hash, "previous_hash");
+        assert!(!block.hash.is_empty());
+    }
+
+    #[test]
+    fn test_genesis_block() {
+        let genesis = Block::genesis();
+        assert_eq!(genesis.index, 0);
+        assert_eq!(genesis.previous_hash, "0");
+        assert!(genesis.transactions.is_empty());
+    }
+}
