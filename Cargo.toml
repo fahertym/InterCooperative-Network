@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/icn_utils",
+    "crates/icn_common",
     "crates/icn_blockchain",
     "crates/icn_consensus",
     "crates/icn_currency",
@@ -12,9 +12,15 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_common_types",
-    "crates/icn_core", 
-    "crates/icn_common",
+    "crates/icn_core",
 ]
 
 resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.9"
