@@ -1,4 +1,5 @@
-use icn_common_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_blockchain::Blockchain;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::Utc;
@@ -132,7 +133,6 @@ impl PoCConsensus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
@@ -167,9 +167,9 @@ mod tests {
             transactions: vec![Transaction::new(
                 "Alice".to_string(),
                 "Bob".to_string(),
-                100.0,
+                200.0,
                 CurrencyType::BasicNeeds,
-                Utc::now().timestamp(),
+                1000,
             )],
             previous_hash: "previous_hash".to_string(),
             hash: "hash".to_string(),

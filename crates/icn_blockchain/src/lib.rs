@@ -1,8 +1,7 @@
-use icn_common_types::{Block, Transaction, IcnResult, IcnError, Hashable};
-use icn_common::error::Result;
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType};
+use std::collections::VecDeque;
 use chrono::Utc;
 use log::{info, warn, error};
-use std::collections::VecDeque;
 
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
 
@@ -12,15 +11,14 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub fn new() -> Result<Self> {
-        let genesis_block = Block::genesis();
+    pub fn new() -> IcnResult<Self> {
         Ok(Blockchain {
-            chain: vec![genesis_block],
+            chain: vec![Block::genesis()],
             pending_transactions: VecDeque::new(),
         })
     }
 
-    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+    pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
         if self.verify_transaction(&transaction)? {
             self.pending_transactions.push_back(transaction);
             Ok(())
@@ -29,10 +27,13 @@ impl Blockchain {
         }
     }
 
-    pub fn create_block(&mut self) -> Result<Block> {
-        let previous_block = self.chain.last().ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
+    pub fn create_block(&mut self) -> IcnResult<Block> {
+        let previous_block = self.chain.last()
+            .ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
         
-        let transactions: Vec<Transaction> = self.pending_transactions.drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK)).collect();
+        let transactions: Vec<Transaction> = self.pending_transactions
+            .drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK))
+            .collect();
 
         let new_block = Block {
             index: self.chain.len() as u64,
@@ -52,7 +53,7 @@ impl Blockchain {
         block
     }
 
-    pub fn verify_transaction(&self, transaction: &Transaction) -> Result<bool> {
+    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
         // Implement transaction verification logic
         // For example, check if the sender has sufficient balance
         // and if the signature is valid
@@ -71,7 +72,7 @@ impl Blockchain {
         self.chain.iter().find(|block| block.hash == hash)
     }
 
-    pub fn validate_chain(&self) -> Result<bool> {
+    pub fn validate_chain(&self) -> IcnResult<bool> {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
@@ -88,12 +89,12 @@ impl Blockchain {
         Ok(true)
     }
 
-    pub fn start(&self) -> Result<()> {
+    pub fn start(&self) -> IcnResult<()> {
         info!("Blockchain started");
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<()> {
+    pub fn stop(&self) -> IcnResult<()> {
         info!("Blockchain stopped");
         Ok(())
     }
@@ -102,7 +103,6 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {

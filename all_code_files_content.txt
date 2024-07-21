@@ -176,12 +176,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common = { path = "../icn_common" } 
-icn_utils = { path = "../icn_utils" }
-icn_common_types = { path = "../icn_common_types" }
+icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
-icn_core = { path = "../icn_core" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_sharding = { path = "../icn_sharding" }
+icn_storage = { path = "../icn_storage" }
+icn_vm = { path = "../icn_vm" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
@@ -448,12 +452,10 @@ edition = "2021"
 
 [dependencies]
 icn_common = { path = "../icn_common" }
-serde = { workspace = true }
-chrono = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.9"
-ed25519-dalek = "1.0"
-rand = "0.7"
-log = { workspace = true }
+log = "0.4"
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
@@ -748,11 +750,10 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-use icn_common_types::{Block, Transaction, IcnResult, IcnError, Hashable};
-use icn_common::error::Result;
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType};
+use std::collections::VecDeque;
 use chrono::Utc;
 use log::{info, warn, error};
-use std::collections::VecDeque;
 
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
 
@@ -762,15 +763,14 @@ pub struct Blockchain {
 }
 
 impl Blockchain {
-    pub fn new() -> Result<Self> {
-        let genesis_block = Block::genesis();
+    pub fn new() -> IcnResult<Self> {
         Ok(Blockchain {
-            chain: vec![genesis_block],
+            chain: vec![Block::genesis()],
             pending_transactions: VecDeque::new(),
         })
     }
 
-    pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+    pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
         if self.verify_transaction(&transaction)? {
             self.pending_transactions.push_back(transaction);
             Ok(())
@@ -779,10 +779,13 @@ impl Blockchain {
         }
     }
 
-    pub fn create_block(&mut self) -> Result<Block> {
-        let previous_block = self.chain.last().ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
+    pub fn create_block(&mut self) -> IcnResult<Block> {
+        let previous_block = self.chain.last()
+            .ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
         
-        let transactions: Vec<Transaction> = self.pending_transactions.drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK)).collect();
+        let transactions: Vec<Transaction> = self.pending_transactions
+            .drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK))
+            .collect();
 
         let new_block = Block {
             index: self.chain.len() as u64,
@@ -802,7 +805,7 @@ impl Blockchain {
         block
     }
 
-    pub fn verify_transaction(&self, transaction: &Transaction) -> Result<bool> {
+    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
         // Implement transaction verification logic
         // For example, check if the sender has sufficient balance
         // and if the signature is valid
@@ -821,7 +824,7 @@ impl Blockchain {
         self.chain.iter().find(|block| block.hash == hash)
     }
 
-    pub fn validate_chain(&self) -> Result<bool> {
+    pub fn validate_chain(&self) -> IcnResult<bool> {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
@@ -838,12 +841,12 @@ impl Blockchain {
         Ok(true)
     }
 
-    pub fn start(&self) -> Result<()> {
+    pub fn start(&self) -> IcnResult<()> {
         info!("Blockchain started");
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<()> {
+    pub fn stop(&self) -> IcnResult<()> {
         info!("Blockchain stopped");
         Ok(())
     }
@@ -852,7 +855,6 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {
@@ -1024,15 +1026,28 @@ mod tests {
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 [package]
-name = "icn_common"
+name = "icn_core"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde = { workspace = true }
-chrono = { workspace = true }
-thiserror = { workspace = true }
-log = { workspace = true }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
+icn_common = { path = "../icn_common" }
+icn_blockchain = { path = "../icn_blockchain" }
+icn_consensus = { path = "../icn_consensus" }
+icn_currency = { path = "../icn_currency" }
+icn_governance = { path = "../icn_governance" }
+icn_identity = { path = "../icn_identity" }
+icn_network = { path = "../icn_network" }
+icn_sharding = { path = "../icn_sharding" }
+icn_storage = { path = "../icn_storage" }
+icn_vm = { path = "../icn_vm" }
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+thiserror = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 use thiserror::Error;
@@ -1168,29 +1183,10 @@ pub struct Vote {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-pub trait Validator<T> {
-    fn validate(&self, item: &T) -> bool;
-}
-
 pub trait Hashable {
     fn hash(&self) -> String;
 }
 
-// Implement Hashable for Block and Transaction
 impl Hashable for Block {
     fn hash(&self) -> String {
         use sha2::{Sha256, Digest};
@@ -1334,6 +1330,54 @@ mod tests {
         let wrong_keypair: Keypair = Keypair::generate(&mut csprng);
         assert!(!tx.verify(wrong_keypair.public.as_bytes()).unwrap());
     }
+
+    #[test]
+    fn test_proposal() {
+        let proposal = Proposal {
+            id: "prop1".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+
+        assert_eq!(proposal.status, ProposalStatus::Active);
+        assert_eq!(proposal.proposal_type, ProposalType::Constitutional);
+        assert_eq!(proposal.category, ProposalCategory::Economic);
+    }
+
+    #[test]
+    fn test_vote() {
+        let vote = Vote {
+            voter: "Alice".to_string(),
+            proposal_id: "prop1".to_string(),
+            in_favor: true,
+            weight: 1.0,
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(vote.voter, "Alice");
+        assert_eq!(vote.proposal_id, "prop1");
+        assert!(vote.in_favor);
+        assert_eq!(vote.weight, 1.0);
+    }
+
+    #[test]
+    fn test_currency_type() {
+        let basic_needs = CurrencyType::BasicNeeds;
+        let custom = CurrencyType::Custom("CustomCoin".to_string());
+        let asset_token = CurrencyType::AssetToken("RealEstate".to_string());
+
+        assert_ne!(basic_needs, custom);
+        assert_ne!(basic_needs, asset_token);
+        assert_ne!(custom, asset_token);
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
@@ -1349,14 +1393,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
+icn_blockchain = { path = "../icn_blockchain" }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
-sha2 = "0.9"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
@@ -1657,7 +1700,8 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
-use icn_common_types::{IcnResult, IcnError, Block, Transaction};
+use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_blockchain::Blockchain;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use chrono::Utc;
@@ -1791,7 +1835,6 @@ impl PoCConsensus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
 
     #[test]
     fn test_add_and_remove_member() {
@@ -1826,9 +1869,9 @@ mod tests {
             transactions: vec![Transaction::new(
                 "Alice".to_string(),
                 "Bob".to_string(),
-                100.0,
+                200.0,
                 CurrencyType::BasicNeeds,
-                Utc::now().timestamp(),
+                1000,
             )],
             previous_hash: "previous_hash".to_string(),
             hash: "hash".to_string(),
@@ -2090,7 +2133,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-use icn_common_types::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_common::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
@@ -2217,6 +2261,33 @@ impl IcnNode {
             .map_err(|e| IcnError::Vm(e.to_string()))?
             .execute_contract(contract_id, input)
     }
+
+    pub fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
+        self.identity_manager
+            .lock()
+            .map_err(|e| IcnError::Identity(e.to_string()))?
+            .create_identity(attributes)
+    }
+
+    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
+        // Implement resource allocation logic
+        Ok(())
+    }
+
+    pub fn get_network_stats(&self) -> IcnResult<NetworkStats> {
+        // Implement network statistics gathering
+        Ok(NetworkStats {
+            connected_peers: 0,
+            total_transactions: 0,
+            uptime: std::time::Duration::from_secs(0),
+        })
+    }
+}
+
+pub struct NetworkStats {
+    pub connected_peers: usize,
+    pub total_transactions: usize,
+    pub uptime: std::time::Duration,
 }
 
 #[cfg(test)]
@@ -2855,16 +2926,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
-icn_utils = { path = "../icn_utils" }
 log = "0.4"
 thiserror = "1.0"
-chrono = "0.4"
-sha2 = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/Cargo.toml =====
+tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/asset_token.rs =====
 use serde::{Serialize, Deserialize};
@@ -3087,9 +3156,9 @@ impl CurrencySystem {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/currency.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
-use icn_common_types::{IcnResult, IcnError, CurrencyType};
+use icn_common::{IcnResult, IcnError, CurrencyType};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
 pub struct Currency {
@@ -3284,6 +3353,69 @@ mod tests {
         let converted_amount = system.convert_currency(&CurrencyType::BasicNeeds, &CurrencyType::Education, 100.0).unwrap();
         assert!(converted_amount > 0.0);
     }
+
+    #[test]
+    fn test_currency_operations() {
+        let mut currency = Currency::new(CurrencyType::BasicNeeds, 1000.0, 0.01);
+
+        // Test minting
+        currency.mint(100.0).unwrap();
+        assert_eq!(currency.total_supply, 1100.0);
+
+        // Test burning
+        currency.burn(50.0).unwrap();
+        assert_eq!(currency.total_supply, 1050.0);
+
+        // Test burning more than available
+        assert!(currency.burn(2000.0).is_err());
+    }
+
+    #[test]
+    fn test_custom_currency() {
+        let mut system = CurrencySystem::new();
+
+        // Create a custom currency
+        system.create_custom_currency("GreenCoin".to_string(), 5000.0, 0.02).unwrap();
+
+        // Verify the custom currency was created
+        let green_coin = CurrencyType::Custom("GreenCoin".to_string());
+        assert!(system.currencies.contains_key(&green_coin));
+
+        // Test operations with custom currency
+        system.update_balance("Alice", &green_coin, 100.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &green_coin), 100.0);
+
+        system.transfer("Alice", "Bob", &green_coin, 50.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &green_coin), 50.0);
+        assert_eq!(system.get_balance("Bob", &green_coin), 50.0);
+
+        // Test creating a duplicate custom currency
+        assert!(system.create_custom_currency("GreenCoin".to_string(), 1000.0, 0.01).is_err());
+    }
+
+    #[test]
+    fn test_exchange_rates() {
+        let mut system = CurrencySystem::new();
+
+        // Test exchange rate between two existing currencies
+        let rate = system.get_exchange_rate(&CurrencyType::BasicNeeds, &CurrencyType::Education).unwrap();
+        assert!(rate > 0.0);
+
+        // Test exchange rate with custom currency
+        system.create_custom_currency("TechCoin".to_string(), 100_000.0, 0.03).unwrap();
+        let tech_coin = CurrencyType::Custom("TechCoin".to_string());
+        let rate = system.get_exchange_rate(&CurrencyType::BasicNeeds, &tech_coin).unwrap();
+        assert!(rate > 0.0);
+
+        // Test currency conversion
+        let amount = 100.0;
+        let converted = system.convert_currency(&CurrencyType::BasicNeeds, &CurrencyType::Education, amount).unwrap();
+        assert!(converted > 0.0);
+
+        // Test exchange rate with non-existent currency
+        let non_existent = CurrencyType::Custom("NonExistent".to_string());
+        assert!(system.get_exchange_rate(&CurrencyType::BasicNeeds, &non_existent).is_err());
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/wallet.rs =====
@@ -3382,15 +3514,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
-icn_utils = { path = "../icn_utils" }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/Cargo.toml =====
+tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/democracy.rs =====
 use icn_utils::{Error, Result, Proposal, Vote};
@@ -3594,7 +3725,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/democracy.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
-use icn_common_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
+use icn_common::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
 use chrono::{DateTime, Utc, Duration};
 use std::collections::HashMap;
 
@@ -3781,9 +3912,76 @@ mod tests {
             1.5, // Invalid quorum (should be between 0 and 1)
             None,
         );
-        assert!(invalid_proposal_result.is_ok()); // The create_proposal function doesn't validate the quorum, so this will still succeed
+        assert!(invalid_proposal_result.is_ok()); // The create_proposal function doesn't validate the quorum
 
-        // In a real-world scenario, you might want to add validation for the quorum in the create_proposal function
+        // Test quorum not reached
+        let low_quorum_proposal_id = gov_system.create_proposal(
+            "Low Quorum Proposal".to_string(),
+            "This proposal has a low quorum".to_string(),
+            "Grace".to_string(),
+            Duration::days(7),
+            ProposalType::NetworkUpgrade,
+            ProposalCategory::Technical,
+            0.9, // High quorum
+            None,
+        ).unwrap();
+
+        gov_system.vote("Alice".to_string(), low_quorum_proposal_id.clone(), true, 0.3).unwrap();
+        gov_system.vote("Bob".to_string(), low_quorum_proposal_id.clone(), true, 0.3).unwrap();
+
+        // Fast-forward time
+        let proposal = gov_system.proposals.get_mut(&low_quorum_proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        gov_system.tally_votes(&low_quorum_proposal_id).unwrap();
+        let low_quorum_proposal = gov_system.get_proposal(&low_quorum_proposal_id).unwrap();
+        assert_eq!(low_quorum_proposal.status, ProposalStatus::Rejected); // Rejected due to not meeting quorum
+
+        // Test proposal with execution timestamp
+        let future_execution_time = Utc::now() + Duration::days(30);
+        let scheduled_proposal_id = gov_system.create_proposal(
+            "Scheduled Proposal".to_string(),
+            "This proposal has a scheduled execution time".to_string(),
+            "Hannah".to_string(),
+            Duration::days(7),
+            ProposalType::Constitutional,
+            ProposalCategory::Economic,
+            0.5,
+            Some(future_execution_time),
+        ).unwrap();
+
+        gov_system.vote("Alice".to_string(), scheduled_proposal_id.clone(), true, 1.0).unwrap();
+        gov_system.vote("Bob".to_string(), scheduled_proposal_id.clone(), true, 1.0).unwrap();
+
+        // Fast-forward time
+        let proposal = gov_system.proposals.get_mut(&scheduled_proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        gov_system.tally_votes(&scheduled_proposal_id).unwrap();
+        let scheduled_proposal = gov_system.get_proposal(&scheduled_proposal_id).unwrap();
+        assert_eq!(scheduled_proposal.status, ProposalStatus::Passed);
+        assert_eq!(scheduled_proposal.execution_timestamp, Some(future_execution_time));
+
+        // Test listing active proposals
+        let active_proposal_id = gov_system.create_proposal(
+            "Active Proposal".to_string(),
+            "This proposal is still active".to_string(),
+            "Ian".to_string(),
+            Duration::days(7),
+            ProposalType::EconomicAdjustment,
+            ProposalCategory::Economic,
+            0.5,
+            None,
+        ).unwrap();
+
+        let active_proposals = gov_system.list_active_proposals();
+        assert_eq!(active_proposals.len(), 1);
+        assert_eq!(active_proposals[0].id, active_proposal_id);
+
+        // Test error cases
+        assert!(gov_system.vote("Alice".to_string(), "non_existent_id".to_string(), true, 1.0).is_err());
+        assert!(gov_system.tally_votes("non_existent_id").is_err());
+        assert!(gov_system.mark_as_implemented("non_existent_id").is_err());
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
 
@@ -4193,15 +4391,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
-
-# Remove the dependency on icn_core
-# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
@@ -5325,10 +5519,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
-icn_core = { path = "../icn_core" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
@@ -5951,16 +6143,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 sha2 = "0.9"
-
-# Remove the dependency on icn_core
-# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/Cargo.toml =====
@@ -6178,7 +6366,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_core = { path = "../icn_core" }
+icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
 icn_consensus = { path = "../icn_consensus" }
 icn_currency = { path = "../icn_currency" }
@@ -6186,7 +6374,10 @@ icn_governance = { path = "../icn_governance" }
 icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
 icn_sharding = { path = "../icn_sharding" }
+icn_storage = { path = "../icn_storage" }
 icn_vm = { path = "../icn_vm" }
+icn_core = { path = "../icn_core" }
+icn_api = { path = "../icn_api" }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 env_logger = "0.9"
@@ -6941,16 +7132,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
 thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-icn_common_types = { path = "../icn_common_types" }
 
 [dev-dependencies]
-tokio-test = "0.4"
-===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml =====
+tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/compiler.rs =====
 use crate::vm::opcode::{Opcode, Value};

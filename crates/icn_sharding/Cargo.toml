@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
-icn_core = { path = "../icn_core" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"

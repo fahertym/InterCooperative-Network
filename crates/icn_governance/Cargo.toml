@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
-icn_utils = { path = "../icn_utils" }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }

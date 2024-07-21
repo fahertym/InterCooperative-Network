@@ -1,6 +1,6 @@
-use icn_common_types::{IcnResult, IcnError, CurrencyType};
+use icn_common::{IcnResult, IcnError, CurrencyType};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
 pub struct Currency {
@@ -194,5 +194,68 @@ mod tests {
 
         let converted_amount = system.convert_currency(&CurrencyType::BasicNeeds, &CurrencyType::Education, 100.0).unwrap();
         assert!(converted_amount > 0.0);
+    }
+
+    #[test]
+    fn test_currency_operations() {
+        let mut currency = Currency::new(CurrencyType::BasicNeeds, 1000.0, 0.01);
+
+        // Test minting
+        currency.mint(100.0).unwrap();
+        assert_eq!(currency.total_supply, 1100.0);
+
+        // Test burning
+        currency.burn(50.0).unwrap();
+        assert_eq!(currency.total_supply, 1050.0);
+
+        // Test burning more than available
+        assert!(currency.burn(2000.0).is_err());
+    }
+
+    #[test]
+    fn test_custom_currency() {
+        let mut system = CurrencySystem::new();
+
+        // Create a custom currency
+        system.create_custom_currency("GreenCoin".to_string(), 5000.0, 0.02).unwrap();
+
+        // Verify the custom currency was created
+        let green_coin = CurrencyType::Custom("GreenCoin".to_string());
+        assert!(system.currencies.contains_key(&green_coin));
+
+        // Test operations with custom currency
+        system.update_balance("Alice", &green_coin, 100.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &green_coin), 100.0);
+
+        system.transfer("Alice", "Bob", &green_coin, 50.0).unwrap();
+        assert_eq!(system.get_balance("Alice", &green_coin), 50.0);
+        assert_eq!(system.get_balance("Bob", &green_coin), 50.0);
+
+        // Test creating a duplicate custom currency
+        assert!(system.create_custom_currency("GreenCoin".to_string(), 1000.0, 0.01).is_err());
+    }
+
+    #[test]
+    fn test_exchange_rates() {
+        let mut system = CurrencySystem::new();
+
+        // Test exchange rate between two existing currencies
+        let rate = system.get_exchange_rate(&CurrencyType::BasicNeeds, &CurrencyType::Education).unwrap();
+        assert!(rate > 0.0);
+
+        // Test exchange rate with custom currency
+        system.create_custom_currency("TechCoin".to_string(), 100_000.0, 0.03).unwrap();
+        let tech_coin = CurrencyType::Custom("TechCoin".to_string());
+        let rate = system.get_exchange_rate(&CurrencyType::BasicNeeds, &tech_coin).unwrap();
+        assert!(rate > 0.0);
+
+        // Test currency conversion
+        let amount = 100.0;
+        let converted = system.convert_currency(&CurrencyType::BasicNeeds, &CurrencyType::Education, amount).unwrap();
+        assert!(converted > 0.0);
+
+        // Test exchange rate with non-existent currency
+        let non_existent = CurrencyType::Custom("NonExistent".to_string());
+        assert!(system.get_exchange_rate(&CurrencyType::BasicNeeds, &non_existent).is_err());
     }
 }

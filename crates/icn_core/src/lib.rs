@@ -1,4 +1,5 @@
-use icn_common_types::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_common::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
+use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
@@ -125,6 +126,33 @@ impl IcnNode {
             .map_err(|e| IcnError::Vm(e.to_string()))?
             .execute_contract(contract_id, input)
     }
+
+    pub fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
+        self.identity_manager
+            .lock()
+            .map_err(|e| IcnError::Identity(e.to_string()))?
+            .create_identity(attributes)
+    }
+
+    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
+        // Implement resource allocation logic
+        Ok(())
+    }
+
+    pub fn get_network_stats(&self) -> IcnResult<NetworkStats> {
+        // Implement network statistics gathering
+        Ok(NetworkStats {
+            connected_peers: 0,
+            total_transactions: 0,
+            uptime: std::time::Duration::from_secs(0),
+        })
+    }
+}
+
+pub struct NetworkStats {
+    pub connected_peers: usize,
+    pub total_transactions: usize,
+    pub uptime: std::time::Duration,
 }
 
 #[cfg(test)]

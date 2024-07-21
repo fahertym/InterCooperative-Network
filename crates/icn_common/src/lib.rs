@@ -87,29 +87,10 @@ pub struct Vote {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NodeType {
-    PersonalDevice,
-    CooperativeServer,
-    GovernmentServer,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Node {
-    pub id: String,
-    pub node_type: NodeType,
-    pub address: String,
-}
-
-pub trait Validator<T> {
-    fn validate(&self, item: &T) -> bool;
-}
-
 pub trait Hashable {
     fn hash(&self) -> String;
 }
 
-// Implement Hashable for Block and Transaction
 impl Hashable for Block {
     fn hash(&self) -> String {
         use sha2::{Sha256, Digest};
@@ -252,5 +233,53 @@ mod tests {
         // Test with wrong public key
         let wrong_keypair: Keypair = Keypair::generate(&mut csprng);
         assert!(!tx.verify(wrong_keypair.public.as_bytes()).unwrap());
+    }
+
+    #[test]
+    fn test_proposal() {
+        let proposal = Proposal {
+            id: "prop1".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+
+        assert_eq!(proposal.status, ProposalStatus::Active);
+        assert_eq!(proposal.proposal_type, ProposalType::Constitutional);
+        assert_eq!(proposal.category, ProposalCategory::Economic);
+    }
+
+    #[test]
+    fn test_vote() {
+        let vote = Vote {
+            voter: "Alice".to_string(),
+            proposal_id: "prop1".to_string(),
+            in_favor: true,
+            weight: 1.0,
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(vote.voter, "Alice");
+        assert_eq!(vote.proposal_id, "prop1");
+        assert!(vote.in_favor);
+        assert_eq!(vote.weight, 1.0);
+    }
+
+    #[test]
+    fn test_currency_type() {
+        let basic_needs = CurrencyType::BasicNeeds;
+        let custom = CurrencyType::Custom("CustomCoin".to_string());
+        let asset_token = CurrencyType::AssetToken("RealEstate".to_string());
+
+        assert_ne!(basic_needs, custom);
+        assert_ne!(basic_needs, asset_token);
+        assert_ne!(custom, asset_token);
     }
 }

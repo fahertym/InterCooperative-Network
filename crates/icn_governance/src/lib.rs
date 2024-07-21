@@ -1,4 +1,4 @@
-use icn_common_types::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
+use icn_common::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory, Vote};
 use chrono::{DateTime, Utc, Duration};
 use std::collections::HashMap;
 
@@ -185,8 +185,75 @@ mod tests {
             1.5, // Invalid quorum (should be between 0 and 1)
             None,
         );
-        assert!(invalid_proposal_result.is_ok()); // The create_proposal function doesn't validate the quorum, so this will still succeed
+        assert!(invalid_proposal_result.is_ok()); // The create_proposal function doesn't validate the quorum
 
-        // In a real-world scenario, you might want to add validation for the quorum in the create_proposal function
+        // Test quorum not reached
+        let low_quorum_proposal_id = gov_system.create_proposal(
+            "Low Quorum Proposal".to_string(),
+            "This proposal has a low quorum".to_string(),
+            "Grace".to_string(),
+            Duration::days(7),
+            ProposalType::NetworkUpgrade,
+            ProposalCategory::Technical,
+            0.9, // High quorum
+            None,
+        ).unwrap();
+
+        gov_system.vote("Alice".to_string(), low_quorum_proposal_id.clone(), true, 0.3).unwrap();
+        gov_system.vote("Bob".to_string(), low_quorum_proposal_id.clone(), true, 0.3).unwrap();
+
+        // Fast-forward time
+        let proposal = gov_system.proposals.get_mut(&low_quorum_proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        gov_system.tally_votes(&low_quorum_proposal_id).unwrap();
+        let low_quorum_proposal = gov_system.get_proposal(&low_quorum_proposal_id).unwrap();
+        assert_eq!(low_quorum_proposal.status, ProposalStatus::Rejected); // Rejected due to not meeting quorum
+
+        // Test proposal with execution timestamp
+        let future_execution_time = Utc::now() + Duration::days(30);
+        let scheduled_proposal_id = gov_system.create_proposal(
+            "Scheduled Proposal".to_string(),
+            "This proposal has a scheduled execution time".to_string(),
+            "Hannah".to_string(),
+            Duration::days(7),
+            ProposalType::Constitutional,
+            ProposalCategory::Economic,
+            0.5,
+            Some(future_execution_time),
+        ).unwrap();
+
+        gov_system.vote("Alice".to_string(), scheduled_proposal_id.clone(), true, 1.0).unwrap();
+        gov_system.vote("Bob".to_string(), scheduled_proposal_id.clone(), true, 1.0).unwrap();
+
+        // Fast-forward time
+        let proposal = gov_system.proposals.get_mut(&scheduled_proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        gov_system.tally_votes(&scheduled_proposal_id).unwrap();
+        let scheduled_proposal = gov_system.get_proposal(&scheduled_proposal_id).unwrap();
+        assert_eq!(scheduled_proposal.status, ProposalStatus::Passed);
+        assert_eq!(scheduled_proposal.execution_timestamp, Some(future_execution_time));
+
+        // Test listing active proposals
+        let active_proposal_id = gov_system.create_proposal(
+            "Active Proposal".to_string(),
+            "This proposal is still active".to_string(),
+            "Ian".to_string(),
+            Duration::days(7),
+            ProposalType::EconomicAdjustment,
+            ProposalCategory::Economic,
+            0.5,
+            None,
+        ).unwrap();
+
+        let active_proposals = gov_system.list_active_proposals();
+        assert_eq!(active_proposals.len(), 1);
+        assert_eq!(active_proposals[0].id, active_proposal_id);
+
+        // Test error cases
+        assert!(gov_system.vote("Alice".to_string(), "non_existent_id".to_string(), true, 1.0).is_err());
+        assert!(gov_system.tally_votes("non_existent_id").is_err());
+        assert!(gov_system.mark_as_implemented("non_existent_id").is_err());
     }
 }
