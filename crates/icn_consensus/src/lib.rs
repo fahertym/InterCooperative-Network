@@ -1,6 +1,6 @@
-use icn_common::{IcnResult, IcnError, Block};
+use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
-use log::info;
+use log::{info, warn};
 use rand::Rng;
 
 #[derive(Debug, Clone)]
@@ -57,7 +57,6 @@ impl PoCConsensus {
 
     pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
         // In a real implementation, this would involve more complex validation logic
-        // For now, we'll just check if the block has any transactions
         if block.transactions.is_empty() {
             return Err(IcnError::Consensus("Block has no transactions".into()));
         }
@@ -160,11 +159,11 @@ mod tests {
 
         let block = Block {
             index: 1,
-            timestamp: Utc::now().timestamp(),
+            timestamp: chrono::Utc::now().timestamp(),
             transactions: vec![Transaction::new(
                 "Alice".to_string(),
                 "Bob".to_string(),
-                200.0,
+                100.0,
                 CurrencyType::BasicNeeds,
                 1000,
             )],

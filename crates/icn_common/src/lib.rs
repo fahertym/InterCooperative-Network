@@ -1,5 +1,7 @@
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use thiserror::Error;
+
 pub mod error;
 pub use error::{IcnError, IcnResult};
 
@@ -193,7 +195,7 @@ mod tests {
         assert_eq!(hash.len(), 64);
     }
 
-    #[test]
+    ##[test]
     fn test_block_hash() {
         let tx = Transaction::new(
             "Alice".to_string(),

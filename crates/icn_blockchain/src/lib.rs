@@ -1,4 +1,4 @@
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType};
 use std::collections::VecDeque;
 use chrono::Utc;
 use log::info;
@@ -53,17 +53,12 @@ impl Blockchain {
         block
     }
 
-
-
-
-   
-pub fn verify_transaction(&self, _transaction: &Transaction) -> IcnResult<bool> {
-    // Implement transaction verification logic
-         // For example, check if the sender has sufficient balance
+    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        // Implement transaction verification logic
+        // For example, check if the sender has sufficient balance
         // and if the signature is valid
-    Ok(true) // Placeholder
-}
-
+        Ok(true) // Placeholder implementation
+    }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
         self.chain.last()
@@ -155,5 +150,24 @@ mod tests {
         // Tamper with a block
         blockchain.chain[1].transactions[0].amount = 200.0;
         assert!(!blockchain.validate_chain().unwrap());
+    }
+
+    #[test]
+    fn test_get_block_methods() {
+        let mut blockchain = Blockchain::new().unwrap();
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            Utc::now().timestamp(),
+        );
+
+        blockchain.add_transaction(transaction).unwrap();
+        let new_block = blockchain.create_block().unwrap();
+
+        assert_eq!(blockchain.get_latest_block().unwrap().hash, new_block.hash);
+        assert_eq!(blockchain.get_block_by_index(1).unwrap().hash, new_block.hash);
+        assert_eq!(blockchain.get_block_by_hash(&new_block.hash).unwrap().index, 1);
     }
 }
