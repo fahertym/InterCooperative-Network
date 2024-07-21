@@ -1,19 +1,20 @@
-use icn_common::{Error, Result};
-use std::collections::BTreeMap;
-use sha2::{Sha256, Digest};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageNode {
     id: String,
-    data: BTreeMap<String, Vec<u8>>,
+    data: HashMap<String, Vec<u8>>,
 }
 
 impl StorageNode {
     pub fn new(id: String) -> Self {
         StorageNode {
             id,
-            data: BTreeMap::new(),
+            data: HashMap::new(),
         }
     }
 
@@ -30,134 +31,101 @@ impl StorageNode {
     pub fn delete(&mut self, hash: &str) -> bool {
         self.data.remove(hash).is_some()
     }
-
-    pub fn update(&mut self, hash: &str, new_content: Vec<u8>) -> Result<()> {
-        let new_hash = calculate_hash(&new_content);
-        if new_hash != hash {
-            return Err(Error::StorageError("Update would change the hash, use store instead".into()));
-        }
-        self.data.insert(hash.to_string(), new_content);
-        Ok(())
-    }
-
-    pub fn list_hashes(&self) -> Vec<String> {
-        self.data.keys().cloned().collect()
-    }
-
-    pub fn contains(&self, hash: &str) -> bool {
-        self.data.contains_key(hash)
-    }
 }
 
+#[derive(Debug)]
 pub struct StorageManager {
-    nodes: BTreeMap<String, StorageNode>,
+    nodes: Arc<RwLock<HashMap<String, Arc<RwLock<StorageNode>>>>>,
+    replication_factor: usize,
 }
 
 impl StorageManager {
-    pub fn new() -> Self {
+    pub fn new(replication_factor: usize) -> Self {
         StorageManager {
-            nodes: BTreeMap::new(),
+            nodes: Arc::new(RwLock::new(HashMap::new())),
+            replication_factor,
         }
     }
 
-    pub fn add_node(&mut self, node: StorageNode) -> Result<()> {
-        if self.nodes.contains_key(&node.id) {
-            return Err(Error::StorageError("Node already exists".into()));
-        }
-        self.nodes.insert(node.id.clone(), node);
+    pub async fn add_node(&self, node: StorageNode) -> Result<(), String> {
+        let mut nodes = self.nodes.write().map_err(|e| e.to_string())?;
+        nodes.insert(node.id.clone(), Arc::new(RwLock::new(node)));
         Ok(())
     }
 
-    pub fn remove_node(&mut self, node_id: &str) -> Result<()> {
-        if self.nodes.remove(node_id).is_none() {
-            return Err(Error::StorageError("Node not found".into()));
-        }
-        Ok(())
-    }
-
-    pub fn store_data(&mut self, content: Vec<u8>) -> Result<String> {
-        if self.nodes.is_empty() {
-            return Err(Error::StorageError("No storage nodes available".into()));
-        }
+    pub async fn store_data(&self, content: Vec<u8>) -> Result<String, String> {
+        let hash = calculate_hash(&content);
+        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
         
-        // Simple round-robin selection for now
-        let node = self.nodes.values_mut().next().unwrap();
-        let hash = node.store(content);
+        if nodes.len() < self.replication_factor {
+            return Err("Not enough nodes for replication".to_string());
+        }
+
+        let selected_nodes: Vec<_> = nodes.values().take(self.replication_factor).collect();
+
+        for node in selected_nodes {
+            let mut node = node.write().map_err(|e| e.to_string())?;
+            node.store(content.clone());
+        }
+
         Ok(hash)
     }
 
-    pub fn retrieve_data(&self, hash: &str) -> Result<Vec<u8>> {
-        for node in self.nodes.values() {
+    pub async fn retrieve_data(&self, hash: &str) -> Result<Option<Vec<u8>>, String> {
+        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
+
+        for node in nodes.values() {
+            let node = node.read().map_err(|e| e.to_string())?;
             if let Some(data) = node.retrieve(hash) {
-                return Ok(data.clone());
+                return Ok(Some(data.clone()));
             }
         }
-        Err(Error::StorageError("Data not found".into()))
+
+        Ok(None)
     }
 
-    pub fn delete_data(&mut self, hash: &str) -> Result<()> {
-        for node in self.nodes.values_mut() {
+    pub async fn delete_data(&self, hash: &str) -> Result<bool, String> {
+        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
+        let mut deleted = false;
+
+        for node in nodes.values() {
+            let mut node = node.write().map_err(|e| e.to_string())?;
             if node.delete(hash) {
-                return Ok(());
+                deleted = true;
             }
         }
-        Err(Error::StorageError("Data not found".into()))
-    }
 
-    pub fn update_data(&mut self, hash: &str, new_content: Vec<u8>) -> Result<()> {
-        for node in self.nodes.values_mut() {
-            if node.contains(hash) {
-                return node.update(hash, new_content);
-            }
-        }
-        Err(Error::StorageError("Data not found".into()))
-    }
-
-    pub fn list_all_hashes(&self) -> Vec<String> {
-        let mut all_hashes = Vec::new();
-        for node in self.nodes.values() {
-            all_hashes.extend(node.list_hashes());
-        }
-        all_hashes.sort_unstable();
-        all_hashes.dedup();
-        all_hashes
+        Ok(deleted)
     }
 }
 
 fn calculate_hash(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
-    let result = hasher.finalize();
-    hex::encode(result)
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_storage_operations() {
-        let mut manager = StorageManager::new();
-        let node1 = StorageNode::new("node1".to_string());
-        let node2 = StorageNode::new("node2".to_string());
+    #[tokio::test]
+    async fn test_storage_operations() {
+        let manager = StorageManager::new(2);
 
-        manager.add_node(node1).unwrap();
-        manager.add_node(node2).unwrap();
+        manager.add_node(StorageNode::new("node1".to_string())).await.unwrap();
+        manager.add_node(StorageNode::new("node2".to_string())).await.unwrap();
 
         let content = b"Test data".to_vec();
-        let hash = manager.store_data(content.clone()).unwrap();
+        let hash = manager.store_data(content.clone()).await.unwrap();
 
-        let retrieved_data = manager.retrieve_data(&hash).unwrap();
+        let retrieved_data = manager.retrieve_data(&hash).await.unwrap().unwrap();
         assert_eq!(retrieved_data, content);
 
-        manager.update_data(&hash, b"Updated data".to_vec()).unwrap();
-        let updated_data = manager.retrieve_data(&hash).unwrap();
-        assert_eq!(updated_data, b"Updated data".to_vec());
+        let deleted = manager.delete_data(&hash).await.unwrap();
+        assert!(deleted);
 
-        manager.delete_data(&hash).unwrap();
-        assert!(manager.retrieve_data(&hash).is_err());
-
-        let all_hashes = manager.list_all_hashes();
-        assert!(all_hashes.is_empty());
+        let not_found = manager.retrieve_data(&hash).await.unwrap();
+        assert!(not_found.is_none());
     }
 }
