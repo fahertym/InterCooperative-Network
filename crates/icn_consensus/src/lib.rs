@@ -1,9 +1,6 @@
-use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use icn_blockchain::Blockchain;
+use icn_common::{IcnResult, IcnError, Block};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use chrono::Utc;
-use log::{info, warn, error};
+use log::info;
 use rand::Rng;
 
 #[derive(Debug, Clone)]
@@ -67,7 +64,7 @@ impl PoCConsensus {
         Ok(true)
     }
 
-    pub fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
+    pub fn reach_consensus(&self, _block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
         let total_reputation: f64 = self.members.values().filter(|m| m.is_validator).map(|m| m.reputation).sum();
 
         let mut positive_reputation = 0.0;
@@ -108,7 +105,7 @@ impl PoCConsensus {
         let random_point = rng.gen::<f64>() * total_reputation;
 
         let mut cumulative_reputation = 0.0;
-        for validator in validators {
+        for validator in &validators {
             cumulative_reputation += validator.reputation;
             if cumulative_reputation > random_point {
                 return Ok(validator);

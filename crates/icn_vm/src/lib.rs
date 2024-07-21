@@ -1,12 +1,12 @@
-use icn_common_types::{IcnResult, IcnError};
+use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    String(String),
+    Str(String),
 }
 
 #[derive(Debug, Clone)]

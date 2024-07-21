@@ -1,4 +1,4 @@
-use icn_common_types::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use sha2::{Sha256, Digest};
 
@@ -26,7 +26,7 @@ impl ShardingManager {
                 pending_transactions: Vec::new(),
             });
         }
-        
+
         ShardingManager {
             shards,
             shard_count,
@@ -53,11 +53,11 @@ impl ShardingManager {
     fn update_balances(&mut self, shard: &mut Shard, transaction: &Transaction) -> IcnResult<()> {
         let sender_balances = shard.balances.entry(transaction.from.clone()).or_insert_with(HashMap::new);
         let sender_balance = sender_balances.entry(transaction.currency_type.clone()).or_insert(0.0);
-        
+
         if *sender_balance < transaction.amount {
             return Err(IcnError::Sharding("Insufficient balance".to_string()));
         }
-        
+
         *sender_balance -= transaction.amount;
 
         let recipient_balances = shard.balances.entry(transaction.to.clone()).or_insert_with(HashMap::new);
@@ -70,7 +70,7 @@ impl ShardingManager {
     pub fn create_block(&mut self, shard_id: u64) -> IcnResult<Block> {
         let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
         let previous_block = shard.blockchain.last().ok_or_else(|| IcnError::Sharding("No previous block found".to_string()))?;
-        
+
         let new_block = Block {
             index: shard.blockchain.len() as u64,
             timestamp: chrono::Utc::now().timestamp(),
@@ -97,10 +97,11 @@ impl ShardingManager {
         self.address_to_shard.insert(address, shard_id);
         Ok(())
     }
+
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let shard_id = self.get_shard_for_address(address);
         let shard = self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
-        
+
         Ok(shard.balances
             .get(address)
             .and_then(|balances| balances.get(currency_type))
@@ -136,7 +137,7 @@ impl ShardingManager {
             hasher.update(format!("{:?}", transaction.currency_type).as_bytes());
         }
         hasher.update(block.previous_hash.as_bytes());
-        
+
         let hash = format!("{:x}", hasher.finalize());
         block.hash = hash;
         block
@@ -144,15 +145,19 @@ impl ShardingManager {
 
     pub fn transfer_between_shards(&mut self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
         // Deduct from the source shard
-        let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
-        self.update_balances(from_shard, transaction)?;
+        {
+            let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
+            self.update_balances(from_shard, transaction)?;
+        }
 
         // Add to the destination shard
-        let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
-        let mut reverse_transaction = transaction.clone();
-        reverse_transaction.from = transaction.to.clone();
-        reverse_transaction.to = transaction.from.clone();
-        self.update_balances(to_shard, &reverse_transaction)?;
+        {
+            let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
+            let mut reverse_transaction = transaction.clone();
+            reverse_transaction.from = transaction.to.clone();
+            reverse_transaction.to = transaction.from.clone();
+            self.update_balances(to_shard, &reverse_transaction)?;
+        }
 
         Ok(())
     }

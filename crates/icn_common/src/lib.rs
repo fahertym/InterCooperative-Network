@@ -1,7 +1,5 @@
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use thiserror::Error;
-
 pub mod error;
 pub use error::{IcnError, IcnResult};
 

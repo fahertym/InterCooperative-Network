@@ -1,7 +1,7 @@
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType};
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::VecDeque;
 use chrono::Utc;
-use log::{info, warn, error};
+use log::info;
 
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
 
@@ -53,12 +53,17 @@ impl Blockchain {
         block
     }
 
-    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        // Implement transaction verification logic
-        // For example, check if the sender has sufficient balance
+
+
+
+   
+pub fn verify_transaction(&self, _transaction: &Transaction) -> IcnResult<bool> {
+    // Implement transaction verification logic
+         // For example, check if the sender has sufficient balance
         // and if the signature is valid
-        Ok(true) // Placeholder
-    }
+    Ok(true) // Placeholder
+}
+
 
     pub fn get_latest_block(&self) -> Option<&Block> {
         self.chain.last()

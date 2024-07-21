@@ -27,10 +27,10 @@ pub enum IcnError {
     Storage(String),
 
     #[error("VM error: {0}")]
-    Vm(String),
+    VM(String),
 
     #[error("API error: {0}")]
-    Api(String),
+    API(String),
 
     #[error("Serialization error: {0}")]
     Serialization(String),
@@ -39,4 +39,4 @@ pub enum IcnError {
     Io(#[from] std::io::Error),
 }
 
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
+pub type IcnResult<T> = Result<T, IcnError>;

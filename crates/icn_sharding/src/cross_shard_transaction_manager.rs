@@ -1,109 +1,231 @@
-use crate::blockchain::Transaction;
-use crate::sharding::ShardingManager;
+use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use uuid::Uuid;
+use sha2::{Sha256, Digest};
 
-#[derive(Clone, Debug)]
-pub struct CrossShardTransaction {
-    pub transaction: Transaction,
-    pub from_shard: u64,
-    pub to_shard: u64,
-    pub status: CrossShardTransactionStatus,
+pub struct Shard {
+    pub id: u64,
+    pub blockchain: Vec<Block>,
+    pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
+    pub pending_transactions: Vec<Transaction>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum CrossShardTransactionStatus {
-    Initiated,
-    LockAcquired,
-    Committed,
-    Failed(String),
+pub struct ShardingManager {
+    shards: HashMap<u64, Shard>,
+    shard_count: u64,
+    address_to_shard: HashMap<String, u64>,
 }
 
-pub struct CrossShardCommunicator {
-    sharding_manager: Arc<Mutex<ShardingManager>>,
-    pending_transactions: HashMap<String, CrossShardTransaction>,
-    tx_channels: HashMap<u64, mpsc::Sender<CrossShardTransaction>>,
-}
-
-impl CrossShardCommunicator {
-    pub fn new(sharding_manager: Arc<Mutex<ShardingManager>>) -> Self {
-        let mut tx_channels = HashMap::new();
-        let shard_count = sharding_manager.lock().unwrap().get_shard_count();
+impl ShardingManager {
+    pub fn new(shard_count: u64) -> Self {
+        let mut shards = HashMap::new();
         for i in 0..shard_count {
-            let (tx, mut rx) = mpsc::channel(100);
-            tx_channels.insert(i, tx);
-            let sm = Arc::clone(&sharding_manager);
-            tokio::spawn(async move {
-                while let Some(transaction) = rx.recv().await {
-                    if let Err(e) = Self::process_transaction(sm.clone(), transaction).await {
-                        eprintln!("Error processing cross-shard transaction: {}", e);
-                    }
-                }
+            shards.insert(i, Shard {
+                id: i,
+                blockchain: vec![Block::genesis()],
+                balances: HashMap::new(),
+                pending_transactions: Vec::new(),
             });
         }
-
-        CrossShardCommunicator {
-            sharding_manager,
-            pending_transactions: HashMap::new(),
-            tx_channels,
+        
+        ShardingManager {
+            shards,
+            shard_count,
+            address_to_shard: HashMap::new(),
         }
     }
 
-    pub async fn initiate_cross_shard_transaction(&mut self, transaction: Transaction) -> Result<String, String> {
-        let sharding_manager = self.sharding_manager.lock().unwrap();
-        let from_shard = sharding_manager.get_shard_for_address(&transaction.from);
-        let to_shard = sharding_manager.get_shard_for_address(&transaction.to);
-
-        if from_shard == to_shard {
-            return Err("Not a cross-shard transaction".to_string());
-        }
-
-        let cross_shard_tx = CrossShardTransaction {
-            transaction: transaction.clone(),
-            from_shard,
-            to_shard,
-            status: CrossShardTransactionStatus::Initiated,
-        };
-
-        let tx_id = Uuid::new_v4().to_string();
-        self.pending_transactions.insert(tx_id.clone(), cross_shard_tx.clone());
-
-        if let Some(tx) = self.tx_channels.get(&from_shard) {
-            tx.send(cross_shard_tx).await.map_err(|e| e.to_string())?;
-        } else {
-            return Err(format!("Channel for shard {} not found", from_shard));
-        }
-
-        Ok(tx_id)
+    pub fn get_shard_count(&self) -> u64 {
+        self.shard_count
     }
 
-    async fn process_transaction(sharding_manager: Arc<Mutex<ShardingManager>>, mut transaction: CrossShardTransaction) -> Result<(), String> {
-        // Phase 1: Lock funds in the source shard
+    pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
+        let shard_id = self.get_shard_for_address(&transaction.from);
         {
-            let mut sm = sharding_manager.lock().unwrap();
-            sm.lock_funds(&transaction.transaction.from, &transaction.transaction.currency_type, transaction.transaction.amount, transaction.from_shard)?;
+            let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
+            if !self.verify_transaction(shard, transaction) {
+                return Err(IcnError::Sharding("Invalid transaction".to_string()));
+            }
+            shard.pending_transactions.push(transaction.clone());
         }
-        transaction.status = CrossShardTransactionStatus::LockAcquired;
+        let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
+        self.update_balances(shard, transaction)
+    }
 
-        // Phase 2: Commit the transaction in the destination shard
-        {
-            let mut sm = sharding_manager.lock().unwrap();
-            sm.add_balance(&transaction.transaction.to, transaction.transaction.currency_type.clone(), transaction.transaction.amount)?;
+    fn update_balances(&mut self, shard: &mut Shard, transaction: &Transaction) -> IcnResult<()> {
+        let sender_balances = shard.balances.entry(transaction.from.clone()).or_insert_with(HashMap::new);
+        let sender_balance = sender_balances.entry(transaction.currency_type.clone()).or_insert(0.0);
+        
+        if *sender_balance < transaction.amount {
+            return Err(IcnError::Sharding("Insufficient balance".to_string()));
         }
+        
+        *sender_balance -= transaction.amount;
 
-        // Phase 3: Finalize by removing the lock in the source shard
-        {
-            let mut sm = sharding_manager.lock().unwrap();
-            sm.remove_fund_lock(&transaction.transaction.from, &transaction.transaction.currency_type, transaction.transaction.amount, transaction.from_shard)?;
-        }
+        let recipient_balances = shard.balances.entry(transaction.to.clone()).or_insert_with(HashMap::new);
+        let recipient_balance = recipient_balances.entry(transaction.currency_type.clone()).or_insert(0.0);
+        *recipient_balance += transaction.amount;
 
-        transaction.status = CrossShardTransactionStatus::Committed;
         Ok(())
     }
 
-    pub fn get_transaction_status(&self, tx_id: &str) -> Option<CrossShardTransactionStatus> {
-        self.pending_transactions.get(tx_id).map(|tx| tx.status.clone())
+    pub fn create_block(&mut self, shard_id: u64) -> IcnResult<Block> {
+        let new_block;
+        {
+            let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
+            let previous_block = shard.blockchain.last().ok_or_else(|| IcnError::Sharding("No previous block found".to_string()))?;
+            
+            new_block = Block {
+                index: shard.blockchain.len() as u64,
+                timestamp: chrono::Utc::now().timestamp(),
+                transactions: shard.pending_transactions.clone(),
+                previous_hash: previous_block.hash.clone(),
+                hash: String::new(), // Will be set later
+            };
+
+            shard.pending_transactions.clear();
+        }
+        let new_block = self.calculate_block_hash(new_block);
+        let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
+        shard.blockchain.push(new_block.clone());
+        Ok(new_block)
+    }
+
+    pub fn get_shard_for_address(&self, address: &str) -> u64 {
+        *self.address_to_shard.get(address).unwrap_or(&(self.hash_address(address) % self.shard_count))
+    }
+
+    pub fn add_address_to_shard(&mut self, address: String, shard_id: u64) -> IcnResult<()> {
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".to_string()));
+        }
+        self.address_to_shard.insert(address, shard_id);
+        Ok(())
+    }
+
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        let shard_id = self.get_shard_for_address(address);
+        let shard = self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
+        
+        Ok(shard.balances
+            .get(address)
+            .and_then(|balances| balances.get(currency_type))
+            .cloned()
+            .unwrap_or(0.0))
+    }
+
+    fn verify_transaction(&self, shard: &Shard, transaction: &Transaction) -> bool {
+        if let Some(sender_balances) = shard.balances.get(&transaction.from) {
+            if let Some(balance) = sender_balances.get(&transaction.currency_type) {
+                return *balance >= transaction.amount;
+            }
+        }
+        false
+    }
+
+    fn hash_address(&self, address: &str) -> u64 {
+        let mut hasher = Sha256::new();
+        hasher.update(address.as_bytes());
+        let result = hasher.finalize();
+        let hash_bytes: [u8; 8] = result[..8].try_into().unwrap_or([0; 8]);
+        u64::from_le_bytes(hash_bytes)
+    }
+
+    fn calculate_block_hash(&self, mut block: Block) -> Block {
+        let mut hasher = Sha256::new();
+        hasher.update(block.index.to_string().as_bytes());
+        hasher.update(block.timestamp.to_string().as_bytes());
+        for transaction in &block.transactions {
+            hasher.update(transaction.from.as_bytes());
+            hasher.update(transaction.to.as_bytes());
+            hasher.update(transaction.amount.to_string().as_bytes());
+            hasher.update(format!("{:?}", transaction.currency_type).as_bytes());
+        }
+        hasher.update(block.previous_hash.as_bytes());
+        
+        let hash = format!("{:x}", hasher.finalize());
+        block.hash = hash;
+        block
+    }
+
+    pub fn transfer_between_shards(&mut self, from_shard_id: u64, to_shard_id: u64, transaction: &Transaction) -> IcnResult<()> {
+        {
+            // Deduct from the source shard
+            let from_shard = self.shards.get_mut(&from_shard_id).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
+            self.update_balances(from_shard, transaction)?;
+        }
+
+        // Add to the destination shard
+        let mut reverse_transaction = transaction.clone();
+        reverse_transaction.from = transaction.to.clone();
+        reverse_transaction.to = transaction.from.clone();
+        {
+            let to_shard = self.shards.get_mut(&to_shard_id).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
+            self.update_balances(to_shard, &reverse_transaction)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_shard_state(&self, shard_id: u64) -> IcnResult<&Shard> {
+        self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sharding_manager() {
+        let mut manager = ShardingManager::new(4);
+        assert_eq!(manager.get_shard_count(), 4);
+
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        manager.add_address_to_shard("Alice".to_string(), 0).unwrap();
+        manager.add_address_to_shard("Bob".to_string(), 1).unwrap();
+
+        // Initialize Alice's balance
+        let alice_shard = manager.shards.get_mut(&0).unwrap();
+        alice_shard.balances.entry("Alice".to_string()).or_insert_with(HashMap::new).insert(CurrencyType::BasicNeeds, 200.0);
+
+        assert!(manager.process_transaction(&transaction).is_ok());
+
+        assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 100.0);
+
+        // Test block creation
+        let block = manager.create_block(0).unwrap();
+        assert_eq!(block.index, 1);
+        assert_eq!(block.transactions.len(), 1);
+
+        // Test cross-shard transaction
+        let cross_shard_tx = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1,
+            signature: None,
+        };
+
+        assert!(manager.transfer_between_shards(0, 1, &cross_shard_tx).is_ok());
+        assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 150.0);
+
+        // Test getting shard state
+        let shard_state = manager.get_shard_state(0).unwrap();
+        assert_eq!(shard_state.id, 0);
+        assert_eq!(shard_state.blockchain.len(), 2); // Genesis block + 1 new block
+
+        // Test invalid shard access
+        assert!(manager.get_shard_state(10).is_err());
     }
 }

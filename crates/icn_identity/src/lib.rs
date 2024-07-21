@@ -1,12 +1,9 @@
-use icn_common::{IcnResult, IcnError};
-use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
+use icn_common::{IcnError, IcnResult};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-// In other crates like icn_core, icn_identity, etc.
-use icn_common::{CommonError, CommonResult};
-
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecentralizedIdentity {
@@ -105,6 +102,7 @@ impl IdentityManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
 
     #[test]
     fn test_identity_creation_and_verification() {
@@ -125,7 +123,7 @@ mod tests {
         // This should fail because we're using a different keypair
         assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
         
-        /// Create a valid signature
+        // Create a valid signature
         let (_, keypair) = DecentralizedIdentity::new(HashMap::new());
         let valid_signature = keypair.sign(message);
         
