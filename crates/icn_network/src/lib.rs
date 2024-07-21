@@ -1,4 +1,4 @@
-use icn_common_types::{Node, NodeType};
+use icn_common::{Node, NodeType};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;

@@ -152,7 +152,7 @@ impl CrossShardCommunicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
+    use icn_common::CurrencyType;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 

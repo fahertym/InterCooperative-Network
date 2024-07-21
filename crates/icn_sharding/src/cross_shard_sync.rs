@@ -51,7 +51,7 @@ mod tests {
                 "Alice".to_string(),
                 "Bob".to_string(),
                 100.0,
-                icn_common_types::CurrencyType::BasicNeeds,
+                icn_common::CurrencyType::BasicNeeds,
                 0,
             )],
             previous_hash: "previous_hash".to_string(),

@@ -195,7 +195,7 @@ thiserror = "1.0"
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
-use icn_common_types::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
+use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
 use icn_common::{CommonError, CommonResult};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -2676,7 +2676,7 @@ fn test_packet_processing() {
 // icn_core/tests/integration_tests.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common_types::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use chrono::Duration;
 use log::info;
 use uuid::Uuid;
@@ -4212,7 +4212,7 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/identity_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
-use icn_common_types::{IcnResult, IcnError};
+use icn_common::{IcnResult, IcnError};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
@@ -4424,7 +4424,7 @@ impl DiscoveryService {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
-use icn_common_types::{Node, NodeType};
+use icn_common::{Node, NodeType};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -5687,7 +5687,7 @@ impl CrossShardCommunicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common_types::CurrencyType;
+    use icn_common::CurrencyType;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 
@@ -5784,7 +5784,7 @@ mod tests {
                 "Alice".to_string(),
                 "Bob".to_string(),
                 100.0,
-                icn_common_types::CurrencyType::BasicNeeds,
+                icn_common::CurrencyType::BasicNeeds,
                 0,
             )],
             previous_hash: "previous_hash".to_string(),

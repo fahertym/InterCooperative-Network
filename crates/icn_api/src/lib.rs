@@ -1,4 +1,4 @@
-use icn_common_types::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
+use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
 use icn_common::{CommonError, CommonResult};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
