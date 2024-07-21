@@ -7,6 +7,7 @@ edition = "2021"
 icn_common_types = { path = "../icn_common_types" }
 icn_common = { path = "../icn_common" }
 icn_blockchain = { path = "../icn_blockchain" }
+icn_core = { path = "../icn_core" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"
@@ -14,9 +15,6 @@ thiserror = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 sha2 = "0.9"
-
-# Remove the dependency on icn_core
-# icn_core = { path = "../icn_core" }
 
 [dev-dependencies]
 tokio-test = "0.4"
