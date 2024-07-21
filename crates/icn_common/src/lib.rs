@@ -1,6 +1,8 @@
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use thiserror::Error;
+use rand_chacha::ChaChaRng; // Import the correct RNG.
+use rand_chacha::rand_core::SeedableRng; // Ensure you can seed the RNG if needed.
+use rand::RngCore; // To satisfy trait bounds for the RNG.
+use ed25519_dalek::Keypair; // Ensure Keypair is imported to generate keys.
 
 pub mod error;
 pub use error::{IcnError, IcnResult};
@@ -180,6 +182,9 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::OsRng;
+    use rand::SeedableRng;
+    use rand_chacha::ChaChaRng;
 
     #[test]
     fn test_transaction_hash() {
@@ -195,7 +200,7 @@ mod tests {
         assert_eq!(hash.len(), 64);
     }
 
-    ##[test]
+    #[test]
     fn test_block_hash() {
         let tx = Transaction::new(
             "Alice".to_string(),
@@ -214,10 +219,9 @@ mod tests {
     #[test]
     fn test_transaction_sign_and_verify() {
         use ed25519_dalek::{Keypair, Signer};
-        use rand::rngs::OsRng;
 
-        let mut csprng = OsRng{};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
+        let mut rng = ChaChaRng::from_entropy();
+        let keypair: Keypair = Keypair::generate(&mut rng);
 
         let mut tx = Transaction::new(
             "Alice".to_string(),
@@ -231,7 +235,7 @@ mod tests {
         assert!(tx.verify(keypair.public.as_bytes()).unwrap());
 
         // Test with wrong public key
-        let wrong_keypair: Keypair = Keypair::generate(&mut csprng);
+        let wrong_keypair: Keypair = Keypair::generate(&mut rng);
         assert!(!tx.verify(wrong_keypair.public.as_bytes()).unwrap());
     }
 

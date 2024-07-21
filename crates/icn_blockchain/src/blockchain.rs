@@ -3,17 +3,34 @@ use std::collections::HashMap;
 use chrono::Utc;
 use log::{info, warn, error};
 
+/// Represents a blockchain, maintaining a list of blocks and pending transactions.
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
     transaction_validator: Box<dyn TransactionValidator>,
 }
 
+/// A trait for validating transactions within a blockchain.
 pub trait TransactionValidator: Send + Sync {
+    /// Validates a transaction within the context of a blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to validate.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the transaction is valid, `false` otherwise.
     fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> bool;
 }
 
 impl Blockchain {
+    /// Creates a new blockchain with a genesis block.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction_validator` - A validator for verifying transactions.
     pub fn new(transaction_validator: Box<dyn TransactionValidator>) -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
@@ -22,6 +39,15 @@ impl Blockchain {
         }
     }
 
+    /// Adds a new transaction to the list of pending transactions.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to add.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Blockchain` if the transaction is invalid.
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
         if self.transaction_validator.validate(&transaction, self) {
             self.pending_transactions.push(transaction);
@@ -31,10 +57,15 @@ impl Blockchain {
         }
     }
 
+    /// Creates a new block with all pending transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Blockchain` if no previous block is found.
     pub fn create_block(&mut self) -> IcnResult<Block> {
         let previous_block = self.chain.last()
             .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
-        
+
         let new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
@@ -55,6 +86,11 @@ impl Blockchain {
         block
     }
 
+    /// Validates the integrity of the blockchain.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the blockchain is valid, `false` otherwise.
     pub fn validate_chain(&self) -> bool {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
@@ -68,27 +104,55 @@ impl Blockchain {
                 return false;
             }
         }
-
         true
     }
 
+    /// Returns the latest block in the blockchain.
     pub fn get_latest_block(&self) -> Option<&Block> {
         self.chain.last()
     }
 
+    /// Returns a block by its index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the block.
+    ///
+    /// # Returns
+    ///
+    /// The block if found, `None` otherwise.
     pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
         self.chain.get(index as usize)
     }
 
+    /// Returns a block by its hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash of the block.
+    ///
+    /// # Returns
+    ///
+    /// The block if found, `None` otherwise.
     pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
         self.chain.iter().find(|block| block.hash == hash)
     }
 
+    /// Starts the blockchain.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
     pub fn start(&self) -> IcnResult<()> {
         info!("Blockchain started");
         Ok(())
     }
 
+    /// Stops the blockchain.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
     pub fn stop(&self) -> IcnResult<()> {
         info!("Blockchain stopped");
         Ok(())
