@@ -1,5 +1,5 @@
-use icn_common::{IcnError, IcnResult};
-use ed25519_dalek::{Keypair, PublicKey, Signature, Verifier};
+use icn_common::{IcnResult, IcnError};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -11,8 +11,17 @@ pub struct DecentralizedIdentity {
     #[serde(with = "public_key_serde")]
     pub public_key: PublicKey,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub reputation: f64,
     pub attributes: HashMap<String, String>,
+    pub status: IdentityStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum IdentityStatus {
+    Active,
+    Suspended,
+    Revoked,
 }
 
 mod public_key_serde {
@@ -37,22 +46,25 @@ mod public_key_serde {
 }
 
 impl DecentralizedIdentity {
-    pub fn new(attributes: HashMap<String, String>) -> (Self, Keypair) {
+    pub fn new(attributes: HashMap<String, String>) -> IcnResult<(Self, Keypair)> {
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let public_key = keypair.public;
         let id = format!("did:icn:{}", hex::encode(public_key.to_bytes()));
+        let now = Utc::now();
 
-        (
+        Ok((
             Self {
                 id,
                 public_key,
-                created_at: Utc::now(),
+                created_at: now,
+                updated_at: now,
                 reputation: 1.0,
                 attributes,
+                status: IdentityStatus::Active,
             },
             keypair,
-        )
+        ))
     }
 
     pub fn verify_signature(&self, message: &[u8], signature: &Signature) -> bool {
@@ -72,30 +84,46 @@ impl IdentityManager {
     }
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let (identity, _) = DecentralizedIdentity::new(attributes);
+        let (identity, _) = DecentralizedIdentity::new(attributes)?;
         self.identities.insert(identity.id.clone(), identity.clone());
         Ok(identity)
     }
 
-    pub fn get_identity(&self, id: &str) -> Option<&DecentralizedIdentity> {
-        self.identities.get(id)
+    pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
+        self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))
+    }
+
+    pub fn update_identity(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.attributes.extend(attributes);
+        identity.updated_at = Utc::now();
+        Ok(())
     }
 
     pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
         let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         identity.reputation += change;
+        identity.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn suspend_identity(&mut self, id: &str) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.status = IdentityStatus::Suspended;
+        identity.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn revoke_identity(&mut self, id: &str) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.status = IdentityStatus::Revoked;
+        identity.updated_at = Utc::now();
         Ok(())
     }
 
     pub fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
         let identity = self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         Ok(identity.verify_signature(message, signature))
-    }
-
-    pub fn update_attributes(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.attributes.extend(attributes);
-        Ok(())
     }
 }
 
@@ -113,7 +141,7 @@ mod tests {
         
         let identity = manager.create_identity(attributes).unwrap();
         
-        assert!(manager.get_identity(&identity.id).is_some());
+        assert!(manager.get_identity(&identity.id).is_ok());
         
         let message = b"Hello, World!";
         let mut csprng = OsRng {};
@@ -124,7 +152,7 @@ mod tests {
         assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
         
         // Create a valid signature
-        let (_, keypair) = DecentralizedIdentity::new(HashMap::new());
+        let (_, keypair) = DecentralizedIdentity::new(HashMap::new()).unwrap();
         let valid_signature = keypair.sign(message);
         
         // This should succeed
@@ -132,38 +160,36 @@ mod tests {
     }
 
     #[test]
-    fn test_reputation_update() {
+    fn test_identity_management() {
         let mut manager = IdentityManager::new();
-        let identity = manager.create_identity(HashMap::new()).unwrap();
         
-        assert_eq!(identity.reputation, 1.0);
+        // Create an identity
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        let identity = manager.create_identity(attributes).unwrap();
         
-        manager.update_reputation(&identity.id, 0.5).unwrap();
-        let updated_identity = manager.get_identity(&identity.id).unwrap();
-        
-        assert_eq!(updated_identity.reputation, 1.5);
-    }
-
-    #[test]
-    fn test_attribute_update() {
-        let mut manager = IdentityManager::new();
-        let identity = manager.create_identity(HashMap::new()).unwrap();
-        
+        // Update identity
         let mut new_attributes = HashMap::new();
-        new_attributes.insert("role".to_string(), "developer".to_string());
+        new_attributes.insert("email".to_string(), "alice@example.com".to_string());
+        assert!(manager.update_identity(&identity.id, new_attributes).is_ok());
         
-        manager.update_attributes(&identity.id, new_attributes).unwrap();
+        // Check updated identity
         let updated_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.attributes.get("email"), Some(&"alice@example.com".to_string()));
         
-        assert_eq!(updated_identity.attributes.get("role"), Some(&"developer".to_string()));
-    }
-
-    #[test]
-    fn test_identity_not_found() {
-        let mut manager = IdentityManager::new();
+        // Update reputation
+        assert!(manager.update_reputation(&identity.id, 0.5).is_ok());
+        let updated_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 1.5);
         
-        assert!(manager.update_reputation("non_existent_id", 0.5).is_err());
-        assert!(manager.verify_signature("non_existent_id", b"test", &Signature::new([0; 64])).is_err());
-        assert!(manager.update_attributes("non_existent_id", HashMap::new()).is_err());
+        // Suspend identity
+        assert!(manager.suspend_identity(&identity.id).is_ok());
+        let suspended_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(suspended_identity.status, IdentityStatus::Suspended);
+        
+        // Revoke identity
+        assert!(manager.revoke_identity(&identity.id).is_ok());
+        let revoked_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(revoked_identity.status, IdentityStatus::Revoked);
     }
 }

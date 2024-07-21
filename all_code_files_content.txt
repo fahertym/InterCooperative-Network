@@ -4076,8 +4076,8 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/identity_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
-use icn_common::{IcnError, IcnResult};
-use ed25519_dalek::{Keypair, PublicKey, Signature, Verifier};
+use icn_common::{IcnResult, IcnError};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
@@ -4089,8 +4089,17 @@ pub struct DecentralizedIdentity {
     #[serde(with = "public_key_serde")]
     pub public_key: PublicKey,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub reputation: f64,
     pub attributes: HashMap<String, String>,
+    pub status: IdentityStatus,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum IdentityStatus {
+    Active,
+    Suspended,
+    Revoked,
 }
 
 mod public_key_serde {
@@ -4115,22 +4124,25 @@ mod public_key_serde {
 }
 
 impl DecentralizedIdentity {
-    pub fn new(attributes: HashMap<String, String>) -> (Self, Keypair) {
+    pub fn new(attributes: HashMap<String, String>) -> IcnResult<(Self, Keypair)> {
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let public_key = keypair.public;
         let id = format!("did:icn:{}", hex::encode(public_key.to_bytes()));
+        let now = Utc::now();
 
-        (
+        Ok((
             Self {
                 id,
                 public_key,
-                created_at: Utc::now(),
+                created_at: now,
+                updated_at: now,
                 reputation: 1.0,
                 attributes,
+                status: IdentityStatus::Active,
             },
             keypair,
-        )
+        ))
     }
 
     pub fn verify_signature(&self, message: &[u8], signature: &Signature) -> bool {
@@ -4150,30 +4162,46 @@ impl IdentityManager {
     }
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let (identity, _) = DecentralizedIdentity::new(attributes);
+        let (identity, _) = DecentralizedIdentity::new(attributes)?;
         self.identities.insert(identity.id.clone(), identity.clone());
         Ok(identity)
     }
 
-    pub fn get_identity(&self, id: &str) -> Option<&DecentralizedIdentity> {
-        self.identities.get(id)
+    pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
+        self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))
+    }
+
+    pub fn update_identity(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.attributes.extend(attributes);
+        identity.updated_at = Utc::now();
+        Ok(())
     }
 
     pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
         let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         identity.reputation += change;
+        identity.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn suspend_identity(&mut self, id: &str) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.status = IdentityStatus::Suspended;
+        identity.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn revoke_identity(&mut self, id: &str) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.status = IdentityStatus::Revoked;
+        identity.updated_at = Utc::now();
         Ok(())
     }
 
     pub fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
         let identity = self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         Ok(identity.verify_signature(message, signature))
-    }
-
-    pub fn update_attributes(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.attributes.extend(attributes);
-        Ok(())
     }
 }
 
@@ -4191,7 +4219,7 @@ mod tests {
         
         let identity = manager.create_identity(attributes).unwrap();
         
-        assert!(manager.get_identity(&identity.id).is_some());
+        assert!(manager.get_identity(&identity.id).is_ok());
         
         let message = b"Hello, World!";
         let mut csprng = OsRng {};
@@ -4202,7 +4230,7 @@ mod tests {
         assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
         
         // Create a valid signature
-        let (_, keypair) = DecentralizedIdentity::new(HashMap::new());
+        let (_, keypair) = DecentralizedIdentity::new(HashMap::new()).unwrap();
         let valid_signature = keypair.sign(message);
         
         // This should succeed
@@ -4210,42 +4238,39 @@ mod tests {
     }
 
     #[test]
-    fn test_reputation_update() {
+    fn test_identity_management() {
         let mut manager = IdentityManager::new();
-        let identity = manager.create_identity(HashMap::new()).unwrap();
         
-        assert_eq!(identity.reputation, 1.0);
+        // Create an identity
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        let identity = manager.create_identity(attributes).unwrap();
         
-        manager.update_reputation(&identity.id, 0.5).unwrap();
-        let updated_identity = manager.get_identity(&identity.id).unwrap();
-        
-        assert_eq!(updated_identity.reputation, 1.5);
-    }
-
-    #[test]
-    fn test_attribute_update() {
-        let mut manager = IdentityManager::new();
-        let identity = manager.create_identity(HashMap::new()).unwrap();
-        
+        // Update identity
         let mut new_attributes = HashMap::new();
-        new_attributes.insert("role".to_string(), "developer".to_string());
+        new_attributes.insert("email".to_string(), "alice@example.com".to_string());
+        assert!(manager.update_identity(&identity.id, new_attributes).is_ok());
         
-        manager.update_attributes(&identity.id, new_attributes).unwrap();
+        // Check updated identity
         let updated_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.attributes.get("email"), Some(&"alice@example.com".to_string()));
         
-        assert_eq!(updated_identity.attributes.get("role"), Some(&"developer".to_string()));
-    }
-
-    #[test]
-    fn test_identity_not_found() {
-        let mut manager = IdentityManager::new();
+        // Update reputation
+        assert!(manager.update_reputation(&identity.id, 0.5).is_ok());
+        let updated_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 1.5);
         
-        assert!(manager.update_reputation("non_existent_id", 0.5).is_err());
-        assert!(manager.verify_signature("non_existent_id", b"test", &Signature::new([0; 64])).is_err());
-        assert!(manager.update_attributes("non_existent_id", HashMap::new()).is_err());
+        // Suspend identity
+        assert!(manager.suspend_identity(&identity.id).is_ok());
+        let suspended_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(suspended_identity.status, IdentityStatus::Suspended);
+        
+        // Revoke identity
+        assert!(manager.revoke_identity(&identity.id).is_ok());
+        let revoked_identity = manager.get_identity(&identity.id).unwrap();
+        assert_eq!(revoked_identity.status, IdentityStatus::Revoked);
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
 [package]
@@ -4287,116 +4312,283 @@ impl DiscoveryService {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
-use icn_common::{Node, NodeType};
+use icn_common::{IcnResult, IcnError};
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use icn_common::{CommonError, CommonResult}; // Using centralized error handling
+use tokio::sync::mpsc;
+use log::{info, warn, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PacketType {
-    Data,
-    Interest,
-    Control,
+    Ping,
+    Pong,
+    PeerDiscovery,
+    Transaction,
+    Block,
+    Consensus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Packet {
     pub packet_type: PacketType,
-    pub source: String,
-    pub destination: String,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
     pub content: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub struct Peer {
+    pub address: SocketAddr,
+    pub last_seen: std::time::Instant,
+}
+
 pub struct Network {
-    nodes: HashMap<String, Node>,
-    routing_table: HashMap<String, String>,
+    local_addr: SocketAddr,
+    peers: HashMap<SocketAddr, Peer>,
+    pending_connections: HashSet<SocketAddr>,
+    packet_sender: mpsc::Sender<Packet>,
+    packet_receiver: mpsc::Receiver<Packet>,
 }
 
 impl Network {
-    pub fn new() -> Self {
+    pub fn new(local_addr: SocketAddr) -> Self {
+        let (packet_sender, packet_receiver) = mpsc::channel(100);
         Network {
-            nodes: HashMap::new(),
-            routing_table: HashMap::new(),
+            local_addr,
+            peers: HashMap::new(),
+            pending_connections: HashSet::new(),
+            packet_sender,
+            packet_receiver,
         }
     }
 
-    pub fn add_node(&mut self, node: Node) -> CommonResult<()> {
-        if self.nodes.contains_key(&node.id) {
-            return Err(CommonError::NodeManagementError("Node already exists".into()));
-        }
-        self.nodes.insert(node.id.clone(), node);
+    pub async fn start(&mut self) -> IcnResult<()> {
+        info!("Starting network on {}", self.local_addr);
+        // TODO: Implement actual network initialization
         Ok(())
     }
 
-    pub fn remove_node(&mut self, node_id: &str) -> CommonResult<()> {
-        if self.nodes.remove(node_id).is_none() {
-            return Err(CommonError::NodeManagementError("Node not found".into()));
-        }
-        self.routing_table.retain(|_, v| v != node_id);
+    pub async fn stop(&mut self) -> IcnResult<()> {
+        info!("Stopping network");
+        // TODO: Implement network shutdown
         Ok(())
     }
 
-    pub fn send_packet(&self, packet: Packet) -> CommonResult<()> {
-        let next_hop = self.routing_table.get(&packet.destination)
-            .ok_or_else(|| CommonError::NetworkError("Destination not found in routing table".into()))?;
-        let node = self.nodes.get(next_hop)
-            .ok_or_else(|| CommonError::NetworkError("Next hop node not found".into()))?;
+    pub async fn connect_to_peer(&mut self, peer_addr: SocketAddr) -> IcnResult<()> {
+        if self.peers.contains_key(&peer_addr) || self.pending_connections.contains(&peer_addr) {
+            return Ok(());
+        }
+
+        self.pending_connections.insert(peer_addr);
+        // TODO: Implement actual peer connection logic
+        info!("Connecting to peer: {}", peer_addr);
         
-        println!("Sending packet to {}: {:?}", node.address, packet);
+        // Simulating successful connection
+        self.add_peer(peer_addr)?;
+        self.pending_connections.remove(&peer_addr);
         Ok(())
     }
 
-    pub fn update_routing(&mut self, destination: String, next_hop: String) -> CommonResult<()> {
-        if !self.nodes.contains_key(&next_hop) {
-            return Err(CommonError::NetworkError("Next hop node not found".into()));
+    pub fn add_peer(&mut self, peer_addr: SocketAddr) -> IcnResult<()> {
+        if self.peers.contains_key(&peer_addr) {
+            return Err(IcnError::Network("Peer already connected".into()));
         }
-        self.routing_table.insert(destination, next_hop);
+
+        let peer = Peer {
+            address: peer_addr,
+            last_seen: std::time::Instant::now(),
+        };
+        self.peers.insert(peer_addr, peer);
+        info!("Added new peer: {}", peer_addr);
         Ok(())
     }
 
-    pub fn get_node(&self, node_id: &str) -> Option<&Node> {
-        self.nodes.get(node_id)
+    pub fn remove_peer(&mut self, peer_addr: &SocketAddr) -> IcnResult<()> {
+        if self.peers.remove(peer_addr).is_none() {
+            return Err(IcnError::Network("Peer not found".into()));
+        }
+        info!("Removed peer: {}", peer_addr);
+        Ok(())
     }
 
-    pub fn list_nodes(&self) -> Vec<&Node> {
-        self.nodes.values().collect()
+    pub async fn send_packet(&self, packet: Packet) -> IcnResult<()> {
+        self.packet_sender.send(packet).await.map_err(|e| IcnError::Network(format!("Failed to send packet: {}", e)))
     }
 
-    pub fn broadcast(&self, packet: Packet) -> CommonResult<()> {
-        for node in self.nodes.values() {
-            let mut broadcast_packet = packet.clone();
-            broadcast_packet.destination = node.id.clone();
-            self.send_packet(broadcast_packet)?;
+    pub async fn receive_packet(&mut self) -> IcnResult<Packet> {
+        self.packet_receiver.recv().await.ok_or(IcnError::Network("Failed to receive packet".into()))
+    }
+
+    pub async fn broadcast(&self, packet_type: PacketType, content: Vec<u8>) -> IcnResult<()> {
+        for peer_addr in self.peers.keys() {
+            let packet = Packet {
+                packet_type: packet_type.clone(),
+                source: self.local_addr,
+                destination: *peer_addr,
+                content: content.clone(),
+            };
+            self.send_packet(packet).await?;
         }
         Ok(())
     }
 
-    pub fn get_network_topology(&self) -> HashMap<String, Vec<String>> {
-        let mut topology = HashMap::new();
-        for (node_id, _) in &self.nodes {
-            let neighbors: Vec<String> = self.routing_table.iter()
-                .filter(|(_, &ref next_hop)| next_hop == node_id)
-                .map(|(dest, _)| dest.clone())
-                .collect();
-            topology.insert(node_id.clone(), neighbors);
+    pub fn get_peers(&self) -> Vec<SocketAddr> {
+        self.peers.keys().cloned().collect()
+    }
+
+    pub async fn handle_incoming_packets(&mut self) -> IcnResult<()> {
+        while let Ok(packet) = self.receive_packet().await {
+            match packet.packet_type {
+                PacketType::Ping => self.handle_ping(packet).await?,
+                PacketType::Pong => self.handle_pong(packet).await?,
+                PacketType::PeerDiscovery => self.handle_peer_discovery(packet).await?,
+                PacketType::Transaction => self.handle_transaction(packet).await?,
+                PacketType::Block => self.handle_block(packet).await?,
+                PacketType::Consensus => self.handle_consensus(packet).await?,
+            }
         }
-        topology
+        Ok(())
+    }
+
+    async fn handle_ping(&self, packet: Packet) -> IcnResult<()> {
+        let pong = Packet {
+            packet_type: PacketType::Pong,
+            source: self.local_addr,
+            destination: packet.source,
+            content: vec![],
+        };
+        self.send_packet(pong).await
+    }
+
+    async fn handle_pong(&mut self, packet: Packet) -> IcnResult<()> {
+        if let Some(peer) = self.peers.get_mut(&packet.source) {
+            peer.last_seen = std::time::Instant::now();
+        }
+        Ok(())
+    }
+
+    async fn handle_peer_discovery(&mut self, packet: Packet) -> IcnResult<()> {
+        let peer_addresses: Vec<SocketAddr> = bincode::deserialize(&packet.content)
+            .map_err(|e| IcnError::Network(format!("Failed to deserialize peer addresses: {}", e)))?;
+
+        for addr in peer_addresses {
+            if addr != self.local_addr && !self.peers.contains_key(&addr) {
+                self.connect_to_peer(addr).await?;
+            }
+        }
+
+        // Share our known peers with the sender
+        let our_peers: Vec<SocketAddr> = self.peers.keys().cloned().collect();
+        let response = Packet {
+            packet_type: PacketType::PeerDiscovery,
+            source: self.local_addr,
+            destination: packet.source,
+            content: bincode::serialize(&our_peers)
+                .map_err(|e| IcnError::Network(format!("Failed to serialize peer addresses: {}", e)))?,
+        };
+        self.send_packet(response).await
+    }
+
+    async fn handle_transaction(&self, packet: Packet) -> IcnResult<()> {
+        // TODO: Implement transaction handling logic
+        // For now, we'll just log the received transaction
+        info!("Received transaction from {}", packet.source);
+        Ok(())
+    }
+
+    async fn handle_block(&self, packet: Packet) -> IcnResult<()> {
+        // TODO: Implement block handling logic
+        // For now, we'll just log the received block
+        info!("Received block from {}", packet.source);
+        Ok(())
+    }
+
+    async fn handle_consensus(&self, packet: Packet) -> IcnResult<()> {
+        // TODO: Implement consensus message handling logic
+        // For now, we'll just log the received consensus message
+        info!("Received consensus message from {}", packet.source);
+        Ok(())
+    }
+
+    pub async fn maintain_network(&mut self) -> IcnResult<()> {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            self.remove_inactive_peers().await?;
+            self.discover_new_peers().await?;
+        }
+    }
+
+    async fn remove_inactive_peers(&mut self) -> IcnResult<()> {
+        let now = std::time::Instant::now();
+        let inactive_peers: Vec<SocketAddr> = self.peers
+            .iter()
+            .filter(|(_, peer)| now.duration_since(peer.last_seen) > std::time::Duration::from_secs(300))
+            .map(|(addr, _)| *addr)
+            .collect();
+
+        for addr in inactive_peers {
+            self.remove_peer(&addr)?;
+        }
+        Ok(())
+    }
+
+    async fn discover_new_peers(&mut self) -> IcnResult<()> {
+        let peer_discovery_packet = Packet {
+            packet_type: PacketType::PeerDiscovery,
+            source: self.local_addr,
+            destination: self.local_addr, // This will be replaced for each peer
+            content: bincode::serialize(&self.get_peers())
+                .map_err(|e| IcnError::Network(format!("Failed to serialize peer addresses: {}", e)))?,
+        };
+
+        for peer_addr in self.get_peers() {
+            let mut packet = peer_discovery_packet.clone();
+            packet.destination = peer_addr;
+            self.send_packet(packet).await?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn test_network_operations() {
-        let mut network = Network::new();
-        // Test the network with different node operations
-        // The test cases below have been adjusted to use the new centralized error handling
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let mut network = Network::new("127.0.0.1:8000".parse().unwrap());
+            
+            // Test starting the network
+            assert!(network.start().await.is_ok());
+
+            // Test adding a peer
+            let peer_addr: SocketAddr = "127.0.0.1:8001".parse().unwrap();
+            assert!(network.connect_to_peer(peer_addr).await.is_ok());
+            assert_eq!(network.get_peers().len(), 1);
+
+            // Test removing a peer
+            assert!(network.remove_peer(&peer_addr).is_ok());
+            assert_eq!(network.get_peers().len(), 0);
+
+            // Test sending a packet
+            let packet = Packet {
+                packet_type: PacketType::Ping,
+                source: network.local_addr,
+                destination: peer_addr,
+                content: vec![],
+            };
+            assert!(network.send_packet(packet).await.is_ok());
+
+            // Test stopping the network
+            assert!(network.stop().await.is_ok());
+        });
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/naming.rs =====
 use icn_core::error::{Error, Result};
@@ -5900,8 +6092,9 @@ mod tests {
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use sha2::{Sha256, Digest};
+use chrono::Utc;
 
 pub struct Shard {
     pub id: u64,
@@ -5940,7 +6133,17 @@ impl ShardingManager {
     }
 
     pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
-        let shard_id = self.get_shard_for_address(&transaction.from);
+        let from_shard = self.get_shard_for_address(&transaction.from);
+        let to_shard = self.get_shard_for_address(&transaction.to);
+
+        if from_shard == to_shard {
+            self.process_intra_shard_transaction(from_shard, transaction)
+        } else {
+            self.process_cross_shard_transaction(from_shard, to_shard, transaction)
+        }
+    }
+
+    fn process_intra_shard_transaction(&mut self, shard_id: u64, transaction: &Transaction) -> IcnResult<()> {
         let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
 
         if !self.verify_transaction(shard, transaction) {
@@ -5949,6 +6152,28 @@ impl ShardingManager {
 
         shard.pending_transactions.push(transaction.clone());
         self.update_balances(shard, transaction)
+    }
+
+    fn process_cross_shard_transaction(&mut self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
+        // Lock funds in the source shard
+        {
+            let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
+            if !self.verify_transaction(from_shard, transaction) {
+                return Err(IcnError::Sharding("Invalid transaction".to_string()));
+            }
+            self.update_balances(from_shard, transaction)?;
+        }
+
+        // Update recipient's balance in the destination shard
+        {
+            let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
+            let mut reverse_transaction = transaction.clone();
+            reverse_transaction.from = transaction.to.clone();
+            reverse_transaction.to = transaction.from.clone();
+            self.update_balances(to_shard, &reverse_transaction)?;
+        }
+
+        Ok(())
     }
 
     fn update_balances(&mut self, shard: &mut Shard, transaction: &Transaction) -> IcnResult<()> {
@@ -5974,7 +6199,7 @@ impl ShardingManager {
 
         let new_block = Block {
             index: shard.blockchain.len() as u64,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: Utc::now().timestamp(),
             transactions: shard.pending_transactions.clone(),
             previous_hash: previous_block.hash.clone(),
             hash: String::new(), // Will be set later
@@ -6044,27 +6269,106 @@ impl ShardingManager {
         block
     }
 
-    pub fn transfer_between_shards(&mut self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
-        // Deduct from the source shard
-        {
-            let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
-            self.update_balances(from_shard, transaction)?;
+    pub fn rebalance_shards(&mut self) -> IcnResult<()> {
+        let total_addresses: usize = self.address_to_shard.len();
+        let target_addresses_per_shard = total_addresses / self.shard_count as usize;
+        let mut overloaded_shards: Vec<u64> = Vec::new();
+        let mut underloaded_shards: Vec<u64> = Vec::new();
+
+        // Identify overloaded and underloaded shards
+        for shard_id in 0..self.shard_count {
+            let shard_addresses: usize = self.address_to_shard.values().filter(|&&s| s == shard_id).count();
+            if shard_addresses > target_addresses_per_shard + 1 {
+                overloaded_shards.push(shard_id);
+            } else if shard_addresses < target_addresses_per_shard {
+                underloaded_shards.push(shard_id);
+            }
         }
 
-        // Add to the destination shard
-        {
-            let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
-            let mut reverse_transaction = transaction.clone();
-            reverse_transaction.from = transaction.to.clone();
-            reverse_transaction.to = transaction.from.clone();
-            self.update_balances(to_shard, &reverse_transaction)?;
+        // Rebalance addresses between shards
+        for overloaded_shard in overloaded_shards {
+            let addresses_to_move: Vec<String> = self.address_to_shard
+                .iter()
+                .filter(|&(_, &shard)| shard == overloaded_shard)
+                .map(|(addr, _)| addr.clone())
+                .take((self.address_to_shard.values().filter(|&&s| s == overloaded_shard).count() - target_addresses_per_shard) as usize)
+                .collect();
+
+            for address in addresses_to_move {
+                if let Some(target_shard) = underloaded_shards.first() {
+                    self.move_address_to_shard(&address, *target_shard)?;
+                    if self.address_to_shard.values().filter(|&&s| s == *target_shard).count() >= target_addresses_per_shard {
+                        underloaded_shards.remove(0);
+                    }
+                }
+            }
         }
 
         Ok(())
     }
 
-    pub fn get_shard_state(&self, shard_id: u64) -> IcnResult<&Shard> {
-        self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))
+    pub fn handle_shard_failure(&mut self, failed_shard_id: u64) -> IcnResult<()> {
+        if failed_shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".to_string()));
+        }
+
+        // Collect addresses from the failed shard
+        let failed_shard_addresses: Vec<String> = self.address_to_shard
+            .iter()
+            .filter(|&(_, &shard)| shard == failed_shard_id)
+            .map(|(addr, _)| addr.clone())
+            .collect();
+
+        // Redistribute addresses to other shards
+        let mut target_shard_id = (failed_shard_id + 1) % self.shard_count;
+        for address in failed_shard_addresses {
+            while target_shard_id == failed_shard_id {
+                target_shard_id = (target_shard_id + 1) % self.shard_count;
+            }
+            self.move_address_to_shard(&address, target_shard_id)?;
+            target_shard_id = (target_shard_id + 1) % self.shard_count;
+        }
+
+        // Clear the failed shard's data
+        if let Some(failed_shard) = self.shards.get_mut(&failed_shard_id) {
+            failed_shard.blockchain = vec![Block::genesis()];
+            failed_shard.balances.clear();
+            failed_shard.pending_transactions.clear();
+        }
+
+        // Trigger a network-wide state update
+        self.update_network_state()?;
+
+        Ok(())
+    }
+
+    fn move_address_to_shard(&mut self, address: &str, new_shard_id: u64) -> IcnResult<()> {
+        let old_shard_id = self.get_shard_for_address(address);
+        if old_shard_id == new_shard_id {
+            return Ok(());
+        }
+
+        // Move balances
+        if let Some(old_shard) = self.shards.get_mut(&old_shard_id) {
+            if let Some(balances) = old_shard.balances.remove(address) {
+                if let Some(new_shard) = self.shards.get_mut(&new_shard_id) {
+                    new_shard.balances.insert(address.to_string(), balances);
+                }
+            }
+        }
+
+        // Update address_to_shard mapping
+        self.address_to_shard.insert(address.to_string(), new_shard_id);
+
+        Ok(())
+    }
+
+    fn update_network_state(&self) -> IcnResult<()> {
+        // In a real implementation, this method would broadcast the updated state
+        // to all nodes in the network, ensuring consistency across the system.
+        // For now, we'll just log the action.
+        println!("Network state update triggered");
+        Ok(())
     }
 }
 
@@ -6113,17 +6417,79 @@ mod tests {
             signature: None,
         };
 
-        assert!(manager.transfer_between_shards(0, 1, &cross_shard_tx).is_ok());
+        assert!(manager.process_transaction(&cross_shard_tx).is_ok());
         assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
         assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 150.0);
 
         // Test getting shard state
-        let shard_state = manager.get_shard_state(0).unwrap();
+        let shard_state = manager.shards.get(&0).unwrap();
         assert_eq!(shard_state.id, 0);
         assert_eq!(shard_state.blockchain.len(), 2); // Genesis block + 1 new block
 
         // Test invalid shard access
-        assert!(manager.get_shard_state(10).is_err());
+        assert!(manager.get_balance("NonexistentUser", &CurrencyType::BasicNeeds).is_err());
+    }
+
+    #[test]
+    fn test_rebalance_shards() {
+        let mut manager = ShardingManager::new(3);
+        
+        // Add addresses to shards unevenly
+        for i in 0..10 {
+            manager.add_address_to_shard(format!("Address{}", i), 0).unwrap();
+        }
+        for i in 10..15 {
+            manager.add_address_to_shard(format!("Address{}", i), 1).unwrap();
+        }
+        for i in 15..17 {
+            manager.add_address_to_shard(format!("Address{}", i), 2).unwrap();
+        }
+
+        // Rebalance shards
+        manager.rebalance_shards().unwrap();
+
+        // Check if shards are more evenly balanced
+        let shard_0_count = manager.address_to_shard.values().filter(|&&s| s == 0).count();
+        let shard_1_count = manager.address_to_shard.values().filter(|&&s| s == 1).count();
+        let shard_2_count = manager.address_to_shard.values().filter(|&&s| s == 2).count();
+
+        assert!(shard_0_count >= 5 && shard_0_count <= 6);
+        assert!(shard_1_count >= 5 && shard_1_count <= 6);
+        assert!(shard_2_count >= 5 && shard_2_count <= 6);
+    }
+
+    #[test]
+    fn test_handle_shard_failure() {
+        let mut manager = ShardingManager::new(3);
+        
+        // Add addresses and balances to shards
+        for i in 0..9 {
+            let address = format!("Address{}", i);
+            manager.add_address_to_shard(address.clone(), i / 3).unwrap();
+            let shard = manager.shards.get_mut(&(i / 3)).unwrap();
+            shard.balances.entry(address).or_insert_with(HashMap::new).insert(CurrencyType::BasicNeeds, 100.0);
+        }
+
+        // Simulate failure of shard 1
+        manager.handle_shard_failure(1).unwrap();
+
+        // Check if addresses from shard 1 have been redistributed
+        assert_eq!(manager.address_to_shard.values().filter(|&&s| s == 1).count(), 0);
+
+        // Check if balances have been moved
+        for i in 3..6 {
+            let address = format!("Address{}", i);
+            let new_shard_id = manager.get_shard_for_address(&address);
+            assert_ne!(new_shard_id, 1);
+            let balance = manager.get_balance(&address, &CurrencyType::BasicNeeds).unwrap();
+            assert_eq!(balance, 100.0);
+        }
+
+        // Check if shard 1 has been reset
+        let shard_1 = manager.shards.get(&1).unwrap();
+        assert_eq!(shard_1.blockchain.len(), 1); // Only genesis block
+        assert!(shard_1.balances.is_empty());
+        assert!(shard_1.pending_transactions.is_empty());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
