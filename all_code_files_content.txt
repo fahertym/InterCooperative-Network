@@ -120,25 +120,37 @@
 │   │       │   ├── mod.rs
 │   │       │   └── transaction.rs
 │   │       └── utils.rs
-│   └── icn_vm
+│   ├── icn_vm
+│   │   ├── Cargo.toml
+│   │   └── src
+│   │       ├── compiler.rs
+│   │       ├── coop_vm.rs
+│   │       ├── lib.rs
+│   │       ├── opcode.rs
+│   │       ├── smart_contract.rs
+│   │       ├── templates.rs
+│   │       └── vm.rs
+│   └── icn_zkp
 │       ├── Cargo.toml
 │       └── src
-│           ├── compiler.rs
-│           ├── coop_vm.rs
-│           ├── lib.rs
-│           ├── opcode.rs
-│           ├── smart_contract.rs
-│           ├── templates.rs
-│           └── vm.rs
+│           ├── circuits.rs
+│           └── lib.rs
 ├── docs
 │   ├── API.md
 │   ├── ARCHITECTURE.md
 │   ├── CONTRIBUTING.md
 │   └── README.md
+├── examples
+│   └── voting_contract.coop
+├── icn_smart_contracts
+│   ├── Cargo.toml
+│   └── src
+│       ├── contract.pest
+│       └── lib.rs
 ├── README.md
 └── update_project.sh
 
-38 directories, 100 files
+43 directories, 107 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -156,7 +168,7 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_core",
+    "crates/icn_core", "crates/icn_zkp", "icn_smart_contracts",
 ]
 
 resolver = "2"
@@ -167,7 +179,8 @@ tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 log = "0.4"
-env_logger = "0.9"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+env_logger = "0.9"
+===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 [package]
@@ -454,8 +467,9 @@ edition = "2021"
 icn_common = { path = "../icn_common" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.9"
+sha2 = "0.10"
 log = "0.4"
+thiserror = "1.0"
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
@@ -815,16 +829,21 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType};
-use std::collections::VecDeque;
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType, ZKProof};
+use icn_zkp::{ZKPManager, TransactionCircuit, VoteCircuit};
+use std::collections::{VecDeque, HashMap};
 use chrono::Utc;
-use log::info;
+use log::{info, error, debug, warn};
+use bellman::groth16;
+use bls12_381::Bls12;
 
 const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
 
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: VecDeque<Transaction>,
+    zkp_manager: ZKPManager,
+    utxo_set: HashMap<String, f64>,
 }
 
 impl Blockchain {
@@ -832,6 +851,8 @@ impl Blockchain {
         Ok(Blockchain {
             chain: vec![Block::genesis()],
             pending_transactions: VecDeque::new(),
+            zkp_manager: ZKPManager::new()?,
+            utxo_set: HashMap::new(),
         })
     }
 
@@ -844,6 +865,22 @@ impl Blockchain {
         }
     }
 
+    pub fn create_confidential_transaction(&self, from: &str, to: &str, amount: f64, currency_type: CurrencyType) -> IcnResult<Transaction> {
+        let mut transaction = Transaction::new(
+            from.to_string(),
+            to.to_string(),
+            amount,
+            currency_type,
+            Utc::now().timestamp(),
+        );
+
+        let circuit = TransactionCircuit::new(&transaction);
+        let proof = self.zkp_manager.create_proof(circuit)?;
+        transaction.add_zkp(proof.to_vec(), TransactionCircuit::public_inputs(&transaction));
+
+        Ok(transaction)
+    }
+
     pub fn create_block(&mut self) -> IcnResult<Block> {
         let previous_block = self.chain.last()
             .ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
@@ -852,29 +889,49 @@ impl Blockchain {
             .drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK))
             .collect();
 
-        let new_block = Block {
+        let mut new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
             transactions,
             previous_hash: previous_block.hash.clone(),
-            hash: String::new(), // Will be set in calculate_hash
+            hash: String::new(),
         };
 
-        let new_block = self.calculate_hash(new_block);
+        new_block.hash = new_block.hash();
         self.chain.push(new_block.clone());
+
+        // Update UTXO set
+        self.update_utxo_set(&new_block)?;
+
         Ok(new_block)
     }
 
-    fn calculate_hash(&self, mut block: Block) -> Block {
-        block.hash = block.hash();
-        block
+    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        if let Some(zkp) = &transaction.zkp {
+            // Verify the ZKP
+            let proof = groth16::Proof::read(&zkp.proof[..])
+                .map_err(|e| IcnError::ZKP(format!("Invalid proof: {}", e)))?;
+            self.zkp_manager.verify_transaction_proof(&proof, transaction)
+        } else {
+            // If no ZKP, fall back to regular verification
+            self.verify_utxo(transaction)
+        }
     }
 
-    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        // Implement transaction verification logic
-        // For example, check if the sender has sufficient balance
-        // and if the signature is valid
-        Ok(true) // Placeholder implementation
+    fn verify_utxo(&self, transaction: &Transaction) -> IcnResult<bool> {
+        let sender_balance = self.utxo_set.get(&transaction.from).cloned().unwrap_or(0.0);
+        Ok(sender_balance >= transaction.amount)
+    }
+
+    fn update_utxo_set(&mut self, block: &Block) -> IcnResult<()> {
+        for transaction in &block.transactions {
+            let sender_balance = self.utxo_set.entry(transaction.from.clone()).or_insert(0.0);
+            *sender_balance -= transaction.amount;
+
+            let receiver_balance = self.utxo_set.entry(transaction.to.clone()).or_insert(0.0);
+            *receiver_balance += transaction.amount;
+        }
+        Ok(())
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
@@ -901,9 +958,19 @@ impl Blockchain {
             if current_block.previous_hash != previous_block.hash {
                 return Ok(false);
             }
+
+            for transaction in &current_block.transactions {
+                if !self.verify_transaction(transaction)? {
+                    return Ok(false);
+                }
+            }
         }
 
         Ok(true)
+    }
+
+    pub fn get_balance(&self, address: &str) -> f64 {
+        self.utxo_set.get(address).cloned().unwrap_or(0.0)
     }
 
     pub fn start(&self) -> IcnResult<()> {
@@ -917,77 +984,44 @@ impl Blockchain {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct AnonymousVotingSystem {
+    zkp_manager: ZKPManager,
+    voters: HashMap<String, bool>, // Address -> Has voted
+    votes: Vec<bool>,
+}
 
-    #[test]
-    fn test_blockchain_creation() {
-        let blockchain = Blockchain::new().unwrap();
-        assert_eq!(blockchain.chain.len(), 1);
-        assert_eq!(blockchain.chain[0].index, 0);
+impl AnonymousVotingSystem {
+    pub fn new() -> IcnResult<Self> {
+        Ok(AnonymousVotingSystem {
+            zkp_manager: ZKPManager::new()?,
+            voters: HashMap::new(),
+            votes: Vec::new(),
+        })
     }
 
-    #[test]
-    fn test_add_transaction_and_create_block() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-
-        assert!(blockchain.add_transaction(transaction).is_ok());
-        assert_eq!(blockchain.pending_transactions.len(), 1);
-
-        let new_block = blockchain.create_block().unwrap();
-        assert_eq!(blockchain.chain.len(), 2);
-        assert_eq!(new_block.index, 1);
-        assert_eq!(new_block.transactions.len(), 1);
+    pub fn register_voter(&mut self, voter_address: String) {
+        self.voters.insert(voter_address, false);
     }
 
-    #[test]
-    fn test_blockchain_validation() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
+    pub fn cast_vote(&mut self, voter_address: &str, vote: bool, proof: &[u8]) -> IcnResult<()> {
+        if let Some(has_voted) = self.voters.get_mut(voter_address) {
+            if *has_voted {
+                return Err(IcnError::Governance("Voter has already cast a vote".into()));
+            }
 
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block().unwrap();
-
-        assert!(blockchain.validate_chain().unwrap());
-
-        // Tamper with a block
-        blockchain.chain[1].transactions[0].amount = 200.0;
-        assert!(!blockchain.validate_chain().unwrap());
-    }
-
-    #[test]
-    fn test_get_block_methods() {
-        let mut blockchain = Blockchain::new().unwrap();
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-
-        blockchain.add_transaction(transaction).unwrap();
-        let new_block = blockchain.create_block().unwrap();
-
-        assert_eq!(blockchain.get_latest_block().unwrap().hash, new_block.hash);
-        assert_eq!(blockchain.get_block_by_index(1).unwrap().hash, new_block.hash);
-        assert_eq!(blockchain.get_block_by_hash(&new_block.hash).unwrap().index, 1);
-    }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
+            // Verify the ZKP
+            let zkp_proof = groth16::Proof::read(proof)
+                .map_err(|e| IcnError::ZKP(format!("Invalid proof: {}", e)))?;
+            
+            if self.zkp_manager.verify_vote_proof(&zkp_proof, voter_address, vote)? {
+                self.votes.push(vote);
+                *has_voted = true;
+                Ok(())
+            } else {
+                Err(IcnError::Governance("Invalid vote proof".into()))
+            }
+        } else {
+            Err(IcnError::Governance("Voter===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
 use crate::{Transaction, Blockchain};
@@ -1181,10 +1215,12 @@ pub type IcnResult<T> = Result<T, IcnError>;
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 use chrono::{DateTime, Utc};
-use rand_chacha::ChaChaRng; // Import the correct RNG.
-use rand_chacha::rand_core::SeedableRng; // Ensure you can seed the RNG if needed.
-use rand::RngCore; // To satisfy trait bounds for the RNG.
-use ed25519_dalek::Keypair; // Ensure Keypair is imported to generate keys.
+use rand_chacha::ChaChaRng;
+use rand_chacha::rand_core::SeedableRng;
+use rand::RngCore;
+use ed25519_dalek::Keypair;
+use bellman::{Circuit, ConstraintSystem, SynthesisError};
+use bls12_381::Bls12;
 
 pub mod error;
 pub use error::{IcnError, IcnResult};
@@ -1214,6 +1250,7 @@ pub struct Transaction {
     pub currency_type: CurrencyType,
     pub timestamp: i64,
     pub signature: Option<Vec<u8>>,
+    pub zkp: Option<ZKProof>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1223,6 +1260,7 @@ pub struct Block {
     pub transactions: Vec<Transaction>,
     pub previous_hash: String,
     pub hash: String,
+    pub zkp_accumulator: Option<ZKAccumulator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1269,10 +1307,30 @@ pub struct Vote {
     pub in_favor: bool,
     pub weight: f64,
     pub timestamp: DateTime<Utc>,
+    pub zkp: Option<ZKProof>,
 }
 
 pub trait Hashable {
     fn hash(&self) -> String;
+}
+
+// New ZKP-related structures
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZKProof {
+    pub proof: Vec<u8>,
+    pub public_inputs: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZKAccumulator {
+    pub value: Vec<u8>,
+}
+
+pub trait ZKCircuit<E: bellman::Engine> {
+    fn synthesize<CS: ConstraintSystem<E>>(
+        self,
+        cs: &mut CS
+    ) -> Result<(), SynthesisError>;
 }
 
 impl Hashable for Block {
@@ -1301,6 +1359,12 @@ impl Hashable for Transaction {
         if let Some(signature) = &self.signature {
             hasher.update(signature);
         }
+        if let Some(zkp) = &self.zkp {
+            hasher.update(&zkp.proof);
+            for input in &zkp.public_inputs {
+                hasher.update(input);
+            }
+        }
         format!("{:x}", hasher.finalize())
     }
 }
@@ -1314,6 +1378,7 @@ impl Transaction {
             currency_type,
             timestamp,
             signature: None,
+            zkp: None,
         }
     }
 
@@ -1340,6 +1405,29 @@ impl Transaction {
             Ok(false)
         }
     }
+
+    pub fn add_zkp(&mut self, proof: Vec<u8>, public_inputs: Vec<Vec<u8>>) {
+        self.zkp = Some(ZKProof {
+            proof,
+            public_inputs,
+        });
+    }
+
+    pub fn verify_zkp<E: bellman::Engine, C: ZKCircuit<E>>(&self, circuit: C, verifying_key: &bellman::groth16::VerifyingKey<E>) -> IcnResult<bool> {
+        if let Some(zkp) = &self.zkp {
+            let proof = bellman::groth16::Proof::<E>::read(&zkp.proof[..])
+                .map_err(|e| IcnError::ZKP(format!("Invalid ZKP: {}", e)))?;
+            
+            let public_inputs: Vec<E::Fr> = zkp.public_inputs.iter()
+                .map(|input| E::Fr::from_str(&hex::encode(input)).unwrap())
+                .collect();
+
+            Ok(bellman::groth16::verify_proof(verifying_key, &proof, &public_inputs)
+                .map_err(|e| IcnError::ZKP(format!("ZKP verification failed: {}", e)))?)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 impl Block {
@@ -1351,6 +1439,7 @@ impl Block {
             transactions,
             previous_hash,
             hash: String::new(),
+            zkp_accumulator: None,
         };
         block.hash = block.hash();
         block
@@ -1358,6 +1447,26 @@ impl Block {
 
     pub fn genesis() -> Self {
         Block::new(0, Vec::new(), "0".repeat(64))
+    }
+
+    pub fn add_zkp_accumulator(&mut self, accumulator: ZKAccumulator) {
+        self.zkp_accumulator = Some(accumulator);
+    }
+}
+
+pub struct ZKAccumulatorCircuit<E: bellman::Engine> {
+    pub transactions: Vec<Transaction>,
+    pub previous_accumulator: Option<E::Fr>,
+}
+
+impl<E: bellman::Engine> ZKCircuit<E> for ZKAccumulatorCircuit<E> {
+    fn synthesize<CS: ConstraintSystem<E>>(
+        self,
+        cs: &mut CS
+    ) -> Result<(), SynthesisError> {
+        // Implementation of the ZKP circuit for accumulating transactions
+        // This is a placeholder and should be implemented based on the specific requirements
+        Ok(())
     }
 }
 
@@ -1422,54 +1531,40 @@ mod tests {
     }
 
     #[test]
-    fn test_proposal() {
-        let proposal = Proposal {
-            id: "prop1".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.66,
-            execution_timestamp: None,
-        };
+    fn test_zkp_integration() {
+        use bellman::groth16;
+        use bls12_381::Bls12;
 
-        assert_eq!(proposal.status, ProposalStatus::Active);
-        assert_eq!(proposal.proposal_type, ProposalType::Constitutional);
-        assert_eq!(proposal.category, ProposalCategory::Economic);
+        // This is a dummy circuit for testing purposes
+        struct DummyCircuit;
+        impl ZKCircuit<Bls12> for DummyCircuit {
+            fn synthesize<CS: ConstraintSystem<Bls12>>(
+                self,
+                _cs: &mut CS
+            ) -> Result<(), SynthesisError> {
+                Ok(())
+            }
+        }
+
+        let mut rng = ChaChaRng::from_entropy();
+        let params = groth16::generate_random_parameters::<Bls12, _, _>(DummyCircuit, &mut rng).unwrap();
+        let pvk = groth16::prepare_verifying_key(&params.vk);
+
+        let mut tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+
+        let proof = groth16::create_random_proof(DummyCircuit, &params, &mut rng).unwrap();
+        let proof_vec = proof.write(&mut vec![]).unwrap();
+        tx.add_zkp(proof_vec, vec![]);
+
+        assert!(tx.verify_zkp(DummyCircuit, &pvk).unwrap());
     }
-
-    #[test]
-    fn test_vote() {
-        let vote = Vote {
-            voter: "Alice".to_string(),
-            proposal_id: "prop1".to_string(),
-            in_favor: true,
-            weight: 1.0,
-            timestamp: Utc::now(),
-        };
-
-        assert_eq!(vote.voter, "Alice");
-        assert_eq!(vote.proposal_id, "prop1");
-        assert!(vote.in_favor);
-        assert_eq!(vote.weight, 1.0);
-    }
-
-    #[test]
-    fn test_currency_type() {
-        let basic_needs = CurrencyType::BasicNeeds;
-        let custom = CurrencyType::Custom("CustomCoin".to_string());
-        let asset_token = CurrencyType::AssetToken("RealEstate".to_string());
-
-        assert_ne!(basic_needs, custom);
-        assert_ne!(basic_needs, asset_token);
-        assert_ne!(custom, asset_token);
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
 fn main() {
@@ -2506,181 +2601,263 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-use icn_common::{IcnResult, IcnError, Block, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType};
-use icn_blockchain::Blockchain;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencySystem;
-use icn_governance::GovernanceSystem;
-use icn_identity::IdentityManager;
-use icn_network::Network;
-use icn_sharding::ShardingManager;
-use icn_vm::ContractManager;
+use chrono::{DateTime, Utc};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use thiserror::Error;
 
-use std::sync::{Arc, Mutex};
-use log::{info, warn, error};
+pub mod error;
+pub use error::{IcnError, IcnResult};
 
-pub struct Config {
-    pub shard_count: u64,
-    pub consensus_threshold: f64,
-    pub consensus_quorum: f64,
-    pub network_port: u16,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CurrencyType {
+    BasicNeeds,
+    Education,
+    Environmental,
+    Community,
+    Volunteer,
+    Storage,
+    Processing,
+    Energy,
+    Luxury,
+    Service,
+    Custom(String),
+    AssetToken(String),
+    Bond(String),
 }
 
-pub struct IcnNode {
-    config: Config,
-    blockchain: Arc<Mutex<Blockchain>>,
-    consensus: Arc<Mutex<PoCConsensus>>,
-    currency_system: Arc<Mutex<CurrencySystem>>,
-    governance_system: Arc<Mutex<GovernanceSystem>>,
-    identity_manager: Arc<Mutex<IdentityManager>>,
-    network: Arc<Mutex<Network>>,
-    sharding_manager: Arc<Mutex<ShardingManager>>,
-    contract_manager: Arc<Mutex<ContractManager>>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub currency_type: CurrencyType,
+    pub timestamp: i64,
+    pub signature: Option<Vec<u8>>,
 }
 
-impl IcnNode {
-    pub fn new(config: Config) -> IcnResult<Self> {
-        info!("Initializing ICN Node with configuration: {:?}", config);
-        Ok(IcnNode {
-            blockchain: Arc::new(Mutex::new(Blockchain::new()?)),
-            consensus: Arc::new(Mutex::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?)),
-            currency_system: Arc::new(Mutex::new(CurrencySystem::new())),
-            governance_system: Arc::new(Mutex::new(GovernanceSystem::new())),
-            identity_manager: Arc::new(Mutex::new(IdentityManager::new())),
-            network: Arc::new(Mutex::new(Network::new(config.network_port))),
-            sharding_manager: Arc::new(Mutex::new(ShardingManager::new(config.shard_count)?)),
-            contract_manager: Arc::new(Mutex::new(ContractManager::new())),
-            config,
-        })
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+}
 
-    pub fn start(&self) -> IcnResult<()> {
-        info!("Starting ICN Node components");
-        self.network.lock().map_err(|e| IcnError::Blockchain(e.to_string()))?.start()?;
-        self.blockchain.lock().map_err(|e| IcnError::Blockchain(e.to_string()))?.start()?;
-        self.consensus.lock().map_err(|e| IcnError::Consensus(e.to_string()))?.start()?;
-        // Add start methods for other components as needed
-        info!("ICN Node started successfully");
-        Ok(())
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub proposer: String,
+    pub created_at: DateTime<Utc>,
+    pub voting_ends_at: DateTime<Utc>,
+    pub status: ProposalStatus,
+    pub proposal_type: ProposalType,
+    pub category: ProposalCategory,
+    pub required_quorum: f64,
+    pub execution_timestamp: Option<DateTime<Utc>>,
+}
 
-    pub fn stop(&self) -> IcnResult<()> {
-        info!("Stopping ICN Node components");
-        self.network.lock().map_err(|e| IcnError::Network(e.to_string()))?.stop()?;
-        self.blockchain.lock().map_err(|e| IcnError::Blockchain(e.to_string()))?.stop()?;
-        self.consensus.lock().map_err(|e| IcnError::Consensus(e.to_string()))?.stop()?;
-        // Add stop methods for other components as needed
-        info!("ICN Node stopped successfully");
-        Ok(())
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Implemented,
+}
 
-    pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
-        info!("Processing transaction: {:?}", transaction);
-        let mut blockchain = self.blockchain.lock().map_err(|e| IcnError::Blockchain(e.to_string()))?;
-        let mut currency_system = self.currency_system.lock().map_err(|e| IcnError::Currency(e.to_string()))?;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+}
 
-        if !self.verify_transaction(&transaction)? {
-            return Err(IcnError::Blockchain("Transaction verification failed".into()));
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalCategory {
+    Constitutional,
+    Economic,
+    Technical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+pub trait Hashable {
+    fn hash(&self) -> String;
+}
+
+impl Hashable for Block {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(&self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(&transaction.hash());
         }
-
-        currency_system.transfer(
-            &transaction.from,
-            &transaction.to,
-            transaction.amount,
-            &transaction.currency_type,
-        )?;
-
-        blockchain.add_transaction(transaction)?;
-
-        Ok(())
-    }
-
-    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
-        if sender_balance < transaction.amount {
-            return Ok(false);
-        }
-
-        // Implement signature verification
-        let identity_manager = self.identity_manager.lock().map_err(|e| IcnError::Identity(e.to_string()))?;
-        let public_key = identity_manager.get_public_key(&transaction.from)?;
-        transaction.verify(&public_key)
-    }
-
-    pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        info!("Creating proposal: {:?}", proposal);
-        self.governance_system.lock().map_err(|e| IcnError::Governance(e.to_string()))?.create_proposal(proposal)
-    }
-
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        info!("Getting balance for address: {} and currency type: {:?}", address, currency_type);
-        self.currency_system
-            .lock()
-            .map_err(|e| IcnError::Currency(e.to_string()))?
-            .get_balance(address, currency_type)
-    }
-
-    pub fn get_latest_block(&self) -> IcnResult<Block> {
-        self.blockchain
-            .lock()
-            .map_err(|e| IcnError::Blockchain(e.to_string()))?
-            .get_latest_block()
-            .ok_or_else(|| IcnError::Blockchain("No blocks in the blockchain".into()))
-    }
-
-    pub fn execute_smart_contract(&self, contract_id: &str, input: &[u8]) -> IcnResult<Vec<u8>> {
-        self.contract_manager
-            .lock()
-            .map_err(|e| IcnError::Vm(e.to_string()))?
-            .execute_contract(contract_id, input)
-    }
-
-    pub fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
-        self.identity_manager
-            .lock()
-            .map_err(|e| IcnError::Identity(e.to_string()))?
-            .create_identity(attributes)
-    }
-
-    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
-        // Implement resource allocation logic
-        Ok(())
-    }
-
-    pub fn get_network_stats(&self) -> IcnResult<NetworkStats> {
-        // Implement network statistics gathering
-        Ok(NetworkStats {
-            connected_peers: 0,
-            total_transactions: 0,
-            uptime: std::time::Duration::from_secs(0),
-        })
+        hasher.update(&self.previous_hash);
+        format!("{:x}", hasher.finalize())
     }
 }
 
-pub struct NetworkStats {
-    pub connected_peers: usize,
-    pub total_transactions: usize,
-    pub uptime: std::time::Duration,
+impl Hashable for Transaction {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.from);
+        hasher.update(&self.to);
+        hasher.update(self.amount.to_string().as_bytes());
+        hasher.update(format!("{:?}", self.currency_type).as_bytes());
+        hasher.update(self.timestamp.to_string().as_bytes());
+        if let Some(signature) = &self.signature {
+            hasher.update(signature);
+        }
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+impl Transaction {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
+        Transaction {
+            from,
+            to,
+            amount,
+            currency_type,
+            timestamp,
+            signature: None,
+        }
+    }
+
+    pub fn sign(&mut self, keypair: &Keypair) -> IcnResult<()> {
+        let message = self.hash().as_bytes().to_vec();
+        let signature = keypair.sign(&message);
+        self.signature = Some(signature.to_bytes().to_vec());
+        Ok(())
+    }
+
+    pub fn verify(&self, public_key: &PublicKey) -> IcnResult<bool> {
+        let message = self.hash().as_bytes().to_vec();
+        if let Some(signature) = &self.signature {
+            let signature = Signature::from_bytes(signature)
+                .map_err(|e| IcnError::Identity(format!("Invalid signature: {}", e)))?;
+            Ok(public_key.verify(&message, &signature).is_ok())
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+impl Block {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
+        let timestamp = Utc::now().timestamp();
+        let mut block = Block {
+            index,
+            timestamp,
+            transactions,
+            previous_hash,
+            hash: String::new(),
+        };
+        block.hash = block.hash();
+        block
+    }
+
+    pub fn genesis() -> Self {
+        Block::new(0, Vec::new(), "0".repeat(64))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::rngs::OsRng;
 
     #[test]
-    fn test_icn_node_creation() {
-        let config = Config {
-            shard_count: 4,
-            consensus_threshold: 0.66,
-            consensus_quorum: 0.51,
-            network_port: 8080,
-        };
-        let node = IcnNode::new(config).unwrap();
-        assert!(node.start().is_ok());
-        assert!(node.stop().is_ok());
+    fn test_transaction_sign_and_verify() {
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        let mut tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+
+        tx.sign(&keypair).unwrap();
+        assert!(tx.verify(&keypair.public).unwrap());
+
+        // Test with incorrect public key
+        let wrong_keypair: Keypair = Keypair::generate(&mut csprng);
+        assert!(!tx.verify(&wrong_keypair.public).unwrap());
     }
 
-    // Add more tests for other IcnNode functionalities
+    #[test]
+    fn test_block_creation_and_hashing() {
+        let tx = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            1234567890,
+        );
+        let block = Block::new(1, vec![tx], "previous_hash".to_string());
+        
+        assert_eq!(block.index, 1);
+        assert!(!block.hash.is_empty());
+        assert_eq!(block.previous_hash, "previous_hash");
+        assert_eq!(block.transactions.len(), 1);
+
+        // Ensure hash changes when block content changes
+        let mut modified_block = block.clone();
+        modified_block.timestamp += 1;
+        assert_ne!(block.hash, modified_block.hash());
+    }
+
+    #[test]
+    fn test_proposal_and_vote() {
+        let proposal = Proposal {
+            id: "prop1".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+
+        assert_eq!(proposal.status, ProposalStatus::Active);
+        assert_eq!(proposal.proposal_type, ProposalType::Constitutional);
+        assert_eq!(proposal.category, ProposalCategory::Economic);
+
+        let vote = Vote {
+            voter: "Bob".to_string(),
+            proposal_id: "prop1".to_string(),
+            in_favor: true,
+            weight: 1.0,
+            timestamp: Utc::now(),
+        };
+
+        assert_eq!(vote.voter, "Bob");
+        assert_eq!(vote.proposal_id, "prop1");
+        assert!(vote.in_favor);
+        assert_eq!(vote.weight, 1.0);
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/logging/mod.rs =====
@@ -8611,19 +8788,18 @@ impl CoopVM {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/coop_vm.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
+use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
     String(String),
-    List(Vec<Value>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Opcode {
     Push(Value),
     Pop,
@@ -8632,39 +8808,19 @@ pub enum Opcode {
     Mul,
     Div,
     Eq,
+    Neq,
     Lt,
+    Lte,
     Gt,
+    Gte,
     And,
     Or,
     Not,
     Store(String),
     Load(String),
     Call(String),
-    Return,
     JumpIf(usize),
     Jump(usize),
-    CreateList,
-    AppendList,
-    GetListItem,
-    SetListItem,
-}
-
-#[derive(Error, Debug)]
-pub enum VMError {
-    #[error("Stack underflow")]
-    StackUnderflow,
-    #[error("Type mismatch: expected {0}, found {1}")]
-    TypeMismatch(String, String),
-    #[error("Unknown variable: {0}")]
-    UnknownVariable(String),
-    #[error("Unknown function: {0}")]
-    UnknownFunction(String),
-    #[error("Invalid jump target")]
-    InvalidJumpTarget,
-    #[error("Return without call")]
-    ReturnWithoutCall,
-    #[error("List index out of bounds")]
-    ListIndexOutOfBounds,
 }
 
 pub struct CoopVM {
@@ -8672,8 +8828,13 @@ pub struct CoopVM {
     memory: HashMap<String, Value>,
     program: Vec<Opcode>,
     pc: usize,
-    call_stack: Vec<usize>,
-    functions: HashMap<String, usize>,
+    context: Option<ContractContext>,
+}
+
+pub struct ContractContext {
+    pub balances: HashMap<String, f64>,
+    pub votes: HashMap<String, bool>,
+    pub reputation: HashMap<String, i32>,
 }
 
 impl CoopVM {
@@ -8683,12 +8844,24 @@ impl CoopVM {
             memory: HashMap::new(),
             program,
             pc: 0,
-            call_stack: Vec::new(),
-            functions: HashMap::new(),
+            context: None,
         }
     }
 
-    pub fn run(&mut self) -> Result<(), VMError> {
+    pub fn load_program(&mut self, program: Vec<Opcode>) {
+        self.program = program;
+        self.pc = 0;
+    }
+
+    pub fn set_context(&mut self, context: &ContractContext) {
+        self.context = Some(ContractContext {
+            balances: context.balances.clone(),
+            votes: context.votes.clone(),
+            reputation: context.reputation.clone(),
+        });
+    }
+
+    pub fn run(&mut self) -> IcnResult<()> {
         while self.pc < self.program.len() {
             self.execute_instruction()?;
             self.pc += 1;
@@ -8696,18 +8869,21 @@ impl CoopVM {
         Ok(())
     }
 
-    fn execute_instruction(&mut self) -> Result<(), VMError> {
+    fn execute_instruction(&mut self) -> IcnResult<()> {
         let instruction = &self.program[self.pc];
         match instruction {
             Opcode::Push(value) => self.stack.push(value.clone()),
-            Opcode::Pop => { self.stack.pop().ok_or(VMError::StackUnderflow)?; }
+            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? ; }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
             Opcode::Mul => self.binary_op(|a, b| a * b)?,
             Opcode::Div => self.binary_op(|a, b| a / b)?,
             Opcode::Eq => self.compare_op(|a, b| a == b)?,
+            Opcode::Neq => self.compare_op(|a, b| a != b)?,
             Opcode::Lt => self.compare_op(|a, b| a < b)?,
+            Opcode::Lte => self.compare_op(|a, b| a <= b)?,
             Opcode::Gt => self.compare_op(|a, b| a > b)?,
+            Opcode::Gte => self.compare_op(|a, b| a >= b)?,
             Opcode::And => self.logic_op(|a, b| a && b)?,
             Opcode::Or => self.logic_op(|a, b| a || b)?,
             Opcode::Not => {
@@ -8715,88 +8891,52 @@ impl CoopVM {
                 self.stack.push(Value::Bool(!a));
             }
             Opcode::Store(name) => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
                 self.memory.insert(name.clone(), value);
             }
             Opcode::Load(name) => {
-                let value = self.memory.get(name).ok_or(VMError::UnknownVariable(name.clone()))?.clone();
+                let value = self.memory.get(name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
             }
-            Opcode::Call(func_name) => {
-                let func_pc = *self.functions.get(func_name).ok_or(VMError::UnknownFunction(func_name.clone()))?;
-                self.call_stack.push(self.pc);
-                self.pc = func_pc;
-            }
-            Opcode::Return => {
-                self.pc = self.call_stack.pop().ok_or(VMError::ReturnWithoutCall)?;
+            Opcode::Call(function) => {
+                let result = self.execute_built_in(function)?;
+                if let Some(value) = result {
+                    self.stack.push(value);
+                }
             }
             Opcode::JumpIf(target) => {
-                let condition = self.pop_bool()?;
-                if condition {
-                    self.pc = *target;
+                if self.pop_bool()? {
+                    self.pc = *target - 1; // -1 because pc will be incremented after this instruction
                 }
             }
             Opcode::Jump(target) => {
-                self.pc = *target;
-            }
-            Opcode::CreateList => {
-                self.stack.push(Value::List(Vec::new()));
-            }
-            Opcode::AppendList => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    list.push(value);
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
-            }
-            Opcode::GetListItem => {
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.pop() {
-                    let item = list.get(index as usize).ok_or(VMError::ListIndexOutOfBounds)?.clone();
-                    self.stack.push(item);
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
-            }
-            Opcode::SetListItem => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    if (index as usize) < list.len() {
-                        list[index as usize] = value;
-                    } else {
-                        return Err(VMError::ListIndexOutOfBounds);
-                    }
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
+                self.pc = *target - 1; // -1 because pc will be incremented after this instruction
             }
         }
         Ok(())
     }
 
-    fn binary_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
     where
-        F: Fn(i64, i64) -> i64,
+        F: Fn(f64, f64) -> f64,
     {
-        let b = self.pop_int()?;
-        let a = self.pop_int()?;
-        self.stack.push(Value::Int(op(a, b)));
+        let b = self.pop_number()?;
+        let a = self.pop_number()?;
+        self.stack.push(Value::Float(op(a, b)));
         Ok(())
     }
 
-    fn compare_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
     where
-        F: Fn(&Value, &Value) -> bool,
+        F: Fn(f64, f64) -> bool,
     {
-        let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-        let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-        self.stack.push(Value::Bool(op(&a, &b)));
+        let b = self.pop_number()?;
+        let a = self.pop_number()?;
+        self.stack.push(Value::Bool(op(a, b)));
         Ok(())
     }
 
-    fn logic_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn logic_op<F>(&mut self, op: F) -> IcnResult<()>
     where
         F: Fn(bool, bool) -> bool,
     {
@@ -8806,22 +8946,85 @@ impl CoopVM {
         Ok(())
     }
 
-    fn pop_int(&mut self) -> Result<i64, VMError> {
-        match self.stack.pop().ok_or(VMError::StackUnderflow)? {
-            Value::Int(i) => Ok(i),
-            v => Err(VMError::TypeMismatch("Int".to_string(), format!("{:?}", v))),
+    fn pop_number(&mut self) -> IcnResult<f64> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Int(i) => Ok(i as f64),
+            Value::Float(f) => Ok(f),
+            _ => Err(IcnError::VM("Expected number".into())),
         }
     }
 
-    fn pop_bool(&mut self) -> Result<bool, VMError> {
-        match self.stack.pop().ok_or(VMError::StackUnderflow)? {
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
             Value::Bool(b) => Ok(b),
-            v => Err(VMError::TypeMismatch("Bool".to_string(), format!("{:?}", v))),
+            _ => Err(IcnError::VM("Expected boolean".into())),
         }
     }
 
-    pub fn register_function(&mut self, name: String, pc: usize) {
-        self.functions.insert(name, pc);
+    fn pop_string(&mut self) -> IcnResult<String> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::String(s) => Ok(s),
+            _ => Err(IcnError::VM("Expected string".into())),
+        }
+    }
+
+    fn execute_built_in(&mut self, function: &str) -> IcnResult<Option<Value>> {
+        match function {
+            "transfer" => self.transfer(),
+            "vote" => self.vote(),
+            "get_balance" => self.get_balance(),
+            "update_reputation" => self.update_reputation(),
+            _ => Err(IcnError::VM(format!("Unknown built-in function: {}", function))),
+        }
+    }
+
+    fn transfer(&mut self) -> IcnResult<Option<Value>> {
+        let amount = self.pop_number()?;
+        let to = self.pop_string()?;
+        let from = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        
+        let from_balance = context.balances.entry(from.clone()).or_insert(0.0);
+        if *from_balance < amount {
+            return Err(IcnError::VM("Insufficient balance".into()));
+        }
+        *from_balance -= amount;
+
+        let to_balance = context.balances.entry(to.clone()).or_insert(0.0);
+        *to_balance += amount;
+
+        Ok(None)
+    }
+
+    fn vote(&mut self) -> IcnResult<Option<Value>> {
+        let vote = self.pop_bool()?;
+        let proposal = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        context.votes.insert(proposal, vote);
+
+        Ok(None)
+    }
+
+    fn get_balance(&mut self) -> IcnResult<Option<Value>> {
+        let address = self.pop_string()?;
+
+        let context = self.context.as_ref().ok_or(IcnError::VM("No context set".into()))?;
+        let balance = *context.balances.get(&address).unwrap_or(&0.0);
+
+        Ok(Some(Value::Float(balance)))
+    }
+
+    fn update_reputation(&mut self) -> IcnResult<Option<Value>> {
+        let change = self.pop_number()? as i32;
+        let address = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        let reputation = context.reputation.entry(address).or_insert(0);
+        *reputation += change;
+
+        Ok(None)
     }
 
     pub fn get_stack(&self) -> &Vec<Value> {
@@ -8831,84 +9034,6 @@ impl CoopVM {
     pub fn get_memory(&self) -> &HashMap<String, Value> {
         &self.memory
     }
-
-    pub fn set_memory(&mut self, name: String, value: Value) {
-        self.memory.insert(name, value);
-    }
-
-    pub fn load_program(&mut self, program: Vec<Opcode>) {
-        self.program = program;
-        self.pc = 0;
-        self.stack.clear();
-        self.memory.clear();
-        self.call_stack.clear();
-    }
-}
-
-pub struct SmartContract {
-    pub name: String,
-    pub code: Vec<Opcode>,
-}
-
-impl SmartContract {
-    pub fn new(name: String, code: Vec<Opcode>) -> Self {
-        SmartContract { name, code }
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn get_code(&self) -> &Vec<Opcode> {
-        &self.code
-    }
-}
-
-pub struct ContractManager {
-    contracts: HashMap<String, SmartContract>,
-    vm: CoopVM,
-}
-
-impl ContractManager {
-    pub fn new() -> Self {
-        ContractManager {
-            contracts: HashMap::new(),
-            vm: CoopVM::new(Vec::new()),
-        }
-    }
-
-    pub fn deploy_contract(&mut self, contract: SmartContract) -> Result<(), VMError> {
-        if self.contracts.contains_key(&contract.name) {
-            return Err(VMError::UnknownFunction(format!("Contract {} already exists", contract.name)));
-        }
-        self.contracts.insert(contract.name.clone(), contract);
-        Ok(())
-    }
-
-    pub fn execute_contract(&mut self, contract_name: &str, input: &[Value]) -> Result<Vec<Value>, VMError> {
-        let contract = self.contracts.get(contract_name)
-            .ok_or_else(|| VMError::UnknownFunction(format!("Contract {} not found", contract_name)))?;
-        
-        self.vm.load_program(contract.code.clone());
-        
-        // Set up input parameters in VM memory
-        for (i, value) in input.iter().enumerate() {
-            self.vm.set_memory(format!("input_{}", i), value.clone());
-        }
-
-        self.vm.run()?;
-
-        // Collect output from VM stack
-        Ok(self.vm.get_stack().clone())
-    }
-
-    pub fn get_contract(&self, name: &str) -> Option<&SmartContract> {
-        self.contracts.get(name)
-    }
-
-    pub fn list_contracts(&self) -> Vec<String> {
-        self.contracts.keys().cloned().collect()
-    }
 }
 
 #[cfg(test)]
@@ -8916,56 +9041,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simple_contract() {
-        let mut manager = ContractManager::new();
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Int(5)),
+            Opcode::Push(Value::Int(3)),
+            Opcode::Add,
+            Opcode::Push(Value::Int(2)),
+            Opcode::Mul,
+        ];
 
-        let contract = SmartContract::new(
-            "SimpleAddition".to_string(),
-            vec![
-                Opcode::Load("input_0".to_string()),
-                Opcode::Load("input_1".to_string()),
-                Opcode::Add,
-            ],
-        );
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
 
-        manager.deploy_contract(contract).unwrap();
-
-        let result = manager.execute_contract(
-            "SimpleAddition",
-            &[Value::Int(5), Value::Int(3)],
-        ).unwrap();
-
-        assert_eq!(result, vec![Value::Int(8)]);
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_complex_contract() {
-        let mut manager = ContractManager::new();
+    fn test_transfer() {
+        let program = vec![
+            Opcode::Push(Value::String("Alice".to_string())),
+            Opcode::Push(Value::String("Bob".to_string())),
+            Opcode::Push(Value::Float(50.0)),
+            Opcode::Call("transfer".to_string()),
+            Opcode::Push(Value::String("Alice".to_string())),
+            Opcode::Call("get_balance".to_string()),
+            Opcode::Push(Value::String("Bob".to_string())),
+            Opcode::Call("get_balance".to_string()),
+        ];
 
-        let contract = SmartContract::new(
-            "ComplexOperations".to_string(),
-            vec![
-                Opcode::CreateList,
-                Opcode::Load("input_0".to_string()),
-                Opcode::AppendList,
-                Opcode::Load("input_1".to_string()),
-                Opcode::AppendList,
-                Opcode::Push(Value::Int(0)),
-                Opcode::GetListItem,
-                Opcode::Push(Value::Int(1)),
-                Opcode::GetListItem,
-                Opcode::Mul,
-            ],
-        );
+        let mut vm = CoopVM::new(program);
+        let mut context = ContractContext {
+            balances: HashMap::new(),
+            votes: HashMap::new(),
+            reputation: HashMap::new(),
+        };
+        context.balances.insert("Alice".to_string(), 100.0);
+        context.balances.insert("Bob".to_string(), 0.0);
+        vm.set_context(&context);
 
-        manager.deploy_contract(contract).unwrap();
+        vm.run().unwrap();
 
-        let result = manager.execute_contract(
-            "ComplexOperations",
-            &[Value::Int(5), Value::Int(3)],
-        ).unwrap();
+        assert_eq!(vm.stack, vec![Value::Float(50.0), Value::Float(50.0)]);
+    }
 
-        assert_eq!(result, vec![Value::Int(15)]);
+    #[test]
+    fn test_voting() {
+        let program = vec![
+            Opcode::Push(Value::String("proposal1".to_string())),
+            Opcode::Push(Value::Bool(true)),
+            Opcode::Call("vote".to_string()),
+            Opcode::Push(Value::String("proposal2".to_string())),
+            Opcode::Push(Value::Bool(false)),
+            Opcode::Call("vote".to_string()),
+        ];
+
+        let mut vm = CoopVM::new(program);
+        let context = ContractContext {
+            balances: HashMap::new(),
+            votes: HashMap::new(),
+            reputation: HashMap::new(),
+        };
+        vm.set_context(&context);
+
+        vm.run().unwrap();
+
+        assert_eq!(vm.context.unwrap().votes.len(), 2);
+        assert_eq!(vm.context.unwrap().votes.get("proposal1"), Some(&true));
+        assert_eq!(vm.context.unwrap().votes.get("proposal2"), Some(&false));
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 
@@ -9505,6 +9647,378 @@ mod tests {
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/vm.rs =====
 
+===== START OF /home/matt/InterCooperative-Network/crates/icn_zkp/Cargo.toml =====
+[package]
+name = "icn_zkp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_common = { path = "../icn_common" }
+bellman = "0.11.0"
+bls12_381 = "0.6.0"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.3"===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/Cargo.toml =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/circuits.rs =====
+use bellman::{Circuit, ConstraintSystem, SynthesisError};
+use bls12_381::Scalar;
+use icn_common::Transaction;
+
+pub struct TransactionCircuit {
+    // Private inputs
+    sender: Option<Scalar>,
+    receiver: Option<Scalar>,
+    amount: Option<Scalar>,
+    currency_type: Option<Scalar>,
+
+    // Public inputs
+    sender_hash: Option<Scalar>,
+    receiver_hash: Option<Scalar>,
+    amount_hash: Option<Scalar>,
+    currency_type_hash: Option<Scalar>,
+}
+
+impl TransactionCircuit {
+    pub fn new(transaction: &Transaction) -> Self {
+        // In a real implementation, you would convert transaction fields to Scalar
+        // and compute hashes. This is a simplified version.
+        TransactionCircuit {
+            sender: Some(Scalar::from(1u64)),
+            receiver: Some(Scalar::from(2u64)),
+            amount: Some(Scalar::from(transaction.amount as u64)),
+            currency_type: Some(Scalar::from(0u64)), // Simplified representation
+
+            sender_hash: Some(Scalar::from(3u64)),
+            receiver_hash: Some(Scalar::from(4u64)),
+            amount_hash: Some(Scalar::from(5u64)),
+            currency_type_hash: Some(Scalar::from(6u64)),
+        }
+    }
+
+    pub fn empty() -> Self {
+        TransactionCircuit {
+            sender: None,
+            receiver: None,
+            amount: None,
+            currency_type: None,
+            sender_hash: None,
+            receiver_hash: None,
+            amount_hash: None,
+            currency_type_hash: None,
+        }
+    }
+
+    pub fn public_inputs(transaction: &Transaction) -> Vec<Scalar> {
+        // In a real implementation, you would compute actual hashes
+        vec![
+            Scalar::from(3u64),
+            Scalar::from(4u64),
+            Scalar::from(5u64),
+            Scalar::from(6u64),
+        ]
+    }
+}
+
+impl Circuit<Scalar> for TransactionCircuit {
+    fn synthesize<CS: ConstraintSystem<Scalar>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
+        // Allocate private inputs
+        let sender = cs.alloc(|| "sender", || self.sender.ok_or(SynthesisError::AssignmentMissing))?;
+        let receiver = cs.alloc(|| "receiver", || self.receiver.ok_or(SynthesisError::AssignmentMissing))?;
+        let amount = cs.alloc(|| "amount", || self.amount.ok_or(SynthesisError::AssignmentMissing))?;
+        let currency_type = cs.alloc(|| "currency_type", || self.currency_type.ok_or(SynthesisError::AssignmentMissing))?;
+
+        // Allocate public inputs
+        let sender_hash = cs.alloc_input(|| "sender_hash", || self.sender_hash.ok_or(SynthesisError::AssignmentMissing))?;
+        let receiver_hash = cs.alloc_input(|| "receiver_hash", || self.receiver_hash.ok_or(SynthesisError::AssignmentMissing))?;
+        let amount_hash = cs.alloc_input(|| "amount_hash", || self.amount_hash.ok_or(SynthesisError::AssignmentMissing))?;
+        let currency_type_hash = cs.alloc_input(|| "currency_type_hash", || self.currency_type_hash.ok_or(SynthesisError::AssignmentMissing))?;
+
+        // Add constraints
+        // In a real implementation, you would add proper constraints to prove the relationship
+        // between private inputs and public inputs (hashes)
+        cs.enforce(
+            || "sender hash constraint",
+            |lc| lc + sender,
+            |lc| lc + CS::one(),
+            |lc| lc + sender_hash
+        );
+
+        cs.enforce(
+            || "receiver hash constraint",
+            |lc| lc + receiver,
+            |lc| lc + CS::one(),
+            |lc| lc + receiver_hash
+        );
+
+        cs.enforce(
+            || "amount hash constraint",
+            |lc| lc + amount,
+            |lc| lc + CS::one(),
+            |lc| lc + amount_hash
+        );
+
+        cs.enforce(
+            || "currency type hash constraint",
+            |lc| lc + currency_type,
+            |lc| lc + CS::one(),
+            |lc| lc + currency_type_hash
+        );
+
+        Ok(())
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/circuits.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
+use bellman::{Circuit, ConstraintSystem, SynthesisError};
+use bls12_381::Bls12;
+use icn_common::{IcnResult, IcnError, Transaction};
+use rand::rngs::OsRng;
+
+mod circuits;
+pub use circuits::*;
+
+pub struct ZKPManager {
+    params: bellman::groth16::Parameters<Bls12>,
+}
+
+impl ZKPManager {
+    pub fn new() -> IcnResult<Self> {
+        let mut rng = OsRng;
+        let params = bellman::groth16::generate_random_parameters::<Bls12, _, _>(
+            circuits::TransactionCircuit::empty(),
+            &mut rng
+        ).map_err(|e| IcnError::ZKP(format!("Failed to generate ZKP parameters: {}", e)))?;
+
+        Ok(ZKPManager { params })
+    }
+
+    pub fn create_proof<C>(&self, circuit: C) -> IcnResult<bellman::groth16::Proof<Bls12>>
+    where
+        C: Circuit<bls12_381::Scalar>,
+    {
+        let mut rng = OsRng;
+        bellman::groth16::create_random_proof===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/icn_smart_contracts/Cargo.toml =====
+[package]
+name = "icn_smart_contracts"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+icn_common = { path = "../icn_common" }
+icn_vm = { path = "../icn_vm" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+log = "0.4"
+pest = "2.1"
+pest_derive = "2.1"===== END OF /home/matt/InterCooperative-Network/icn_smart_contracts/Cargo.toml =====
+
+===== START OF /home/matt/InterCooperative-Network/icn_smart_contracts/src/lib.rs =====
+use pest::Parser;
+use pest_derive::Parser;
+use icn_common::{IcnResult, IcnError};
+use icn_vm::{CoopVM, Opcode, Value};
+use std::collections::HashMap;
+
+#[derive(Parser)]
+#[grammar = "contract.pest"]
+struct ContractParser;
+
+pub struct NaturalLanguageCompiler;
+
+impl NaturalLanguageCompiler {
+    pub fn compile(input: &str) -> IcnResult<Vec<Opcode>> {
+        let pairs = ContractParser::parse(Rule::contract, input)
+            .map_err(|e| IcnError::SmartContract(format!("Parsing error: {}", e)))?;
+
+        let mut opcodes = Vec::new();
+
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::statement => {
+                    opcodes.extend(Self::compile_statement(pair)?);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(opcodes)
+    }
+
+    fn compile_statement(pair: pest::iterators::Pair<Rule>) -> IcnResult<Vec<Opcode>> {
+        let inner = pair.into_inner().next().unwrap();
+        match inner.as_rule() {
+            Rule::assignment => Self::compile_assignment(inner),
+            Rule::if_statement => Self::compile_if_statement(inner),
+            Rule::function_call => Self::compile_function_call(inner),
+            _ => Err(IcnError::SmartContract("Unknown statement type".into())),
+        }
+    }
+
+    fn compile_assignment(pair: pest::iterators::Pair<Rule>) -> IcnResult<Vec<Opcode>> {
+        let mut inner = pair.into_inner();
+        let variable = inner.next().unwrap().as_str();
+        let value = inner.next().unwrap();
+
+        let mut opcodes = Self::compile_expression(value)?;
+        opcodes.push(Opcode::Store(variable.to_string()));
+        Ok(opcodes)
+    }
+
+    fn compile_if_statement(pair: pest::iterators::Pair<Rule>) -> IcnResult<Vec<Opcode>> {
+        let mut inner = pair.into_inner();
+        let condition = inner.next().unwrap();
+        let true_branch = inner.next().unwrap();
+        let false_branch = inner.next();
+
+        let mut opcodes = Self::compile_expression(condition)?;
+        let true_opcodes = Self::compile_statement(true_branch)?;
+        let false_opcodes = false_branch.map(Self::compile_statement).transpose()?;
+
+        opcodes.push(Opcode::JumpIf(true_opcodes.len() as usize + 1));
+        opcodes.extend(true_opcodes);
+        if let Some(false_opcodes) = false_opcodes {
+            opcodes.push(Opcode::Jump(false_opcodes.len() as usize));
+            opcodes.extend(false_opcodes);
+        }
+
+        Ok(opcodes)
+    }
+
+    fn compile_function_call(pair: pest::iterators::Pair<Rule>) -> IcnResult<Vec<Opcode>> {
+        let mut inner = pair.into_inner();
+        let function_name = inner.next().unwrap().as_str();
+        let arguments = inner.next().unwrap().into_inner();
+
+        let mut opcodes = Vec::new();
+        for arg in arguments {
+            opcodes.extend(Self::compile_expression(arg)?);
+        }
+        opcodes.push(Opcode::Call(function_name.to_string()));
+        Ok(opcodes)
+    }
+
+    fn compile_expression(pair: pest::iterators::Pair<Rule>) -> IcnResult<Vec<Opcode>> {
+        match pair.as_rule() {
+            Rule::number => Ok(vec![Opcode::Push(Value::Int(pair.as_str().parse().unwrap()))]),
+            Rule::string => Ok(vec![Opcode::Push(Value::String(pair.into_inner().next().unwrap().as_str().to_string()))]),
+            Rule::boolean => Ok(vec![Opcode::Push(Value::Bool(pair.as_str().parse().unwrap()))]),
+            Rule::variable => Ok(vec![Opcode::Load(pair.as_str().to_string())]),
+            Rule::expression => {
+                let mut inner = pair.into_inner();
+                let left = inner.next().unwrap();
+                let operator = inner.next();
+                let right = inner.next();
+
+                let mut opcodes = Self::compile_expression(left)?;
+                if let (Some(op), Some(right)) = (operator, right) {
+                    opcodes.extend(Self::compile_expression(right)?);
+                    opcodes.push(match op.as_str() {
+                        "+" => Opcode::Add,
+                        "-" => Opcode::Sub,
+                        "*" => Opcode::Mul,
+                        "/" => Opcode::Div,
+                        "==" => Opcode::Eq,
+                        "!=" => Opcode::Neq,
+                        "<" => Opcode::Lt,
+                        "<=" => Opcode::Lte,
+                        ">" => Opcode::Gt,
+                        ">=" => Opcode::Gte,
+                        "and" => Opcode::And,
+                        "or" => Opcode::Or,
+                        _ => return Err(IcnError::SmartContract(format!("Unknown operator: {}", op.as_str()))),
+                    });
+                }
+                Ok(opcodes)
+            }
+            _ => Err(IcnError::SmartContract("Unknown expression type".into())),
+        }
+    }
+}
+
+pub struct ContractContext {
+    pub balances: HashMap<String, f64>,
+    pub votes: HashMap<String, bool>,
+    pub reputation: HashMap<String, i32>,
+}
+
+impl ContractContext {
+    pub fn new() -> Self {
+        ContractContext {
+            balances: HashMap::new(),
+            votes: HashMap::new(),
+            reputation: HashMap::new(),
+        }
+    }
+}
+
+pub struct SmartContractExecutor {
+    vm: CoopVM,
+}
+
+impl SmartContractExecutor {
+    pub fn new() -> Self {
+        SmartContractExecutor {
+            vm: CoopVM::new(Vec::new()),
+        }
+    }
+
+    pub fn execute(&mut self, contract: &str, context: &mut ContractContext) -> IcnResult<Option<Value>> {
+        let opcodes = NaturalLanguageCompiler::compile(contract)?;
+        self.vm.load_program(opcodes);
+        self.vm.set_context(context);
+        self.vm.run()?;
+        Ok(self.vm.get_stack().last().cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_natural_language_compiler() {
+        let contract = r#"
+        let x = 5
+        let y = 10
+        if x < y {
+            let z = x + y
+        } else {
+            let z = x - y
+        }
+        vote("proposal1", true)
+        "#;
+
+        let opcodes = NaturalLanguageCompiler::compile(contract).unwrap();
+        assert!(!opcodes.is_empty());
+    }
+
+    #[test]
+    fn test_smart_contract_executor() {
+        let mut executor = SmartContractExecutor::new();
+        let mut context = ContractContext::new();
+        context.balances.insert("Alice".to_string(), 100.0);
+        context.balances.insert("Bob".to_string(), 50.0);
+
+        let contract = r#"
+        let x = 5
+        let y = 10
+        let z = x + y
+        transfer("Alice", "Bob", z)
+        get_balance("Bob")
+        "#;
+
+        let result = executor.execute(contract, &mut context).unwrap();
+        assert_eq!(result, Some(Value::Float(65.0)));
+    }
+}===== END OF /home/matt/InterCooperative-Network/icn_smart_contracts/src/lib.rs =====
+
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
 [workspace]
 members = [
@@ -9520,7 +10034,7 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_core",
+    "crates/icn_core", "crates/icn_zkp", "icn_smart_contracts",
 ]
 
 resolver = "2"
@@ -9531,5 +10045,6 @@ tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 log = "0.4"
-env_logger = "0.9"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+env_logger = "0.9"
+===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 

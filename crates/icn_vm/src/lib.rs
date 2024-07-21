@@ -1,16 +1,15 @@
+use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
     String(String),
-    List(Vec<Value>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Opcode {
     Push(Value),
     Pop,
@@ -19,39 +18,19 @@ pub enum Opcode {
     Mul,
     Div,
     Eq,
+    Neq,
     Lt,
+    Lte,
     Gt,
+    Gte,
     And,
     Or,
     Not,
     Store(String),
     Load(String),
     Call(String),
-    Return,
     JumpIf(usize),
     Jump(usize),
-    CreateList,
-    AppendList,
-    GetListItem,
-    SetListItem,
-}
-
-#[derive(Error, Debug)]
-pub enum VMError {
-    #[error("Stack underflow")]
-    StackUnderflow,
-    #[error("Type mismatch: expected {0}, found {1}")]
-    TypeMismatch(String, String),
-    #[error("Unknown variable: {0}")]
-    UnknownVariable(String),
-    #[error("Unknown function: {0}")]
-    UnknownFunction(String),
-    #[error("Invalid jump target")]
-    InvalidJumpTarget,
-    #[error("Return without call")]
-    ReturnWithoutCall,
-    #[error("List index out of bounds")]
-    ListIndexOutOfBounds,
 }
 
 pub struct CoopVM {
@@ -59,8 +38,13 @@ pub struct CoopVM {
     memory: HashMap<String, Value>,
     program: Vec<Opcode>,
     pc: usize,
-    call_stack: Vec<usize>,
-    functions: HashMap<String, usize>,
+    context: Option<ContractContext>,
+}
+
+pub struct ContractContext {
+    pub balances: HashMap<String, f64>,
+    pub votes: HashMap<String, bool>,
+    pub reputation: HashMap<String, i32>,
 }
 
 impl CoopVM {
@@ -70,12 +54,24 @@ impl CoopVM {
             memory: HashMap::new(),
             program,
             pc: 0,
-            call_stack: Vec::new(),
-            functions: HashMap::new(),
+            context: None,
         }
     }
 
-    pub fn run(&mut self) -> Result<(), VMError> {
+    pub fn load_program(&mut self, program: Vec<Opcode>) {
+        self.program = program;
+        self.pc = 0;
+    }
+
+    pub fn set_context(&mut self, context: &ContractContext) {
+        self.context = Some(ContractContext {
+            balances: context.balances.clone(),
+            votes: context.votes.clone(),
+            reputation: context.reputation.clone(),
+        });
+    }
+
+    pub fn run(&mut self) -> IcnResult<()> {
         while self.pc < self.program.len() {
             self.execute_instruction()?;
             self.pc += 1;
@@ -83,18 +79,21 @@ impl CoopVM {
         Ok(())
     }
 
-    fn execute_instruction(&mut self) -> Result<(), VMError> {
+    fn execute_instruction(&mut self) -> IcnResult<()> {
         let instruction = &self.program[self.pc];
         match instruction {
             Opcode::Push(value) => self.stack.push(value.clone()),
-            Opcode::Pop => { self.stack.pop().ok_or(VMError::StackUnderflow)?; }
+            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? ; }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
             Opcode::Mul => self.binary_op(|a, b| a * b)?,
             Opcode::Div => self.binary_op(|a, b| a / b)?,
             Opcode::Eq => self.compare_op(|a, b| a == b)?,
+            Opcode::Neq => self.compare_op(|a, b| a != b)?,
             Opcode::Lt => self.compare_op(|a, b| a < b)?,
+            Opcode::Lte => self.compare_op(|a, b| a <= b)?,
             Opcode::Gt => self.compare_op(|a, b| a > b)?,
+            Opcode::Gte => self.compare_op(|a, b| a >= b)?,
             Opcode::And => self.logic_op(|a, b| a && b)?,
             Opcode::Or => self.logic_op(|a, b| a || b)?,
             Opcode::Not => {
@@ -102,88 +101,52 @@ impl CoopVM {
                 self.stack.push(Value::Bool(!a));
             }
             Opcode::Store(name) => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
                 self.memory.insert(name.clone(), value);
             }
             Opcode::Load(name) => {
-                let value = self.memory.get(name).ok_or(VMError::UnknownVariable(name.clone()))?.clone();
+                let value = self.memory.get(name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
             }
-            Opcode::Call(func_name) => {
-                let func_pc = *self.functions.get(func_name).ok_or(VMError::UnknownFunction(func_name.clone()))?;
-                self.call_stack.push(self.pc);
-                self.pc = func_pc;
-            }
-            Opcode::Return => {
-                self.pc = self.call_stack.pop().ok_or(VMError::ReturnWithoutCall)?;
+            Opcode::Call(function) => {
+                let result = self.execute_built_in(function)?;
+                if let Some(value) = result {
+                    self.stack.push(value);
+                }
             }
             Opcode::JumpIf(target) => {
-                let condition = self.pop_bool()?;
-                if condition {
-                    self.pc = *target;
+                if self.pop_bool()? {
+                    self.pc = *target - 1; // -1 because pc will be incremented after this instruction
                 }
             }
             Opcode::Jump(target) => {
-                self.pc = *target;
-            }
-            Opcode::CreateList => {
-                self.stack.push(Value::List(Vec::new()));
-            }
-            Opcode::AppendList => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    list.push(value);
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
-            }
-            Opcode::GetListItem => {
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.pop() {
-                    let item = list.get(index as usize).ok_or(VMError::ListIndexOutOfBounds)?.clone();
-                    self.stack.push(item);
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
-            }
-            Opcode::SetListItem => {
-                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    if (index as usize) < list.len() {
-                        list[index as usize] = value;
-                    } else {
-                        return Err(VMError::ListIndexOutOfBounds);
-                    }
-                } else {
-                    return Err(VMError::TypeMismatch("List".to_string(), "Non-List".to_string()));
-                }
+                self.pc = *target - 1; // -1 because pc will be incremented after this instruction
             }
         }
         Ok(())
     }
 
-    fn binary_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
     where
-        F: Fn(i64, i64) -> i64,
+        F: Fn(f64, f64) -> f64,
     {
-        let b = self.pop_int()?;
-        let a = self.pop_int()?;
-        self.stack.push(Value::Int(op(a, b)));
+        let b = self.pop_number()?;
+        let a = self.pop_number()?;
+        self.stack.push(Value::Float(op(a, b)));
         Ok(())
     }
 
-    fn compare_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
     where
-        F: Fn(&Value, &Value) -> bool,
+        F: Fn(f64, f64) -> bool,
     {
-        let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-        let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
-        self.stack.push(Value::Bool(op(&a, &b)));
+        let b = self.pop_number()?;
+        let a = self.pop_number()?;
+        self.stack.push(Value::Bool(op(a, b)));
         Ok(())
     }
 
-    fn logic_op<F>(&mut self, op: F) -> Result<(), VMError>
+    fn logic_op<F>(&mut self, op: F) -> IcnResult<()>
     where
         F: Fn(bool, bool) -> bool,
     {
@@ -193,22 +156,85 @@ impl CoopVM {
         Ok(())
     }
 
-    fn pop_int(&mut self) -> Result<i64, VMError> {
-        match self.stack.pop().ok_or(VMError::StackUnderflow)? {
-            Value::Int(i) => Ok(i),
-            v => Err(VMError::TypeMismatch("Int".to_string(), format!("{:?}", v))),
+    fn pop_number(&mut self) -> IcnResult<f64> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Int(i) => Ok(i as f64),
+            Value::Float(f) => Ok(f),
+            _ => Err(IcnError::VM("Expected number".into())),
         }
     }
 
-    fn pop_bool(&mut self) -> Result<bool, VMError> {
-        match self.stack.pop().ok_or(VMError::StackUnderflow)? {
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
             Value::Bool(b) => Ok(b),
-            v => Err(VMError::TypeMismatch("Bool".to_string(), format!("{:?}", v))),
+            _ => Err(IcnError::VM("Expected boolean".into())),
         }
     }
 
-    pub fn register_function(&mut self, name: String, pc: usize) {
-        self.functions.insert(name, pc);
+    fn pop_string(&mut self) -> IcnResult<String> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::String(s) => Ok(s),
+            _ => Err(IcnError::VM("Expected string".into())),
+        }
+    }
+
+    fn execute_built_in(&mut self, function: &str) -> IcnResult<Option<Value>> {
+        match function {
+            "transfer" => self.transfer(),
+            "vote" => self.vote(),
+            "get_balance" => self.get_balance(),
+            "update_reputation" => self.update_reputation(),
+            _ => Err(IcnError::VM(format!("Unknown built-in function: {}", function))),
+        }
+    }
+
+    fn transfer(&mut self) -> IcnResult<Option<Value>> {
+        let amount = self.pop_number()?;
+        let to = self.pop_string()?;
+        let from = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        
+        let from_balance = context.balances.entry(from.clone()).or_insert(0.0);
+        if *from_balance < amount {
+            return Err(IcnError::VM("Insufficient balance".into()));
+        }
+        *from_balance -= amount;
+
+        let to_balance = context.balances.entry(to.clone()).or_insert(0.0);
+        *to_balance += amount;
+
+        Ok(None)
+    }
+
+    fn vote(&mut self) -> IcnResult<Option<Value>> {
+        let vote = self.pop_bool()?;
+        let proposal = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        context.votes.insert(proposal, vote);
+
+        Ok(None)
+    }
+
+    fn get_balance(&mut self) -> IcnResult<Option<Value>> {
+        let address = self.pop_string()?;
+
+        let context = self.context.as_ref().ok_or(IcnError::VM("No context set".into()))?;
+        let balance = *context.balances.get(&address).unwrap_or(&0.0);
+
+        Ok(Some(Value::Float(balance)))
+    }
+
+    fn update_reputation(&mut self) -> IcnResult<Option<Value>> {
+        let change = self.pop_number()? as i32;
+        let address = self.pop_string()?;
+
+        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+        let reputation = context.reputation.entry(address).or_insert(0);
+        *reputation += change;
+
+        Ok(None)
     }
 
     pub fn get_stack(&self) -> &Vec<Value> {
@@ -218,84 +244,6 @@ impl CoopVM {
     pub fn get_memory(&self) -> &HashMap<String, Value> {
         &self.memory
     }
-
-    pub fn set_memory(&mut self, name: String, value: Value) {
-        self.memory.insert(name, value);
-    }
-
-    pub fn load_program(&mut self, program: Vec<Opcode>) {
-        self.program = program;
-        self.pc = 0;
-        self.stack.clear();
-        self.memory.clear();
-        self.call_stack.clear();
-    }
-}
-
-pub struct SmartContract {
-    pub name: String,
-    pub code: Vec<Opcode>,
-}
-
-impl SmartContract {
-    pub fn new(name: String, code: Vec<Opcode>) -> Self {
-        SmartContract { name, code }
-    }
-
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn get_code(&self) -> &Vec<Opcode> {
-        &self.code
-    }
-}
-
-pub struct ContractManager {
-    contracts: HashMap<String, SmartContract>,
-    vm: CoopVM,
-}
-
-impl ContractManager {
-    pub fn new() -> Self {
-        ContractManager {
-            contracts: HashMap::new(),
-            vm: CoopVM::new(Vec::new()),
-        }
-    }
-
-    pub fn deploy_contract(&mut self, contract: SmartContract) -> Result<(), VMError> {
-        if self.contracts.contains_key(&contract.name) {
-            return Err(VMError::UnknownFunction(format!("Contract {} already exists", contract.name)));
-        }
-        self.contracts.insert(contract.name.clone(), contract);
-        Ok(())
-    }
-
-    pub fn execute_contract(&mut self, contract_name: &str, input: &[Value]) -> Result<Vec<Value>, VMError> {
-        let contract = self.contracts.get(contract_name)
-            .ok_or_else(|| VMError::UnknownFunction(format!("Contract {} not found", contract_name)))?;
-        
-        self.vm.load_program(contract.code.clone());
-        
-        // Set up input parameters in VM memory
-        for (i, value) in input.iter().enumerate() {
-            self.vm.set_memory(format!("input_{}", i), value.clone());
-        }
-
-        self.vm.run()?;
-
-        // Collect output from VM stack
-        Ok(self.vm.get_stack().clone())
-    }
-
-    pub fn get_contract(&self, name: &str) -> Option<&SmartContract> {
-        self.contracts.get(name)
-    }
-
-    pub fn list_contracts(&self) -> Vec<String> {
-        self.contracts.keys().cloned().collect()
-    }
 }
 
 #[cfg(test)]
@@ -303,55 +251,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_simple_contract() {
-        let mut manager = ContractManager::new();
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Int(5)),
+            Opcode::Push(Value::Int(3)),
+            Opcode::Add,
+            Opcode::Push(Value::Int(2)),
+            Opcode::Mul,
+        ];
 
-        let contract = SmartContract::new(
-            "SimpleAddition".to_string(),
-            vec![
-                Opcode::Load("input_0".to_string()),
-                Opcode::Load("input_1".to_string()),
-                Opcode::Add,
-            ],
-        );
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
 
-        manager.deploy_contract(contract).unwrap();
-
-        let result = manager.execute_contract(
-            "SimpleAddition",
-            &[Value::Int(5), Value::Int(3)],
-        ).unwrap();
-
-        assert_eq!(result, vec![Value::Int(8)]);
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_complex_contract() {
-        let mut manager = ContractManager::new();
+    fn test_transfer() {
+        let program = vec![
+            Opcode::Push(Value::String("Alice".to_string())),
+            Opcode::Push(Value::String("Bob".to_string())),
+            Opcode::Push(Value::Float(50.0)),
+            Opcode::Call("transfer".to_string()),
+            Opcode::Push(Value::String("Alice".to_string())),
+            Opcode::Call("get_balance".to_string()),
+            Opcode::Push(Value::String("Bob".to_string())),
+            Opcode::Call("get_balance".to_string()),
+        ];
 
-        let contract = SmartContract::new(
-            "ComplexOperations".to_string(),
-            vec![
-                Opcode::CreateList,
-                Opcode::Load("input_0".to_string()),
-                Opcode::AppendList,
-                Opcode::Load("input_1".to_string()),
-                Opcode::AppendList,
-                Opcode::Push(Value::Int(0)),
-                Opcode::GetListItem,
-                Opcode::Push(Value::Int(1)),
-                Opcode::GetListItem,
-                Opcode::Mul,
-            ],
-        );
+        let mut vm = CoopVM::new(program);
+        let mut context = ContractContext {
+            balances: HashMap::new(),
+            votes: HashMap::new(),
+            reputation: HashMap::new(),
+        };
+        context.balances.insert("Alice".to_string(), 100.0);
+        context.balances.insert("Bob".to_string(), 0.0);
+        vm.set_context(&context);
 
-        manager.deploy_contract(contract).unwrap();
+        vm.run().unwrap();
 
-        let result = manager.execute_contract(
-            "ComplexOperations",
-            &[Value::Int(5), Value::Int(3)],
-        ).unwrap();
+        assert_eq!(vm.stack, vec![Value::Float(50.0), Value::Float(50.0)]);
+    }
 
-        assert_eq!(result, vec![Value::Int(15)]);
+    #[test]
+    fn test_voting() {
+        let program = vec![
+            Opcode::Push(Value::String("proposal1".to_string())),
+            Opcode::Push(Value::Bool(true)),
+            Opcode::Call("vote".to_string()),
+            Opcode::Push(Value::String("proposal2".to_string())),
+            Opcode::Push(Value::Bool(false)),
+            Opcode::Call("vote".to_string()),
+        ];
+
+        let mut vm = CoopVM::new(program);
+        let context = ContractContext {
+            balances: HashMap::new(),
+            votes: HashMap::new(),
+            reputation: HashMap::new(),
+        };
+        vm.set_context(&context);
+
+        vm.run().unwrap();
+
+        assert_eq!(vm.context.unwrap().votes.len(), 2);
+        assert_eq!(vm.context.unwrap().votes.get("proposal1"), Some(&true));
+        assert_eq!(vm.context.unwrap().votes.get("proposal2"), Some(&false));
     }
 }

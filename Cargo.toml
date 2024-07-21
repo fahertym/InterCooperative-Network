@@ -12,7 +12,7 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_core",
+    "crates/icn_core", "crates/icn_zkp", "icn_smart_contracts",
 ]
 
 resolver = "2"

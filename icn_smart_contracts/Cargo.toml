@@ -1,15 +1,13 @@
 [package]
-name = "icn_blockchain"
+name = "icn_smart_contracts"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 icn_common = { path = "../icn_common" }
+icn_vm = { path = "../icn_vm" }
 serde = { version = "1.0", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
-sha2 = "0.10"
-log = "0.4"
 thiserror = "1.0"
-
-[dev-dependencies]
-tokio-test = "0.4"
+log = "0.4"
+pest = "2.1"
+pest_derive = "2.1"

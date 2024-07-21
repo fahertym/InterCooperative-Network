@@ -1,0 +1,35 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+contract = { SOI ~ statement* ~ EOI }
+
+statement = { assignment | if_statement | function_call }
+
+assignment = { "let" ~ variable ~ "=" ~ expression }
+
+if_statement = { "if" ~ expression ~ block ~ ("else" ~ block)? }
+
+function_call = { identifier ~ "(" ~ (expression ~ ("," ~ expression)*)? ~ ")" }
+
+block = { "{" ~ statement* ~ "}" }
+
+expression = { term ~ (operator ~ term)* }
+
+term = { number | string | boolean | variable | "(" ~ expression ~ ")" }
+
+number = @{ "-"? ~ ASCII_DIGIT+ }
+
+string = ${ "\"" ~ inner ~ "\"" }
+inner = @{ char* }
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+
+boolean = { "true" | "false" }
+
+variable = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+operator = { "+" | "-" | "*" | "/" | "==" | "!=" | "<" | "<=" | ">" | ">=" | "and" | "or" }

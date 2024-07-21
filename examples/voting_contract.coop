@@ -1,0 +1,33 @@
+let min_votes = 10
+let yes_votes = 0
+let no_votes = 0
+
+function cast_vote(voter, vote) {
+    if get_balance(voter) >= 100 {
+        vote("proposal1", vote)
+        if vote {
+            yes_votes = yes_votes + 1
+        } else {
+            no_votes = no_votes + 1
+        }
+        update_reputation(voter, 1)
+    }
+}
+
+function get_result() {
+    let total_votes = yes_votes + no_votes
+    if total_votes >= min_votes {
+        if yes_votes > no_votes {
+            "Proposal passed"
+        } else {
+            "Proposal rejected"
+        }
+    } else {
+        "Insufficient votes"
+    }
+}
+
+cast_vote("Alice", true)
+cast_vote("Bob", false)
+cast_vote("Charlie", true)
+get_result()
