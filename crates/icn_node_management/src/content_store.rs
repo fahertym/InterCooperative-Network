@@ -1,79 +1,70 @@
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-const MAX_CACHE_SIZE: usize = 1000;
-const DEFAULT_TTL: Duration = Duration::from_secs(3600);
-
-struct CacheEntry {
-    content: Vec<u8>,
-    timestamp: Instant,
-    ttl: Duration,
-}
-
+/// Represents a content store in the ICN project.
 pub struct ContentStore {
-    cache: HashMap<String, CacheEntry>,
+    store: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl ContentStore {
+    /// Creates a new instance of ContentStore.
     pub fn new() -> Self {
         ContentStore {
-            cache: HashMap::new(),
+            store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add(&mut self, name: String, content: Vec<u8>) {
-        self.cache.insert(name, CacheEntry {
-            content,
-            timestamp: Instant::now(),
-            ttl: DEFAULT_TTL,
-        });
-
-        if self.cache.len() > MAX_CACHE_SIZE {
-            self.evict_oldest();
-        }
+    /// Stores content in the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content.
+    /// * `data` - The content data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn store(&self, content_id: String, data: Vec<u8>) -> IcnResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.insert(content_id.clone(), data);
+        info!("Content stored with ID: {}", content_id);
+        Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Option<Vec<u8>> {
-        self.cache.get(name).and_then(|entry| {
-            if entry.timestamp.elapsed() < entry.ttl {
-                Some(entry.content.clone())
-            } else {
-                None
-            }
-        })
+    /// Retrieves content from the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content to be retrieved.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<u8>>` - The retrieved content data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn retrieve(&self, content_id: &str) -> IcnResult<Vec<u8>> {
+        let store = self.store.read().unwrap();
+        store.get(content_id).cloned().ok_or_else(|| IcnError::Storage("Content not found".into()))
     }
 
-    pub fn get_and_pop(&mut self, name: &str) -> Option<Vec<u8>> {
-        if let Some(entry) = self.cache.remove(name) {
-            if entry.timestamp.elapsed() < entry.ttl {
-                Some(entry.content)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some(oldest_key) = self.cache.keys().next().cloned() {
-            self.cache.remove(&oldest_key);
-        }
-    }
-
-    pub fn remove_expired(&mut self) {
-        let now = Instant::now();
-        self.cache.retain(|_, entry| now.duration_since(entry.timestamp) < entry.ttl);
-    }
-
-    pub fn set_ttl(&mut self, name: &str, ttl: Duration) {
-        if let Some(entry) = self.cache.get_mut(name) {
-            entry.ttl = ttl;
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.cache.is_empty()
+    /// Removes content from the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove(&self, content_id: &str) -> IcnResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.remove(content_id);
+        info!("Content removed with ID: {}", content_id);
+        Ok(())
     }
 }
 
@@ -82,22 +73,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_content_store() {
-        let mut cs = ContentStore::new();
-        let content = vec![1, 2, 3, 4];
-        cs.add("test".to_string(), content.clone());
+    fn test_store_and_retrieve_content() {
+        let content_store = ContentStore::new();
+        let content_id = "content_1".to_string();
+        let data = vec![1, 2, 3];
+        assert!(content_store.store(content_id.clone(), data.clone()).is_ok());
+        let retrieved_data = content_store.retrieve(&content_id).unwrap();
+        assert_eq!(retrieved_data, data);
+    }
 
-        assert_eq!(cs.get("test"), Some(content.clone()));
-        assert_eq!(cs.get("nonexistent"), None);
+    #[test]
+    fn test_retrieve_non_existent_content() {
+        let content_store = ContentStore::new();
+        assert!(content_store.retrieve("non_existent_content").is_err());
+    }
 
-        cs.set_ttl("test", Duration::from_secs(1));
-        std::thread::sleep(Duration::from_secs(2));
-        assert_eq!(cs.get("test"), None);
-
-        cs.add("test2".to_string(), vec![5, 6, 7, 8]);
-        assert!(!cs.is_empty());
-
-        cs.remove_expired();
-        assert_eq!(cs.get("test2"), Some(vec![5, 6, 7, 8]));
+    #[test]
+    fn test_remove_content() {
+        let content_store = ContentStore::new();
+        let content_id = "content_1".to_string();
+        let data = vec![1, 2, 3];
+        content_store.store(content_id.clone(), data).unwrap();
+        assert!(content_store.remove(&content_id).is_ok());
+        assert!(content_store.retrieve(&content_id).is_err());
     }
 }

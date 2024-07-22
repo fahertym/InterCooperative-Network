@@ -6719,82 +6719,73 @@ tokio = { version = "1.0", features = ["full"] }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/content_store.rs =====
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-const MAX_CACHE_SIZE: usize = 1000;
-const DEFAULT_TTL: Duration = Duration::from_secs(3600);
-
-struct CacheEntry {
-    content: Vec<u8>,
-    timestamp: Instant,
-    ttl: Duration,
-}
-
+/// Represents a content store in the ICN project.
 pub struct ContentStore {
-    cache: HashMap<String, CacheEntry>,
+    store: Arc<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl ContentStore {
+    /// Creates a new instance of ContentStore.
     pub fn new() -> Self {
         ContentStore {
-            cache: HashMap::new(),
+            store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add(&mut self, name: String, content: Vec<u8>) {
-        self.cache.insert(name, CacheEntry {
-            content,
-            timestamp: Instant::now(),
-            ttl: DEFAULT_TTL,
-        });
-
-        if self.cache.len() > MAX_CACHE_SIZE {
-            self.evict_oldest();
-        }
+    /// Stores content in the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content.
+    /// * `data` - The content data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn store(&self, content_id: String, data: Vec<u8>) -> IcnResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.insert(content_id.clone(), data);
+        info!("Content stored with ID: {}", content_id);
+        Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Option<Vec<u8>> {
-        self.cache.get(name).and_then(|entry| {
-            if entry.timestamp.elapsed() < entry.ttl {
-                Some(entry.content.clone())
-            } else {
-                None
-            }
-        })
+    /// Retrieves content from the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content to be retrieved.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<u8>>` - The retrieved content data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn retrieve(&self, content_id: &str) -> IcnResult<Vec<u8>> {
+        let store = self.store.read().unwrap();
+        store.get(content_id).cloned().ok_or_else(|| IcnError::Storage("Content not found".into()))
     }
 
-    pub fn get_and_pop(&mut self, name: &str) -> Option<Vec<u8>> {
-        if let Some(entry) = self.cache.remove(name) {
-            if entry.timestamp.elapsed() < entry.ttl {
-                Some(entry.content)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some(oldest_key) = self.cache.keys().next().cloned() {
-            self.cache.remove(&oldest_key);
-        }
-    }
-
-    pub fn remove_expired(&mut self) {
-        let now = Instant::now();
-        self.cache.retain(|_, entry| now.duration_since(entry.timestamp) < entry.ttl);
-    }
-
-    pub fn set_ttl(&mut self, name: &str, ttl: Duration) {
-        if let Some(entry) = self.cache.get_mut(name) {
-            entry.ttl = ttl;
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.cache.is_empty()
+    /// Removes content from the content store.
+    ///
+    /// # Arguments
+    ///
+    /// * `content_id` - The ID of the content to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove(&self, content_id: &str) -> IcnResult<()> {
+        let mut store = self.store.write().unwrap();
+        store.remove(content_id);
+        info!("Content removed with ID: {}", content_id);
+        Ok(())
     }
 }
 
@@ -6803,94 +6794,101 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_content_store() {
-        let mut cs = ContentStore::new();
-        let content = vec![1, 2, 3, 4];
-        cs.add("test".to_string(), content.clone());
+    fn test_store_and_retrieve_content() {
+        let content_store = ContentStore::new();
+        let content_id = "content_1".to_string();
+        let data = vec![1, 2, 3];
+        assert!(content_store.store(content_id.clone(), data.clone()).is_ok());
+        let retrieved_data = content_store.retrieve(&content_id).unwrap();
+        assert_eq!(retrieved_data, data);
+    }
 
-        assert_eq!(cs.get("test"), Some(content.clone()));
-        assert_eq!(cs.get("nonexistent"), None);
+    #[test]
+    fn test_retrieve_non_existent_content() {
+        let content_store = ContentStore::new();
+        assert!(content_store.retrieve("non_existent_content").is_err());
+    }
 
-        cs.set_ttl("test", Duration::from_secs(1));
-        std::thread::sleep(Duration::from_secs(2));
-        assert_eq!(cs.get("test"), None);
-
-        cs.add("test2".to_string(), vec![5, 6, 7, 8]);
-        assert!(!cs.is_empty());
-
-        cs.remove_expired();
-        assert_eq!(cs.get("test2"), Some(vec![5, 6, 7, 8]));
+    #[test]
+    fn test_remove_content() {
+        let content_store = ContentStore::new();
+        let content_id = "content_1".to_string();
+        let data = vec![1, 2, 3];
+        content_store.store(content_id.clone(), data).unwrap();
+        assert!(content_store.remove(&content_id).is_ok());
+        assert!(content_store.retrieve(&content_id).is_err());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/content_store.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/fib.rs =====
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-/// Represents an entry in the Forwarding Information Base (FIB).
-#[derive(Debug, Clone)]
-pub struct FibEntry {
-    pub name: String,           // The name of the content or prefix.
-    pub next_hops: Vec<SocketAddr>, // The list of next hop addresses.
+/// Represents a Forwarding Information Base (FIB) in the ICN project.
+pub struct FIB {
+    table: Arc<RwLock<HashMap<String, String>>>,
 }
 
-impl FibEntry {
-    pub fn new(name: String, next_hop: SocketAddr) -> Self {
-        FibEntry {
-            name,
-            next_hops: vec![next_hop],
-        }
-    }
-
-    pub fn add_next_hop(&mut self, next_hop: SocketAddr) {
-        if !self.next_hops.contains(&next_hop) {
-            self.next_hops.push(next_hop);
-        }
-    }
-
-    pub fn remove_next_hop(&mut self, next_hop: &SocketAddr) {
-        self.next_hops.retain(|&x| x != *next_hop);
-    }
-}
-
-/// Represents the Forwarding Information Base (FIB) which stores FIB entries.
-pub struct ForwardingInformationBase {
-    entries: HashMap<String, FibEntry>, // The collection of FIB entries, indexed by name.
-}
-
-impl ForwardingInformationBase {
+impl FIB {
+    /// Creates a new instance of FIB.
     pub fn new() -> Self {
-        ForwardingInformationBase {
-            entries: HashMap::new(),
+        FIB {
+            table: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add_entry(&mut self, name: String, next_hop: SocketAddr) {
-        self.entries
-            .entry(name.clone())
-            .and_modify(|e| e.add_next_hop(next_hop))
-            .or_insert_with(|| FibEntry::new(name, next_hop));
+    /// Adds an entry to the FIB.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix of the entry.
+    /// * `next_hop` - The next hop for the entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn add_entry(&self, prefix: String, next_hop: String) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.insert(prefix.clone(), next_hop);
+        info!("FIB entry added: {} -> {}", prefix, next_hop);
+        Ok(())
     }
 
-    pub fn remove_entry(&mut self, name: &str) {
-        self.entries.remove(name);
+    /// Retrieves the next hop for a given prefix.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix to retrieve the next hop for.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<String>` - The next hop.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn get_next_hop(&self, prefix: &str) -> IcnResult<String> {
+        let table = self.table.read().unwrap();
+        table.get(prefix).cloned().ok_or_else(|| IcnError::Network("Next hop not found".into()))
     }
 
-    pub fn get_next_hops(&self, name: &str) -> Option<&Vec<SocketAddr>> {
-        self.entries.get(name).map(|entry| &entry.next_hops)
-    }
-
-    pub fn longest_prefix_match(&self, name: &str) -> Option<&FibEntry> {
-        self.entries
-            .iter()
-            .filter(|(prefix, _)| name.starts_with(*prefix))
-            .max_by_key(|(prefix, _)| prefix.len())
-            .map(|(_, entry)| entry)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+    /// Removes an entry from the FIB.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix of the entry to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove_entry(&self, prefix: &str) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.remove(prefix);
+        info!("FIB entry removed: {}", prefix);
+        Ok(())
     }
 }
 
@@ -6899,265 +6897,150 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_fib() {
-        let mut fib = ForwardingInformationBase::new();
+    fn test_add_and_get_next_hop() {
+        let fib = FIB::new();
+        let prefix = "prefix_1".to_string();
+        let next_hop = "next_hop_1".to_string();
+        assert!(fib.add_entry(prefix.clone(), next_hop.clone()).is_ok());
+        let retrieved_next_hop = fib.get_next_hop(&prefix).unwrap();
+        assert_eq!(retrieved_next_hop, next_hop);
+    }
 
-        let addr1: SocketAddr = "127.0.0.1:8000".parse().unwrap();
-        let addr2: SocketAddr = "127.0.0.1:8001".parse().unwrap();
+    #[test]
+    fn test_get_non_existent_next_hop() {
+        let fib = FIB::new();
+        assert!(fib.get_next_hop("non_existent_prefix").is_err());
+    }
 
-        fib.add_entry("/test".to_string(), addr1);
-        fib.add_entry("/test/nested".to_string(), addr2);
-
-        assert_eq!(fib.get_next_hops("/test").unwrap().len(), 1);
-        assert_eq!(fib.get_next_hops("/test/nested").unwrap().len(), 1);
-
-        let longest_match = fib.longest_prefix_match("/test/nested/deep");
-        assert!(longest_match.is_some());
-        assert_eq!(longest_match.unwrap().name, "/test/nested");
-
-        fib.remove_entry("/test");
-        assert!(fib.get_next_hops("/test").is_none());
-
-        let mut entry = FibEntry::new("/example".to_string(), addr1);
-        entry.add_next_hop(addr2);
-        assert_eq!(entry.next_hops.len(), 2);
-        entry.remove_next_hop(&addr1);
-        assert_eq!(entry.next_hops.len(), 1);
-        assert_eq!(entry.next_hops[0], addr2);
+    #[test]
+    fn test_remove_entry() {
+        let fib = FIB::new();
+        let prefix = "prefix_1".to_string();
+        let next_hop = "next_hop_1".to_string();
+        fib.add_entry(prefix.clone(), next_hop).unwrap();
+        assert!(fib.remove_entry(&prefix).is_ok());
+        assert!(fib.get_next_hop(&prefix).is_err());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/fib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/icn_node.rs =====
-// ===============================================
-// ICN Node Implementation
-// ===============================================
-// This file contains the main implementation for the ICN (InterCooperative Network) node.
-// It includes module declarations and the primary structure and functions for node operations.
-//
-// Key concepts:
-// - Modular Structure: Using Rust's module system to organize code.
-// - Node Operations: Handling packets, managing blockchain state, and executing smart contracts.
+use crate::{content_store::ContentStore, fib::FIB, pit::PIT};
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
+use std::sync::{Arc, RwLock};
 
-pub mod blockchain;
-pub mod consensus;
-pub mod currency;
-pub mod democracy;
-pub mod did;
-pub mod network;
-pub mod node;
-pub mod smart_contract;
-pub mod vm;
-
-pub use crate::blockchain::{Block, Transaction, Blockchain};
-pub use crate::consensus::PoCConsensus;
-pub use crate::currency::{CurrencyType, CurrencySystem, Wallet};
-pub use crate::democracy::{DemocraticSystem, ProposalCategory, ProposalType};
-pub use crate::did::{DecentralizedIdentity, DidManager};
-pub use crate::network::{Node as NetworkNode, Network};
-pub use crate::node::{ContentStore, ForwardingInformationBase, Packet, PacketType, PendingInterestTable};
-pub use crate::blockchain::TransactionValidator;
-pub use crate::vm::{CoopVM, Opcode, Value, CSCLCompiler};
-
-use std::sync::{Arc, Mutex};
-use std::error::Error;
-
-/// ICN Node Structure
-///
-/// This struct represents a node in the InterCooperative Network (ICN).
-/// It holds the state for content storage, pending interest table (PIT), forwarding information base (FIB),
-/// the blockchain, and the cooperative virtual machine (CoopVM).
-///
-/// # Fields
-/// * `content_store` - Stores data packets
-/// * `pit` - Manages pending interest table for interest packets
-/// * `fib` - Manages forwarding information base for routing
-/// * `blockchain` - The blockchain state
-/// * `coop_vm` - The cooperative virtual machine for executing smart contracts
-pub struct ICNNode {
-    pub content_store: Arc<Mutex<ContentStore>>,
-    pub pit: Arc<Mutex<PendingInterestTable>>,
-    pub fib: Arc<Mutex<ForwardingInformationBase>>,
-    pub blockchain: Arc<Mutex<Blockchain>>,
-    pub coop_vm: Arc<Mutex<CoopVM>>,
+/// Represents an ICN node.
+pub struct IcnNode {
+    content_store: Arc<ContentStore>,
+    fib: Arc<FIB>,
+    pit: Arc<PIT>,
 }
 
-impl ICNNode {
-    /// Creates a new ICN Node
-    ///
-    /// This function initializes a new ICN node with the provided blockchain and cooperative VM instances.
+impl IcnNode {
+    /// Creates a new instance of IcnNode.
     ///
     /// # Arguments
-    /// * `blockchain` - The initial blockchain state
-    /// * `coop_vm` - The initial cooperative VM instance
+    ///
+    /// * `content_store` - Arc to the content store.
+    /// * `fib` - Arc to the FIB.
+    /// * `pit` - Arc to the PIT.
     ///
     /// # Returns
-    /// A new instance of `ICNNode`
-    pub fn new(blockchain: Blockchain, coop_vm: CoopVM) -> Self {
-        Self {
-            content_store: Arc::new(Mutex::new(ContentStore::new())),
-            pit: Arc::new(Mutex::new(PendingInterestTable::new())),
-            fib: Arc::new(Mutex::new(ForwardingInformationBase::new())),
-            blockchain: Arc::new(Mutex::new(blockchain)),
-            coop_vm: Arc::new(Mutex::new(coop_vm)),
+    ///
+    /// * `IcnNode` - A new instance of IcnNode.
+    pub fn new(content_store: Arc<ContentStore>, fib: Arc<FIB>, pit: Arc<PIT>) -> Self {
+        IcnNode {
+            content_store,
+            fib,
+            pit,
         }
     }
 
-    /// Processes an incoming packet
-    ///
-    /// This function processes different types of packets by delegating to the appropriate handler.
+    /// Processes an interest packet.
     ///
     /// # Arguments
-    /// * `packet` - The packet to be processed
     ///
-    /// # Returns
-    /// A result indicating success or failure
+    /// * `interest` - The interest packet to be processed.
     ///
     /// # Errors
-    /// This function will return an error if the packet processing fails.
-    pub fn process_packet(&self, packet: Packet) -> Result<(), Box<dyn Error>> {
-        match packet.packet_type {
-            PacketType::Interest => self.process_interest(packet),
-            PacketType::Data => self.process_data(packet),
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn process_interest(&self, interest: &str) -> IcnResult<()> {
+        // Check content store for the data
+        if let Ok(data) = self.content_store.retrieve(interest) {
+            // Data found, send data packet
+            info!("Data found for interest: {}", interest);
+            self.send_data_packet(interest, data)?;
+        } else {
+            // Data not found, forward interest packet
+            info!("Data not found for interest: {}, forwarding", interest);
+            let next_hop = self.fib.get_next_hop(interest)?;
+            self.forward_interest_packet(interest, &next_hop)?;
         }
-    }
-
-    /// Processes an interest packet
-    ///
-    /// Interest packets request specific data from the network. This function handles those requests.
-    ///
-    /// # Arguments
-    /// * `packet` - The interest packet to be processed
-    ///
-    /// # Returns
-    /// A result indicating success or failure
-    ///
-    /// # Errors
-    /// This function will return an error if processing the interest packet fails.
-    fn process_interest(&self, packet: Packet) -> Result<(), Box<dyn Error>> {
-        // Logic to process interest packets
         Ok(())
     }
 
-    /// Processes a data packet
-    ///
-    /// Data packets contain the requested information. This function handles those packets.
+    /// Sends a data packet.
     ///
     /// # Arguments
-    /// * `packet` - The data packet to be processed
     ///
-    /// # Returns
-    /// A result indicating success or failure
+    /// * `interest` - The interest associated with the data.
+    /// * `data` - The data to be sent.
     ///
     /// # Errors
-    /// This function will return an error if processing the data packet fails.
-    fn process_data(&self, packet: Packet) -> Result<(), Box<dyn Error>> {
-        // Logic to process data packets
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    fn send_data_packet(&self, interest: &str, data: Vec<u8>) -> IcnResult<()> {
+        info!("Sending data packet for interest: {}", interest);
+        // Simulate sending data packet
         Ok(())
     }
 
-    /// Executes a smart contract
-    ///
-    /// This function executes a given smart contract using the cooperative VM.
+    /// Forwards an interest packet.
     ///
     /// # Arguments
-    /// * `contract` - The smart contract to be executed
     ///
-    /// # Returns
-    /// A result indicating success or failure
+    /// * `interest` - The interest packet to be forwarded.
+    /// * `next_hop` - The next hop to forward the interest packet to.
     ///
     /// # Errors
-    /// This function will return an error if executing the smart contract fails.
-    pub fn execute_smart_contract(&self, contract: String) -> Result<(), Box<dyn Error>> {
-        // Logic to execute smart contract
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    fn forward_interest_packet(&self, interest: &str, next_hop: &str) -> IcnResult<()> {
+        info!("Forwarding interest packet: {} to next hop: {}", interest, next_hop);
+        // Simulate forwarding interest packet
         Ok(())
     }
+}
 
-    /// Compiles a smart contract
-    ///
-    /// This function compiles a smart contract string into a sequence of opcodes.
-    ///
-    /// # Arguments
-    /// * `contract` - The smart contract code as a string
-    ///
-    /// # Returns
-    /// A vector of opcodes representing the compiled contract
-    ///
-    /// # Errors
-    /// This function will return an error if compiling the contract fails.
-    fn compile_contract(&self, contract: &str) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        // Logic to compile contract
-        Ok(vec![])
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content_store::MockContentStore;
+    use crate::fib::MockFIB;
+    use crate::pit::MockPIT;
+
+    #[test]
+    fn test_process_interest() {
+        let content_store = Arc::new(MockContentStore::new());
+        let fib = Arc::new(MockFIB::new());
+        let pit = Arc::new(MockPIT::new());
+
+        let node = IcnNode::new(content_store, fib, pit);
+
+        assert!(node.process_interest("interest_1").is_ok());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/icn_node.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/lib.rs =====
-mod content_store;
-mod fib;
-mod pit;
-
-pub use content_store::ContentStore;
-pub use fib::ForwardingInformationBase;
-pub use pit::PendingInterestTable;
-
-use icn_core::error::{Error, Result};
-use icn_network::Node as NetworkNode;
-
-pub struct IcnNodeManager {
-    network_node: NetworkNode,
-    content_store: ContentStore,
-    fib: ForwardingInformationBase,
-    pit: PendingInterestTable,
-}
-
-impl IcnNodeManager {
-    pub fn new(network_node: NetworkNode) -> Self {
-        IcnNodeManager {
-            network_node,
-            content_store: ContentStore::new(),
-            fib: ForwardingInformationBase::new(),
-            pit: PendingInterestTable::new(),
-        }
-    }
-
-    pub fn add_content(&mut self, name: String, content: Vec<u8>) -> Result<()> {
-        self.content_store.add(name, content);
-        Ok(())
-    }
-
-    pub fn get_content(&self, name: &str) -> Option<Vec<u8>> {
-        self.content_store.get(name)
-    }
-
-    pub fn add_fib_entry(&mut self, prefix: String, next_hop: String) -> Result<()> {
-        self.fib.add_entry(prefix, next_hop);
-        Ok(())
-    }
-
-    pub fn add_pit_entry(&mut self, name: String, incoming_face: String) -> Result<()> {
-        self.pit.add_interest(name, &incoming_face);
-        Ok(())
-    }
-
-    pub fn remove_expired_content(&mut self) {
-        self.content_store.remove_expired();
-    }
-
-    pub fn clear_expired_pit_entries(&mut self) {
-        self.pit.clear_expired();
-    }
-
-    pub fn process_interest_packet(&self, packet: Packet) -> Result<()> {
-        // Logic to process interest packets
-        Ok(())
-    }
-
-    pub fn process_data_packet(&self, packet: Packet) -> Result<()> {
-        // Logic to process data packets
-        Ok(())
-    }
-}
+/// The ICN node management module.
+pub mod content_store;
+pub mod fib;
+pub mod icn_node;
+pub mod node;
+pub mod pit;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/node.rs =====
@@ -7305,68 +7188,73 @@ impl PendingInterestTable {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/node.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/pit.rs =====
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-const DEFAULT_INTEREST_LIFETIME: Duration = Duration::from_secs(4);
-
-struct PitEntry {
-    interfaces: Vec<String>,
-    timestamp: Instant,
+/// Represents a Pending Interest Table (PIT) in the ICN project.
+pub struct PIT {
+    table: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
-pub struct PendingInterestTable {
-    entries: HashMap<String, PitEntry>,
-}
-
-impl PendingInterestTable {
+impl PIT {
+    /// Creates a new instance of PIT.
     pub fn new() -> Self {
-        PendingInterestTable {
-            entries: HashMap::new(),
+        PIT {
+            table: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add_interest(&mut self, name: String, interface: &str) {
-        self.entries
-            .entry(name)
-            .and_modify(|e| {
-                if !e.interfaces.contains(&interface.to_string()) {
-                    e.interfaces.push(interface.to_string());
-                }
-                e.timestamp = Instant::now();
-            })
-            .or_insert(PitEntry {
-                interfaces: vec![interface.to_string()],
-                timestamp: Instant::now(),
-            });
+    /// Adds an interest to the PIT.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to be added.
+    /// * `requester` - The requester of the interest.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn add_interest(&self, interest: String, requester: String) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.entry(interest.clone()).or_default().push(requester.clone());
+        info!("PIT entry added: {} requested by {}", interest, requester);
+        Ok(())
     }
 
-    pub fn remove_interest(&mut self, name: &str) {
-        self.entries.remove(name);
+    /// Retrieves the requesters for a given interest.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to retrieve the requesters for.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<String>>` - The list of requesters.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn get_requesters(&self, interest: &str) -> IcnResult<Vec<String>> {
+        let table = self.table.read().unwrap();
+        table.get(interest).cloned().ok_or_else(|| IcnError::Network("Interest not found".into()))
     }
 
-    pub fn has_pending_interest(&self, name: &str) -> bool {
-        self.entries.contains_key(name)
-    }
-
-    pub fn get_incoming_interfaces(&self, name: &str) -> Option<Vec<String>> {
-        self.entries.get(name).map(|entry| entry.interfaces.clone())
-    }
-
-    pub fn add_incoming_interface(&mut self, name: &str, interface: &str) {
-        if let Some(entry) = self.entries.get_mut(name) {
-            if !entry.interfaces.contains(&interface.to_string()) {
-                entry.interfaces.push(interface.to_string());
-            }
-        }
-    }
-
-    pub fn clear_expired(&mut self) {
-        self.entries.retain(|_, entry| entry.timestamp.elapsed() < DEFAULT_INTEREST_LIFETIME);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+    /// Removes an interest from the PIT.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove_interest(&self, interest: &str) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.remove(interest);
+        info!("PIT entry removed: {}", interest);
+        Ok(())
     }
 }
 
@@ -7375,25 +7263,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pending_interest_table() {
-        let mut pit = PendingInterestTable::new();
-        
-        pit.add_interest("test".to_string(), "interface1");
-        assert!(pit.has_pending_interest("test"));
-        
-        pit.add_incoming_interface("test", "interface2");
-        let interfaces = pit.get_incoming_interfaces("test").unwrap();
-        assert_eq!(interfaces.len(), 2);
-        assert!(interfaces.contains(&"interface1".to_string()));
-        assert!(interfaces.contains(&"interface2".to_string()));
-        
-        pit.remove_interest("test");
-        assert!(!pit.has_pending_interest("test"));
+    fn test_add_and_get_requesters() {
+        let pit = PIT::new();
+        let interest = "interest_1".to_string();
+        let requester = "requester_1".to_string();
+        assert!(pit.add_interest(interest.clone(), requester.clone()).is_ok());
+        let requesters = pit.get_requesters(&interest).unwrap();
+        assert_eq!(requesters, vec![requester]);
+    }
 
-        pit.add_interest("test_expired".to_string(), "interface1");
-        std::thread::sleep(Duration::from_secs(5));
-        pit.clear_expired();
-        assert!(!pit.has_pending_interest("test_expired"));
+    #[test]
+    fn test_get_non_existent_requesters() {
+        let pit = PIT::new();
+        assert!(pit.get_requesters("non_existent_interest").is_err());
+    }
+
+    #[test]
+    fn test_remove_interest() {
+        let pit = PIT::new();
+        let interest = "interest_1".to_string();
+        let requester = "requester_1".to_string();
+        pit.add_interest(interest.clone(), requester).unwrap();
+        assert!(pit.remove_interest(&interest).is_ok());
+        assert!(pit.get_requesters(&interest).is_err());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_node_management/src/pit.rs =====

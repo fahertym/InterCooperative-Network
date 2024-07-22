@@ -1,65 +1,70 @@
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-const DEFAULT_INTEREST_LIFETIME: Duration = Duration::from_secs(4);
-
-struct PitEntry {
-    interfaces: Vec<String>,
-    timestamp: Instant,
+/// Represents a Pending Interest Table (PIT) in the ICN project.
+pub struct PIT {
+    table: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
-pub struct PendingInterestTable {
-    entries: HashMap<String, PitEntry>,
-}
-
-impl PendingInterestTable {
+impl PIT {
+    /// Creates a new instance of PIT.
     pub fn new() -> Self {
-        PendingInterestTable {
-            entries: HashMap::new(),
+        PIT {
+            table: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn add_interest(&mut self, name: String, interface: &str) {
-        self.entries
-            .entry(name)
-            .and_modify(|e| {
-                if !e.interfaces.contains(&interface.to_string()) {
-                    e.interfaces.push(interface.to_string());
-                }
-                e.timestamp = Instant::now();
-            })
-            .or_insert(PitEntry {
-                interfaces: vec![interface.to_string()],
-                timestamp: Instant::now(),
-            });
+    /// Adds an interest to the PIT.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to be added.
+    /// * `requester` - The requester of the interest.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn add_interest(&self, interest: String, requester: String) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.entry(interest.clone()).or_default().push(requester.clone());
+        info!("PIT entry added: {} requested by {}", interest, requester);
+        Ok(())
     }
 
-    pub fn remove_interest(&mut self, name: &str) {
-        self.entries.remove(name);
+    /// Retrieves the requesters for a given interest.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to retrieve the requesters for.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<String>>` - The list of requesters.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn get_requesters(&self, interest: &str) -> IcnResult<Vec<String>> {
+        let table = self.table.read().unwrap();
+        table.get(interest).cloned().ok_or_else(|| IcnError::Network("Interest not found".into()))
     }
 
-    pub fn has_pending_interest(&self, name: &str) -> bool {
-        self.entries.contains_key(name)
-    }
-
-    pub fn get_incoming_interfaces(&self, name: &str) -> Option<Vec<String>> {
-        self.entries.get(name).map(|entry| entry.interfaces.clone())
-    }
-
-    pub fn add_incoming_interface(&mut self, name: &str, interface: &str) {
-        if let Some(entry) = self.entries.get_mut(name) {
-            if !entry.interfaces.contains(&interface.to_string()) {
-                entry.interfaces.push(interface.to_string());
-            }
-        }
-    }
-
-    pub fn clear_expired(&mut self) {
-        self.entries.retain(|_, entry| entry.timestamp.elapsed() < DEFAULT_INTEREST_LIFETIME);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+    /// Removes an interest from the PIT.
+    ///
+    /// # Arguments
+    ///
+    /// * `interest` - The interest to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove_interest(&self, interest: &str) -> IcnResult<()> {
+        let mut table = self.table.write().unwrap();
+        table.remove(interest);
+        info!("PIT entry removed: {}", interest);
+        Ok(())
     }
 }
 
@@ -68,24 +73,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pending_interest_table() {
-        let mut pit = PendingInterestTable::new();
-        
-        pit.add_interest("test".to_string(), "interface1");
-        assert!(pit.has_pending_interest("test"));
-        
-        pit.add_incoming_interface("test", "interface2");
-        let interfaces = pit.get_incoming_interfaces("test").unwrap();
-        assert_eq!(interfaces.len(), 2);
-        assert!(interfaces.contains(&"interface1".to_string()));
-        assert!(interfaces.contains(&"interface2".to_string()));
-        
-        pit.remove_interest("test");
-        assert!(!pit.has_pending_interest("test"));
+    fn test_add_and_get_requesters() {
+        let pit = PIT::new();
+        let interest = "interest_1".to_string();
+        let requester = "requester_1".to_string();
+        assert!(pit.add_interest(interest.clone(), requester.clone()).is_ok());
+        let requesters = pit.get_requesters(&interest).unwrap();
+        assert_eq!(requesters, vec![requester]);
+    }
 
-        pit.add_interest("test_expired".to_string(), "interface1");
-        std::thread::sleep(Duration::from_secs(5));
-        pit.clear_expired();
-        assert!(!pit.has_pending_interest("test_expired"));
+    #[test]
+    fn test_get_non_existent_requesters() {
+        let pit = PIT::new();
+        assert!(pit.get_requesters("non_existent_interest").is_err());
+    }
+
+    #[test]
+    fn test_remove_interest() {
+        let pit = PIT::new();
+        let interest = "interest_1".to_string();
+        let requester = "requester_1".to_string();
+        pit.add_interest(interest.clone(), requester).unwrap();
+        assert!(pit.remove_interest(&interest).is_ok());
+        assert!(pit.get_requesters(&interest).is_err());
     }
 }
