@@ -20,6 +20,9 @@ pub enum IcnError {
     #[error("Network error: {0}")]
     Network(String),
 
+    #[error("Node management error: {0}")]
+    NodeManagement(String),
+
     #[error("Sharding error: {0}")]
     Sharding(String),
 
@@ -27,16 +30,22 @@ pub enum IcnError {
     Storage(String),
 
     #[error("VM error: {0}")]
-    VM(String),
-
-    #[error("API error: {0}")]
-    API(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
+    Vm(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Configuration error: {0}")]
+    Config(String),
+
+    #[error("Unknown error: {0}")]
+    Unknown(String),
 }
 
-pub type IcnResult<T> = Result<T, IcnError>;
+pub type IcnResult<T> = std::result::Result<T, IcnError>;

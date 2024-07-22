@@ -1,193 +1,248 @@
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable, CurrencyType, ZKProof};
-use icn_zkp::{ZKPManager, TransactionCircuit, VoteCircuit};
-use std::collections::{VecDeque, HashMap};
-use chrono::Utc;
-use log::{info, error, debug, warn};
-use bellman::groth16;
-use bls12_381::Bls12;
+use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
+use icn_common::{CommonError, CommonResult};
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-const MAX_TRANSACTIONS_PER_BLOCK: usize = 100;
-
-pub struct Blockchain {
-    chain: Vec<Block>,
-    pending_transactions: VecDeque<Transaction>,
-    zkp_manager: ZKPManager,
-    utxo_set: HashMap<String, f64>,
+#[derive(Serialize, Deserialize)]
+pub struct ApiResponse<T> {
+    pub success: bool,
+    pub data: Option<T>,
+    pub error: Option<String>,
 }
 
-impl Blockchain {
-    pub fn new() -> IcnResult<Self> {
-        Ok(Blockchain {
-            chain: vec![Block::genesis()],
-            pending_transactions: VecDeque::new(),
-            zkp_manager: ZKPManager::new()?,
-            utxo_set: HashMap::new(),
-        })
-    }
+pub struct ApiLayer {
+    blockchain: Arc<RwLock<dyn BlockchainInterface>>,
+    consensus: Arc<RwLock<dyn ConsensusInterface>>,
+    currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
+    governance: Arc<RwLock<dyn GovernanceInterface>>,
+}
 
-    pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        if self.verify_transaction(&transaction)? {
-            self.pending_transactions.push_back(transaction);
-            Ok(())
-        } else {
-            Err(IcnError::Blockchain("Invalid transaction".into()))
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BlockchainInfo {
+    pub block_count: usize,
+    pub last_block_hash: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+}
+
+impl ApiLayer {
+    pub fn new(
+        blockchain: Arc<RwLock<dyn BlockchainInterface>>,
+        consensus: Arc<RwLock<dyn ConsensusInterface>>,
+        currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
+        governance: Arc<RwLock<dyn GovernanceInterface>>,
+    ) -> Self {
+        ApiLayer {
+            blockchain,
+            consensus,
+            currency_system,
+            governance,
         }
     }
 
-    pub fn create_confidential_transaction(&self, from: &str, to: &str, amount: f64, currency_type: CurrencyType) -> IcnResult<Transaction> {
-        let mut transaction = Transaction::new(
-            from.to_string(),
-            to.to_string(),
-            amount,
-            currency_type,
-            Utc::now().timestamp(),
+    pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
+        let blockchain = self.blockchain.read().await;
+        let info = blockchain.get_info().await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some(info),
+            error: None,
+        })
+    }
+
+    pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
+        let mut blockchain = self.blockchain.write().await;
+        blockchain.add_transaction(transaction).await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some("Transaction submitted successfully".to_string()),
+            error: None,
+        })
+    }
+
+    pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
+        let currency_system = self.currency_system.read().await;
+        let balance = currency_system.get_balance(address, currency_type).await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some(balance),
+            error: None,
+        })
+    }
+
+    pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
+        let mut governance = self.governance.write().await;
+        let proposal_id = governance.create_proposal(proposal).await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some(proposal_id),
+            error: None,
+        })
+    }
+
+    pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
+        let mut governance = self.governance.write().await;
+        governance.vote_on_proposal(vote).await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some("Vote recorded successfully".to_string()),
+            error: None,
+        })
+    }
+
+    pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
+        let governance = self.governance.read().await;
+        let status = governance.get_proposal_status(proposal_id).await?;
+        Ok(ApiResponse {
+            success: true,
+            data: Some(status),
+            error: None,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+pub trait BlockchainInterface {
+    async fn get_info(&self) -> CommonResult<BlockchainInfo>;
+    async fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()>;
+}
+
+#[async_trait::async_trait]
+pub trait ConsensusInterface {
+    // Add consensus-related methods here
+}
+
+#[async_trait::async_trait]
+pub trait CurrencySystemInterface {
+    async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64>;
+}
+
+#[async_trait::async_trait]
+pub trait GovernanceInterface {
+    async fn create_proposal(&mut self, proposal: Proposal) -> CommonResult<String>;
+    async fn vote_on_proposal(&mut self, vote: Vote) -> CommonResult<()>;
+    async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ProposalStatus>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio;
+
+    // Implement mock structures for testing
+    struct MockBlockchain;
+    struct MockConsensus;
+    struct MockCurrencySystem;
+    struct MockGovernance;
+
+    #[async_trait::async_trait]
+    impl BlockchainInterface for MockBlockchain {
+        async fn get_info(&self) -> CommonResult<BlockchainInfo> {
+            Ok(BlockchainInfo {
+                block_count: 1,
+                last_block_hash: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
+            })
+        }
+
+        async fn add_transaction(&mut self, _transaction: Transaction) -> CommonResult<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConsensusInterface for MockConsensus {}
+
+    #[async_trait::async_trait]
+    impl CurrencySystemInterface for MockCurrencySystem {
+        async fn get_balance(&self, _address: &str, _currency_type: &CurrencyType) -> CommonResult<f64> {
+            Ok(100.0)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GovernanceInterface for MockGovernance {
+        async fn create_proposal(&mut self, _proposal: Proposal) -> CommonResult<String> {
+            Ok("new_proposal_id".to_string())
+        }
+
+        async fn vote_on_proposal(&mut self, _vote: Vote) -> CommonResult<()> {
+            Ok(())
+        }
+
+        async fn get_proposal_status(&self, _proposal_id: &str) -> CommonResult<ProposalStatus> {
+            Ok(ProposalStatus::Active)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_api_layer() {
+        let api = ApiLayer::new(
+            Arc::new(RwLock::new(MockBlockchain)),
+            Arc::new(RwLock::new(MockConsensus)),
+            Arc::new(RwLock::new(MockCurrencySystem)),
+            Arc::new(RwLock::new(MockGovernance)),
         );
 
-        let circuit = TransactionCircuit::new(&transaction);
-        let proof = self.zkp_manager.create_proof(circuit)?;
-        transaction.add_zkp(proof.to_vec(), TransactionCircuit::public_inputs(&transaction));
+        // Test get_blockchain_info
+        let blockchain_info = api.get_blockchain_info().await.unwrap();
+        assert!(blockchain_info.success);
+        assert_eq!(blockchain_info.data.unwrap().block_count, 1);
 
-        Ok(transaction)
-    }
-
-    pub fn create_block(&mut self) -> IcnResult<Block> {
-        let previous_block = self.chain.last()
-            .ok_or_else(|| IcnError::Blockchain("No previous block found".into()))?;
-        
-        let transactions: Vec<Transaction> = self.pending_transactions
-            .drain(..std::cmp::min(self.pending_transactions.len(), MAX_TRANSACTIONS_PER_BLOCK))
-            .collect();
-
-        let mut new_block = Block {
-            index: self.chain.len() as u64,
+        // Test submit_transaction
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            transactions,
-            previous_hash: previous_block.hash.clone(),
-            hash: String::new(),
+            signature: None,
         };
+        let submit_result = api.submit_transaction(transaction).await.unwrap();
+        assert!(submit_result.success);
 
-        new_block.hash = new_block.hash();
-        self.chain.push(new_block.clone());
+        // Test get_balance
+        let balance_result = api.get_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
+        assert!(balance_result.success);
+        assert_eq!(balance_result.data.unwrap(), 100.0);
 
-        // Update UTXO set
-        self.update_utxo_set(&new_block)?;
+        // Test create_proposal
+        let proposal = Proposal {
+            id: "".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.66,
+            execution_timestamp: None,
+        };
+        let create_proposal_result = api.create_proposal(proposal).await.unwrap();
+        assert!(create_proposal_result.success);
 
-        Ok(new_block)
-    }
+        // Test vote_on_proposal
+        let vote = Vote {
+            voter: "Bob".to_string(),
+            proposal_id: "new_proposal_id".to_string(),
+            in_favor: true,
+            weight: 1.0,
+        };
+        let vote_result = api.vote_on_proposal(vote).await.unwrap();
+        assert!(vote_result.success);
 
-    pub fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        if let Some(zkp) = &transaction.zkp {
-            // Verify the ZKP
-            let proof = groth16::Proof::read(&zkp.proof[..])
-                .map_err(|e| IcnError::ZKP(format!("Invalid proof: {}", e)))?;
-            self.zkp_manager.verify_transaction_proof(&proof, transaction)
-        } else {
-            // If no ZKP, fall back to regular verification
-            self.verify_utxo(transaction)
-        }
-    }
-
-    fn verify_utxo(&self, transaction: &Transaction) -> IcnResult<bool> {
-        let sender_balance = self.utxo_set.get(&transaction.from).cloned().unwrap_or(0.0);
-        Ok(sender_balance >= transaction.amount)
-    }
-
-    fn update_utxo_set(&mut self, block: &Block) -> IcnResult<()> {
-        for transaction in &block.transactions {
-            let sender_balance = self.utxo_set.entry(transaction.from.clone()).or_insert(0.0);
-            *sender_balance -= transaction.amount;
-
-            let receiver_balance = self.utxo_set.entry(transaction.to.clone()).or_insert(0.0);
-            *receiver_balance += transaction.amount;
-        }
-        Ok(())
-    }
-
-    pub fn get_latest_block(&self) -> Option<&Block> {
-        self.chain.last()
-    }
-
-    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
-        self.chain.get(index as usize)
-    }
-
-    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
-        self.chain.iter().find(|block| block.hash == hash)
-    }
-
-    pub fn validate_chain(&self) -> IcnResult<bool> {
-        for i in 1..self.chain.len() {
-            let current_block = &self.chain[i];
-            let previous_block = &self.chain[i - 1];
-
-            if current_block.hash != current_block.hash() {
-                return Ok(false);
-            }
-
-            if current_block.previous_hash != previous_block.hash {
-                return Ok(false);
-            }
-
-            for transaction in &current_block.transactions {
-                if !self.verify_transaction(transaction)? {
-                    return Ok(false);
-                }
-            }
-        }
-
-        Ok(true)
-    }
-
-    pub fn get_balance(&self, address: &str) -> f64 {
-        self.utxo_set.get(address).cloned().unwrap_or(0.0)
-    }
-
-    pub fn start(&self) -> IcnResult<()> {
-        info!("Blockchain started");
-        Ok(())
-    }
-
-    pub fn stop(&self) -> IcnResult<()> {
-        info!("Blockchain stopped");
-        Ok(())
+        // Test get_proposal_status
+        let status_result = api.get_proposal_status("new_proposal_id").await.unwrap();
+        assert!(status_result.success);
+        assert_eq!(status_result.data.unwrap(), ProposalStatus::Active);
     }
 }
-
-pub struct AnonymousVotingSystem {
-    zkp_manager: ZKPManager,
-    voters: HashMap<String, bool>, // Address -> Has voted
-    votes: Vec<bool>,
-}
-
-impl AnonymousVotingSystem {
-    pub fn new() -> IcnResult<Self> {
-        Ok(AnonymousVotingSystem {
-            zkp_manager: ZKPManager::new()?,
-            voters: HashMap::new(),
-            votes: Vec::new(),
-        })
-    }
-
-    pub fn register_voter(&mut self, voter_address: String) {
-        self.voters.insert(voter_address, false);
-    }
-
-    pub fn cast_vote(&mut self, voter_address: &str, vote: bool, proof: &[u8]) -> IcnResult<()> {
-        if let Some(has_voted) = self.voters.get_mut(voter_address) {
-            if *has_voted {
-                return Err(IcnError::Governance("Voter has already cast a vote".into()));
-            }
-
-            // Verify the ZKP
-            let zkp_proof = groth16::Proof::read(proof)
-                .map_err(|e| IcnError::ZKP(format!("Invalid proof: {}", e)))?;
-            
-            if self.zkp_manager.verify_vote_proof(&zkp_proof, voter_address, vote)? {
-                self.votes.push(vote);
-                *has_voted = true;
-                Ok(())
-            } else {
-                Err(IcnError::Governance("Invalid vote proof".into()))
-            }
-        } else {
-            Err(IcnError::Governance("Voter

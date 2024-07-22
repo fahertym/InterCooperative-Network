@@ -1,30 +1,30 @@
 use crate::{Transaction, Blockchain};
-use icn_utils::error::{Error, Result};
+use icn_common::error::{IcnError, IcnResult};
 
 pub struct TransactionValidator;
 
 impl TransactionValidator {
-    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> Result<()> {
+    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
         if Self::is_double_spend(transaction, blockchain)? {
-            return Err(Error::BlockchainError("Double spend detected".to_string()));
+            return Err(IcnError::Blockchain("Double spend detected".to_string()));
         }
 
         if !Self::validate_currency_and_amount(transaction) {
-            return Err(Error::BlockchainError("Invalid currency or amount".to_string()));
+            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
         }
 
         if !Self::check_sufficient_balance(transaction, blockchain)? {
-            return Err(Error::BlockchainError("Insufficient balance".to_string()));
+            return Err(IcnError::Currency("Insufficient balance".to_string()));
         }
 
         if !Self::validate_signature(transaction)? {
-            return Err(Error::BlockchainError("Invalid signature".to_string()));
+            return Err(IcnError::Identity("Invalid signature".to_string()));
         }
 
         Ok(())
     }
 
-    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> Result<bool> {
+    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
         for block in &blockchain.chain {
             for tx in &block.transactions {
                 if tx == transaction {
@@ -39,24 +39,19 @@ impl TransactionValidator {
         transaction.amount > 0.0
     }
 
-    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> Result<bool> {
+    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
         let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
         Ok(balance >= transaction.amount + transaction.get_fee())
     }
 
-    fn validate_signature(transaction: &Transaction) -> Result<bool> {
-        transaction.verify().map_err(|e| Error::BlockchainError(format!("Signature verification failed: {}", e)))
-    }
-
-    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> Result<()> {
-        Self::validate_transaction(transaction, blockchain)
+    fn validate_signature(transaction: &Transaction) -> IcnResult<bool> {
+        transaction.verify().map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::currency::CurrencyType;
     use icn_common::{Transaction, Blockchain};
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
@@ -77,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new().unwrap();
+        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account
@@ -89,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new().unwrap();
+        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         // Add some balance to Alice's account, but not enough
@@ -101,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new().unwrap();
+        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account
