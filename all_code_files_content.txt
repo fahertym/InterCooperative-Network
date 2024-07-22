@@ -183,7 +183,9 @@ members = [
     "crates/icn_core", 
     "crates/icn_zkp", 
     "crates/icn_smart_contracts",
-    "crates/icn_reputation", "crates/icn_market", "crates/icn_incentives",
+    "crates/icn_reputation",
+    "crates/icn_market",
+    "crates/icn_incentives",
 ]
 
 resolver = "2"
@@ -220,7 +222,8 @@ log = "0.4"
 thiserror = "1.0"
 
 [dev-dependencies]
-tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
+tokio-test = "0.4"
+===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
@@ -488,7 +491,8 @@ log = "0.4"
 thiserror = "1.0"
 
 [dev-dependencies]
-tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
+tokio-test = "0.4"
+===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
 use serde::{Deserialize, Serialize};
@@ -1167,8 +1171,6 @@ version = "0.1.0"
 authors = ["Your Name <your.email@example.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -1604,7 +1606,8 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
+tokio = { version = "1.0", features = ["full"] }
+===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs =====
 use icn_utils::{error::IcnError, IcnResult};
@@ -11581,7 +11584,9 @@ members = [
     "crates/icn_core", 
     "crates/icn_zkp", 
     "crates/icn_smart_contracts",
-    "crates/icn_reputation", "crates/icn_market", "crates/icn_incentives",
+    "crates/icn_reputation",
+    "crates/icn_market",
+    "crates/icn_incentives",
 ]
 
 resolver = "2"
