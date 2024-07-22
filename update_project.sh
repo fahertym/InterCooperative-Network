@@ -70,8 +70,12 @@ generate_llm_file() {
 
 # Function to prompt for a commit message
 get_commit_message() {
-    echo "Enter your commit message:"
-    read commit_message
+    echo "Enter your commit message (end with an empty line):"
+    commit_message=""
+    while IFS= read -r line; do
+        [[ $line ]] || break
+        commit_message+="$line"$'\n'
+    done
     echo "$commit_message"
 }
 
