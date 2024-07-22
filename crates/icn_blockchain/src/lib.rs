@@ -1,248 +1,213 @@
-use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
-use icn_common::{CommonError, CommonResult};
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
+use std::collections::HashMap;
+use chrono::Utc;
+use log::{info, warn, error};
+use std::sync::{Arc, RwLock};
 
-#[derive(Serialize, Deserialize)]
-pub struct ApiResponse<T> {
-    pub success: bool,
-    pub data: Option<T>,
-    pub error: Option<String>,
+/// Represents a blockchain, maintaining a list of blocks and pending transactions.
+pub struct Blockchain {
+    chain: Vec<Block>,
+    pending_transactions: Vec<Transaction>,
+    transaction_validator: Arc<dyn TransactionValidator>,
 }
 
-pub struct ApiLayer {
-    blockchain: Arc<RwLock<dyn BlockchainInterface>>,
-    consensus: Arc<RwLock<dyn ConsensusInterface>>,
-    currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
-    governance: Arc<RwLock<dyn GovernanceInterface>>,
+/// A trait for validating transactions within a blockchain.
+pub trait TransactionValidator: Send + Sync {
+    /// Validates a transaction within the context of a blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to validate.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the transaction is valid, `false` otherwise.
+    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> bool;
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct BlockchainInfo {
-    pub block_count: usize,
-    pub last_block_hash: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-}
-
-impl ApiLayer {
-    pub fn new(
-        blockchain: Arc<RwLock<dyn BlockchainInterface>>,
-        consensus: Arc<RwLock<dyn ConsensusInterface>>,
-        currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
-        governance: Arc<RwLock<dyn GovernanceInterface>>,
-    ) -> Self {
-        ApiLayer {
-            blockchain,
-            consensus,
-            currency_system,
-            governance,
+impl Blockchain {
+    /// Creates a new blockchain with a genesis block.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction_validator` - A validator for verifying transactions.
+    pub fn new(transaction_validator: Arc<dyn TransactionValidator>) -> Self {
+        Blockchain {
+            chain: vec![Block::genesis()],
+            pending_transactions: Vec::new(),
+            transaction_validator,
         }
     }
 
-    pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
-        let blockchain = self.blockchain.read().await;
-        let info = blockchain.get_info().await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(info),
-            error: None,
-        })
+    /// Adds a new transaction to the list of pending transactions.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to add.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Blockchain` if the transaction is invalid.
+    pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
+        if self.transaction_validator.validate(&transaction, self) {
+            self.pending_transactions.push(transaction);
+            Ok(())
+        } else {
+            Err(IcnError::Blockchain("Invalid transaction".to_string()))
+        }
     }
 
-    pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
-        let mut blockchain = self.blockchain.write().await;
-        blockchain.add_transaction(transaction).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some("Transaction submitted successfully".to_string()),
-            error: None,
-        })
+    /// Creates a new block with all pending transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Blockchain` if no previous block is found or if `calculate_hash` fails.
+    pub fn create_block(&mut self) -> IcnResult<Block> {
+        let previous_block = self.chain.last()
+            .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
+
+        let new_block = Block {
+            index: self.chain.len() as u64,
+            timestamp: Utc::now().timestamp(),
+            transactions: self.pending_transactions.clone(),
+            previous_hash: previous_block.hash.clone(),
+            hash: String::new(), // Will be set in calculate_hash
+        };
+
+        let new_block = self.calculate_hash(new_block)?;
+        self.chain.push(new_block.clone());
+        self.pending_transactions.clear();
+
+        Ok(new_block)
     }
 
-    pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
-        let currency_system = self.currency_system.read().await;
-        let balance = currency_system.get_balance(address, currency_type).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(balance),
-            error: None,
-        })
+    fn calculate_hash(&self, mut block: Block) -> IcnResult<Block> {
+        block.hash = block.hash();
+        Ok(block)
     }
 
-    pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
-        let mut governance = self.governance.write().await;
-        let proposal_id = governance.create_proposal(proposal).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(proposal_id),
-            error: None,
-        })
+    /// Validates the integrity of the blockchain.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the blockchain is valid, `false` otherwise.
+    pub fn validate_chain(&self) -> bool {
+        for i in 1..self.chain.len() {
+            let current_block = &self.chain[i];
+            let previous_block = &self.chain[i - 1];
+
+            if current_block.hash != current_block.hash() {
+                return false;
+            }
+
+            if current_block.previous_hash != previous_block.hash {
+                return false;
+            }
+        }
+        true
     }
 
-    pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
-        let mut governance = self.governance.write().await;
-        governance.vote_on_proposal(vote).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some("Vote recorded successfully".to_string()),
-            error: None,
-        })
+    /// Returns the latest block in the blockchain.
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.chain.last()
     }
 
-    pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
-        let governance = self.governance.read().await;
-        let status = governance.get_proposal_status(proposal_id).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(status),
-            error: None,
-        })
+    /// Returns a block by its index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index of the block.
+    ///
+    /// # Returns
+    ///
+    /// The block if found, `None` otherwise.
+    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
+        self.chain.get(index as usize)
     }
-}
 
-#[async_trait::async_trait]
-pub trait BlockchainInterface {
-    async fn get_info(&self) -> CommonResult<BlockchainInfo>;
-    async fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()>;
-}
+    /// Returns a block by its hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `hash` - The hash of the block.
+    ///
+    /// # Returns
+    ///
+    /// The block if found, `None` otherwise.
+    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
+        self.chain.iter().find(|block| block.hash == hash)
+    }
 
-#[async_trait::async_trait]
-pub trait ConsensusInterface {
-    // Add consensus-related methods here
-}
+    /// Starts the blockchain.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Blockchain started");
+        Ok(())
+    }
 
-#[async_trait::async_trait]
-pub trait CurrencySystemInterface {
-    async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64>;
-}
-
-#[async_trait::async_trait]
-pub trait GovernanceInterface {
-    async fn create_proposal(&mut self, proposal: Proposal) -> CommonResult<String>;
-    async fn vote_on_proposal(&mut self, vote: Vote) -> CommonResult<()>;
-    async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ProposalStatus>;
+    /// Stops the blockchain.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Blockchain stopped");
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio;
+    use icn_common::CurrencyType;
+    use std::sync::Arc;
 
-    // Implement mock structures for testing
-    struct MockBlockchain;
-    struct MockConsensus;
-    struct MockCurrencySystem;
-    struct MockGovernance;
+    struct MockTransactionValidator;
 
-    #[async_trait::async_trait]
-    impl BlockchainInterface for MockBlockchain {
-        async fn get_info(&self) -> CommonResult<BlockchainInfo> {
-            Ok(BlockchainInfo {
-                block_count: 1,
-                last_block_hash: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
-            })
-        }
-
-        async fn add_transaction(&mut self, _transaction: Transaction) -> CommonResult<()> {
-            Ok(())
+    impl TransactionValidator for MockTransactionValidator {
+        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> bool {
+            true
         }
     }
 
-    #[async_trait::async_trait]
-    impl ConsensusInterface for MockConsensus {}
-
-    #[async_trait::async_trait]
-    impl CurrencySystemInterface for MockCurrencySystem {
-        async fn get_balance(&self, _address: &str, _currency_type: &CurrencyType) -> CommonResult<f64> {
-            Ok(100.0)
-        }
+    #[test]
+    fn test_blockchain_creation() {
+        let blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
+        assert_eq!(blockchain.chain.len(), 1);
+        assert_eq!(blockchain.chain[0].index, 0);
     }
 
-    #[async_trait::async_trait]
-    impl GovernanceInterface for MockGovernance {
-        async fn create_proposal(&mut self, _proposal: Proposal) -> CommonResult<String> {
-            Ok("new_proposal_id".to_string())
-        }
-
-        async fn vote_on_proposal(&mut self, _vote: Vote) -> CommonResult<()> {
-            Ok(())
-        }
-
-        async fn get_proposal_status(&self, _proposal_id: &str) -> CommonResult<ProposalStatus> {
-            Ok(ProposalStatus::Active)
-        }
-    }
-
-    #[tokio::test]
-    async fn test_api_layer() {
-        let api = ApiLayer::new(
-            Arc::new(RwLock::new(MockBlockchain)),
-            Arc::new(RwLock::new(MockConsensus)),
-            Arc::new(RwLock::new(MockCurrencySystem)),
-            Arc::new(RwLock::new(MockGovernance)),
+    #[test]
+    fn test_add_block() {
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            Utc::now().timestamp(),
         );
+        blockchain.add_transaction(transaction).unwrap();
+        assert!(blockchain.create_block().is_ok());
+        assert_eq!(blockchain.chain.len(), 2);
+    }
 
-        // Test get_blockchain_info
-        let blockchain_info = api.get_blockchain_info().await.unwrap();
-        assert!(blockchain_info.success);
-        assert_eq!(blockchain_info.data.unwrap().block_count, 1);
-
-        // Test submit_transaction
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-        let submit_result = api.submit_transaction(transaction).await.unwrap();
-        assert!(submit_result.success);
-
-        // Test get_balance
-        let balance_result = api.get_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
-        assert!(balance_result.success);
-        assert_eq!(balance_result.data.unwrap(), 100.0);
-
-        // Test create_proposal
-        let proposal = Proposal {
-            id: "".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.66,
-            execution_timestamp: None,
-        };
-        let create_proposal_result = api.create_proposal(proposal).await.unwrap();
-        assert!(create_proposal_result.success);
-
-        // Test vote_on_proposal
-        let vote = Vote {
-            voter: "Bob".to_string(),
-            proposal_id: "new_proposal_id".to_string(),
-            in_favor: true,
-            weight: 1.0,
-        };
-        let vote_result = api.vote_on_proposal(vote).await.unwrap();
-        assert!(vote_result.success);
-
-        // Test get_proposal_status
-        let status_result = api.get_proposal_status("new_proposal_id").await.unwrap();
-        assert!(status_result.success);
-        assert_eq!(status_result.data.unwrap(), ProposalStatus::Active);
+    #[test]
+    fn test_blockchain_validity() {
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
+        let transaction = Transaction::new(
+            "Alice".to_string(),
+            "Bob".to_string(),
+            100.0,
+            CurrencyType::BasicNeeds,
+            Utc::now().timestamp(),
+        );
+        blockchain.add_transaction(transaction).unwrap();
+        blockchain.create_block().unwrap();
+        assert!(blockchain.validate_chain());
     }
 }
