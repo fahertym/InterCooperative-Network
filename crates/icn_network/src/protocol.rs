@@ -1,20 +1,46 @@
-use crate::packet::Packet;
-use icn_core::error::Result;
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
 
+/// Represents a network protocol in the ICN project.
 pub struct NetworkProtocol;
 
 impl NetworkProtocol {
+    /// Creates a new instance of NetworkProtocol.
     pub fn new() -> Self {
         NetworkProtocol
     }
 
-    pub fn send_packet(&self, packet: &Packet, route: &str) -> Result<()> {
-        // Implement packet sending logic
+    /// Starts the network protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Network protocol started");
+        // Simulated protocol start process
         Ok(())
     }
 
-    pub fn process_packet(&self, packet: Packet) -> Result<()> {
-        // Implement packet processing logic
+    /// Stops the network protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Network protocol stopped");
+        // Simulated protocol stop process
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_start_and_stop() {
+        let protocol = NetworkProtocol::new();
+        assert!(protocol.start().is_ok());
+        assert!(protocol.stop().is_ok());
     }
 }

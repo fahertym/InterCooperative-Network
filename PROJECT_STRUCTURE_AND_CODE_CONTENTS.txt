@@ -5961,24 +5961,71 @@ thiserror = "1.0"
 tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
-use crate::node::Node;
-use icn_core::error::Result;
+use icn_common::{IcnError, IcnResult};
+use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-pub struct DiscoveryService;
+/// Represents a node discovery mechanism in the network.
+pub struct NodeDiscovery {
+    discovered_nodes: Arc<RwLock<Vec<String>>>,
+}
 
-impl DiscoveryService {
+impl NodeDiscovery {
+    /// Creates a new instance of NodeDiscovery.
     pub fn new() -> Self {
-        DiscoveryService
+        NodeDiscovery {
+            discovered_nodes: Arc::new(RwLock::new(Vec::new())),
+        }
     }
 
-    pub fn register_node(&self, node: &Node) -> Result<()> {
-        // Implement node registration logic
+    /// Starts the node discovery process.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Node discovery started");
+        // Simulated discovery process
+        let nodes = vec!["Node1".to_string(), "Node2".to_string()];
+        let mut discovered_nodes = self.discovered_nodes.write().unwrap();
+        *discovered_nodes = nodes;
         Ok(())
     }
 
-    pub fn unregister_node(&self, node_id: &str) -> Result<()> {
-        // Implement node unregistration logic
+    /// Stops the node discovery process.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Node discovery stopped");
+        let mut discovered_nodes = self.discovered_nodes.write().unwrap();
+        discovered_nodes.clear();
         Ok(())
+    }
+
+    /// Retrieves the list of discovered nodes.
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<String>` - A vector containing the discovered nodes.
+    pub fn get_discovered_nodes(&self) -> Vec<String> {
+        let discovered_nodes = self.discovered_nodes.read().unwrap();
+        discovered_nodes.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_discovery() {
+        let discovery = NodeDiscovery::new();
+        assert!(discovery.start().is_ok());
+        assert_eq!(discovery.get_discovered_nodes().len(), 2);
+        assert!(discovery.stop().is_ok());
+        assert!(discovery.get_discovered_nodes().is_empty());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
@@ -6263,32 +6310,50 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/naming.rs =====
-use icn_core::error::{Error, Result};
-use std::collections::HashMap;
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
 
-pub struct NamingService {
-    names: HashMap<String, String>,
-}
+/// Represents a naming service in the ICN project.
+pub struct NamingService;
 
 impl NamingService {
+    /// Creates a new instance of NamingService.
     pub fn new() -> Self {
-        NamingService {
-            names: HashMap::new(),
-        }
+        NamingService
     }
 
-    pub fn resolve(&self, name: &str) -> Result<String> {
-        self.names.get(name)
-            .cloned()
-            .ok_or_else(|| Error::NetworkError("Name not found".to_string()))
-    }
-
-    pub fn register(&mut self, name: &str, address: &str) -> Result<()> {
-        if self.names.contains_key(name) {
-            return Err(Error::NetworkError("Name already registered".to_string()));
-        }
-        self.names.insert(name.to_string(), address.to_string());
+    /// Starts the naming service.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Naming service started");
+        // Simulated naming service start process
         Ok(())
+    }
+
+    /// Stops the naming service.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Naming service stopped");
+        // Simulated naming service stop process
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_naming_service_start_and_stop() {
+        let naming_service = NamingService::new();
+        assert!(naming_service.start().is_ok());
+        assert!(naming_service.stop().is_ok());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/naming.rs =====
@@ -6429,103 +6494,208 @@ impl Node {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/node.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/packet.rs =====
+use icn_common::{IcnError, IcnResult};
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PacketType {
-    Data,
-    Interest,
-    Control,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Represents a network packet in the ICN project.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Packet {
-    pub packet_type: PacketType,
     pub source: String,
     pub destination: String,
-    pub content: Vec<u8>,
+    pub payload: Vec<u8>,
 }
 
 impl Packet {
-    pub fn new(packet_type: PacketType, source: String, destination: String, content: Vec<u8>) -> Self {
+    /// Creates a new packet.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The source address.
+    /// * `destination` - The destination address.
+    /// * `payload` - The packet payload.
+    ///
+    /// # Returns
+    ///
+    /// * `Packet` - A new instance of Packet.
+    pub fn new(source: String, destination: String, payload: Vec<u8>) -> Self {
         Packet {
-            packet_type,
             source,
             destination,
-            content,
+            payload,
         }
+    }
+
+    /// Validates the packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the packet is invalid.
+    pub fn validate(&self) -> IcnResult<()> {
+        if self.source.is_empty() || self.destination.is_empty() {
+            return Err(IcnError::Network("Invalid packet: source or destination is empty".into()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_packet_creation_and_validation() {
+        let packet = Packet::new("Source".to_string(), "Destination".to_string(), vec![1, 2, 3]);
+        assert!(packet.validate().is_ok());
+
+        let invalid_packet = Packet::new("".to_string(), "Destination".to_string(), vec![1, 2, 3]);
+        assert!(invalid_packet.validate().is_err());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/packet.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/protocol.rs =====
-use crate::packet::Packet;
-use icn_core::error::Result;
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
 
+/// Represents a network protocol in the ICN project.
 pub struct NetworkProtocol;
 
 impl NetworkProtocol {
+    /// Creates a new instance of NetworkProtocol.
     pub fn new() -> Self {
         NetworkProtocol
     }
 
-    pub fn send_packet(&self, packet: &Packet, route: &str) -> Result<()> {
-        // Implement packet sending logic
+    /// Starts the network protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Network protocol started");
+        // Simulated protocol start process
         Ok(())
     }
 
-    pub fn process_packet(&self, packet: Packet) -> Result<()> {
-        // Implement packet processing logic
+    /// Stops the network protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Network protocol stopped");
+        // Simulated protocol stop process
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_start_and_stop() {
+        let protocol = NetworkProtocol::new();
+        assert!(protocol.start().is_ok());
+        assert!(protocol.stop().is_ok());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/protocol.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/routing.rs =====
-use crate::node::Node;
-use icn_core::error::{Error, Result};
-use std::collections::HashMap;
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
 
-pub struct RoutingTable {
-    routes: HashMap<String, String>,
-}
+/// Represents a router in the ICN project.
+pub struct Router;
 
-impl RoutingTable {
+impl Router {
+    /// Creates a new instance of Router.
     pub fn new() -> Self {
-        RoutingTable {
-            routes: HashMap::new(),
-        }
+        Router
     }
 
-    pub fn update(&mut self, nodes: &[Node]) -> Result<()> {
-        // Implement routing table update logic
-        // This could involve shortest path algorithms or other routing strategies
+    /// Starts the router.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Router started");
+        // Simulated router start process
         Ok(())
     }
 
-    pub fn get_route(&self, destination: &str) -> Result<String> {
-        self.routes.get(destination)
-            .cloned()
-            .ok_or_else(|| Error::NetworkError("Route not found".to_string()))
+    /// Stops the router.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Router stopped");
+        // Simulated router stop process
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_router_start_and_stop() {
+        let router = Router::new();
+        assert!(router.start().is_ok());
+        assert!(router.stop().is_ok());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/routing.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/security.rs =====
-use crate::packet::Packet;
-use icn_core::error::Result;
+use icn_common::{IcnError, IcnResult};
+use log::{info, error};
 
-pub struct SecurityManager;
+/// Represents network security in the ICN project.
+pub struct NetworkSecurity;
 
-impl SecurityManager {
+impl NetworkSecurity {
+    /// Creates a new instance of NetworkSecurity.
     pub fn new() -> Self {
-        SecurityManager
+        NetworkSecurity
     }
 
-    pub fn validate_packet(&self, packet: &Packet) -> Result<()> {
-        // Implement packet validation logic
-        // This could include signature verification, encryption checks, etc.
+    /// Starts the network security module.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn start(&self) -> IcnResult<()> {
+        info!("Network security started");
+        // Simulated security start process
         Ok(())
+    }
+
+    /// Stops the network security module.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("Network security stopped");
+        // Simulated security stop process
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_start_and_stop() {
+        let security = NetworkSecurity::new();
+        assert!(security.start().is_ok());
+        assert!(security.stop().is_ok());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/security.rs =====
