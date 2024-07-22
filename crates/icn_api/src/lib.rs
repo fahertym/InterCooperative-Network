@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// A generic API response structure
+/// A generic API response structure.
 #[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
@@ -13,7 +13,7 @@ pub struct ApiResponse<T> {
     pub error: Option<String>,
 }
 
-/// API Layer struct to manage different modules
+/// API Layer struct to manage different modules.
 pub struct ApiLayer {
     blockchain: Arc<RwLock<dyn BlockchainInterface>>,
     consensus: Arc<RwLock<dyn ConsensusInterface>>,
@@ -36,7 +36,18 @@ pub struct Vote {
 }
 
 impl ApiLayer {
-    /// Creates a new instance of ApiLayer
+    /// Creates a new instance of ApiLayer.
+    ///
+    /// # Arguments
+    ///
+    /// * `blockchain` - Arc to the blockchain interface.
+    /// * `consensus` - Arc to the consensus interface.
+    /// * `currency_system` - Arc to the currency system interface.
+    /// * `governance` - Arc to the governance interface.
+    ///
+    /// # Returns
+    ///
+    /// * `ApiLayer` - A new instance of ApiLayer.
     pub fn new(
         blockchain: Arc<RwLock<dyn BlockchainInterface>>,
         consensus: Arc<RwLock<dyn ConsensusInterface>>,
@@ -51,7 +62,11 @@ impl ApiLayer {
         }
     }
 
-    /// Fetches information about the blockchain
+    /// Fetches information about the blockchain.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<BlockchainInfo>>` - The blockchain information wrapped in a CommonResult.
     pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
         let blockchain = self.blockchain.read().await;
         let info = blockchain.get_info().await?;
@@ -62,7 +77,15 @@ impl ApiLayer {
         })
     }
 
-    /// Submits a transaction to the blockchain
+    /// Submits a transaction to the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to be submitted.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the transaction submission.
     pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
         let mut blockchain = self.blockchain.write().await;
         blockchain.add_transaction(transaction).await?;
@@ -73,7 +96,16 @@ impl ApiLayer {
         })
     }
 
-    /// Fetches the balance for a given address and currency type
+    /// Fetches the balance for a given address and currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to fetch the balance for.
+    /// * `currency_type` - The type of currency to fetch the balance of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<f64>>` - The balance wrapped in a CommonResult.
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
         let currency_system = self.currency_system.read().await;
         let balance = currency_system.get_balance(address, currency_type).await?;
@@ -84,7 +116,15 @@ impl ApiLayer {
         })
     }
 
-    /// Creates a new proposal in the governance system
+    /// Creates a new proposal in the governance system.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal` - The proposal to be created.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the proposal creation.
     pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
         let mut governance = self.governance.write().await;
         let proposal_id = governance.create_proposal(proposal).await?;
@@ -95,7 +135,15 @@ impl ApiLayer {
         })
     }
 
-    /// Votes on an existing proposal
+    /// Votes on an existing proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `vote` - The vote to be cast.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the voting process.
     pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
         let mut governance = self.governance.write().await;
         governance.vote_on_proposal(vote).await?;
@@ -106,7 +154,15 @@ impl ApiLayer {
         })
     }
 
-    /// Fetches the status of a given proposal
+    /// Fetches the status of a given proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal_id` - The ID of the proposal to fetch the status of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<ProposalStatus>>` - The proposal status wrapped in a CommonResult.
     pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
         let governance = self.governance.read().await;
         let status = governance.get_proposal_status(proposal_id).await?;
@@ -120,25 +176,87 @@ impl ApiLayer {
 
 #[async_trait::async_trait]
 pub trait BlockchainInterface {
+    /// Fetches blockchain information.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<BlockchainInfo>` - The blockchain information.
     async fn get_info(&self) -> CommonResult<BlockchainInfo>;
+
+    /// Adds a transaction to the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to be added.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<()>` - The result of the transaction addition.
     async fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()>;
 }
 
 #[async_trait::async_trait]
 pub trait ConsensusInterface {
-    /// Add consensus-related methods here
+    /// Validates a block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block to be validated.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<()>` - The result of the block validation.
     async fn validate_block(&self, block: &Block) -> CommonResult<()>;
 }
 
 #[async_trait::async_trait]
 pub trait CurrencySystemInterface {
+    /// Fetches the balance for a given address and currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to fetch the balance for.
+    /// * `currency_type` - The type of currency to fetch the balance of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<f64>` - The balance.
     async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64>;
 }
 
 #[async_trait::async_trait]
 pub trait GovernanceInterface {
+    /// Creates a new proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal` - The proposal to be created.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<String>` - The ID of the created proposal.
     async fn create_proposal(&mut self, proposal: Proposal) -> CommonResult<String>;
+
+    /// Votes on an existing proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `vote` - The vote to be cast.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<()>` - The result of the voting process.
     async fn vote_on_proposal(&mut self, vote: Vote) -> CommonResult<()>;
+
+    /// Fetches the status of a given proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal_id` - The ID of the proposal to fetch the status of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ProposalStatus>` - The status of the proposal.
     async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ProposalStatus>;
 }
 
@@ -147,7 +265,7 @@ mod tests {
     use super::*;
     use tokio;
 
-    // Implement mock structures for testing
+    // Implement mock structures for testing.
     struct MockBlockchain;
     struct MockConsensus;
     struct MockCurrencySystem;
@@ -205,12 +323,12 @@ mod tests {
             Arc::new(RwLock::new(MockGovernance)),
         );
 
-        // Test get_blockchain_info
+        // Test get_blockchain_info.
         let blockchain_info = api.get_blockchain_info().await.unwrap();
         assert!(blockchain_info.success);
         assert_eq!(blockchain_info.data.unwrap().block_count, 1);
 
-        // Test submit_transaction
+        // Test submit_transaction.
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
@@ -222,12 +340,12 @@ mod tests {
         let submit_result = api.submit_transaction(transaction).await.unwrap();
         assert!(submit_result.success);
 
-        // Test get_balance
+        // Test get_balance.
         let balance_result = api.get_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
         assert!(balance_result.success);
         assert_eq!(balance_result.data.unwrap(), 100.0);
 
-        // Test create_proposal
+        // Test create_proposal.
         let proposal = Proposal {
             id: "".to_string(),
             title: "Test Proposal".to_string(),
@@ -244,7 +362,7 @@ mod tests {
         let create_proposal_result = api.create_proposal(proposal).await.unwrap();
         assert!(create_proposal_result.success);
 
-        // Test vote_on_proposal
+        // Test vote_on_proposal.
         let vote = Vote {
             voter: "Bob".to_string(),
             proposal_id: "new_proposal_id".to_string(),
@@ -254,7 +372,7 @@ mod tests {
         let vote_result = api.vote_on_proposal(vote).await.unwrap();
         assert!(vote_result.success);
 
-        // Test get_proposal_status
+        // Test get_proposal_status.
         let status_result = api.get_proposal_status("new_proposal_id").await.unwrap();
         assert!(status_result.success);
         assert_eq!(status_result.data.unwrap(), ProposalStatus::Active);

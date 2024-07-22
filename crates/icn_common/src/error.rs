@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Custom error type for the ICN project.
 #[derive(Error, Debug)]
 pub enum IcnError {
     #[error("Blockchain error: {0}")]
@@ -48,4 +49,5 @@ pub enum IcnError {
     Unknown(String),
 }
 
+/// Result type for the ICN project.
 pub type IcnResult<T> = std::result::Result<T, IcnError>;
