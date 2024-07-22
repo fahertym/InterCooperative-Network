@@ -96,7 +96,6 @@ mod tests {
         let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
-        // Add some balance to Alice's account
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
@@ -108,7 +107,6 @@ mod tests {
         let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
-        // Add some balance to Alice's account, but not enough
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
@@ -120,15 +118,12 @@ mod tests {
         let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
-        // Add some balance to Alice's account
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
-        // Add the transaction to the blockchain
         blockchain.add_transaction(tx.clone()).unwrap();
         blockchain.create_block().unwrap();
 
-        // Try to validate the same transaction again
         assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 
