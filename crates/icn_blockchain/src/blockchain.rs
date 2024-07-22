@@ -24,8 +24,8 @@ pub trait TransactionValidator: Send + Sync {
     ///
     /// # Returns
     ///
-    /// `true` if the transaction is valid, `false` otherwise.
-    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> bool;
+    /// `IcnResult<bool>` indicating whether the transaction is valid.
+    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
 }
 
 impl Blockchain {
@@ -54,12 +54,9 @@ impl Blockchain {
     ///
     /// Returns `IcnError::Blockchain` if the transaction is invalid.
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        if self.transaction_validator.validate(&transaction, self) {
-            self.pending_transactions.push(transaction);
-            Ok(())
-        } else {
-            Err(IcnError::Blockchain("Invalid transaction".to_string()))
-        }
+        self.transaction_validator.validate(&transaction, self)?;
+        self.pending_transactions.push(transaction);
+        Ok(())
     }
 
     /// Creates a new block with all pending transactions.
@@ -71,26 +68,21 @@ impl Blockchain {
         let previous_block = self.chain.last()
             .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
 
-        let new_block = Block {
+        let mut new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
             transactions: self.pending_transactions.clone(),
             previous_hash: previous_block.hash.clone(),
-            hash: String::new(), // Will be set in calculate_hash
+            hash: String::new(),
         };
 
-        let new_block = self.calculate_hash(new_block)?;
+        new_block.hash = new_block.hash();
         self.consensus.read().unwrap().validate_block(&new_block)?;
 
         self.chain.push(new_block.clone());
         self.pending_transactions.clear();
 
         Ok(new_block)
-    }
-
-    fn calculate_hash(&self, mut block: Block) -> IcnResult<Block> {
-        block.hash = block.hash();
-        Ok(block)
     }
 
     /// Validates the integrity of the blockchain.
@@ -176,8 +168,8 @@ mod tests {
     struct MockTransactionValidator;
 
     impl TransactionValidator for MockTransactionValidator {
-        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> bool {
-            true
+        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> IcnResult<()> {
+            Ok(())
         }
     }
 
