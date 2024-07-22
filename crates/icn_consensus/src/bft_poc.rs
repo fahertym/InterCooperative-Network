@@ -64,6 +64,11 @@ impl BFTPoC {
             return Err(IcnError::Governance("Member has already voted".to_string()));
         }
 
+        // Validate the member ID
+        if member_id.is_empty() {
+            return Err(IcnError::Governance("Invalid member ID".to_string()));
+        }
+
         proposal.votes.push(Vote { member_id, vote });
         Ok(())
     }
@@ -114,4 +119,10 @@ mod tests {
         let mut bft_poc = BFTPoC::new();
         bft_poc.create_proposal("proposal1".to_string()).unwrap();
 
-        bft_poc.vote_on_proposal("pro
+        bft_poc.vote_on_proposal("proposal1", "member1".to_string(), true).unwrap();
+        bft_poc.vote_on_proposal("proposal1", "member2".to_string(), false).unwrap();
+
+        let status = bft_poc.finalize_proposal("proposal1").unwrap();
+        assert_eq!(status, ProposalStatus::Rejected);
+    }
+}

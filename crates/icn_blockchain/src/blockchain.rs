@@ -61,7 +61,7 @@ impl Blockchain {
     ///
     /// # Errors
     ///
-    /// Returns `IcnError::Blockchain` if no previous block is found.
+    /// Returns `IcnError::Blockchain` if no previous block is found or if `calculate_hash` fails.
     pub fn create_block(&mut self) -> IcnResult<Block> {
         let previous_block = self.chain.last()
             .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
@@ -74,16 +74,16 @@ impl Blockchain {
             hash: String::new(), // Will be set in calculate_hash
         };
 
-        let new_block = self.calculate_hash(new_block);
+        let new_block = self.calculate_hash(new_block)?;
         self.chain.push(new_block.clone());
         self.pending_transactions.clear();
 
         Ok(new_block)
     }
 
-    fn calculate_hash(&self, mut block: Block) -> Block {
+    fn calculate_hash(&self, mut block: Block) -> IcnResult<Block> {
         block.hash = block.hash();
-        block
+        Ok(block)
     }
 
     /// Validates the integrity of the blockchain.

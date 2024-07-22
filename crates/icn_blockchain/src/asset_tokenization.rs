@@ -29,6 +29,10 @@ impl AssetToken {
     }
 
     pub fn transfer(&mut self, new_owner: String) {
+        // Validate the new owner
+        if new_owner.is_empty() {
+            panic!("New owner cannot be empty");
+        }
         self.owner = new_owner;
         self.last_transferred = Utc::now();
     }

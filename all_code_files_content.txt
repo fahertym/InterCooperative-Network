@@ -526,6 +526,10 @@ impl AssetToken {
     }
 
     pub fn transfer(&mut self, new_owner: String) {
+        // Validate the new owner
+        if new_owner.is_empty() {
+            panic!("New owner cannot be empty");
+        }
         self.owner = new_owner;
         self.last_transferred = Utc::now();
     }
@@ -698,7 +702,7 @@ impl Blockchain {
     ///
     /// # Errors
     ///
-    /// Returns `IcnError::Blockchain` if no previous block is found.
+    /// Returns `IcnError::Blockchain` if no previous block is found or if `calculate_hash` fails.
     pub fn create_block(&mut self) -> IcnResult<Block> {
         let previous_block = self.chain.last()
             .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
@@ -711,16 +715,16 @@ impl Blockchain {
             hash: String::new(), // Will be set in calculate_hash
         };
 
-        let new_block = self.calculate_hash(new_block);
+        let new_block = self.calculate_hash(new_block)?;
         self.chain.push(new_block.clone());
         self.pending_transactions.clear();
 
         Ok(new_block)
     }
 
-    fn calculate_hash(&self, mut block: Block) -> Block {
+    fn calculate_hash(&self, mut block: Block) -> IcnResult<Block> {
         block.hash = block.hash();
-        block
+        Ok(block)
     }
 
     /// Validates the integrity of the blockchain.
@@ -1676,6 +1680,11 @@ impl BFTPoC {
             return Err(IcnError::Governance("Member has already voted".to_string()));
         }
 
+        // Validate the member ID
+        if member_id.is_empty() {
+            return Err(IcnError::Governance("Invalid member ID".to_string()));
+        }
+
         proposal.votes.push(Vote { member_id, vote });
         Ok(())
     }
@@ -1726,7 +1735,13 @@ mod tests {
         let mut bft_poc = BFTPoC::new();
         bft_poc.create_proposal("proposal1".to_string()).unwrap();
 
-        bft_poc.vote_on_proposal("pro
+        bft_poc.vote_on_proposal("proposal1", "member1".to_string(), true).unwrap();
+        bft_poc.vote_on_proposal("proposal1", "member2".to_string(), false).unwrap();
+
+        let status = bft_poc.finalize_proposal("proposal1").unwrap();
+        assert_eq!(status, ProposalStatus::Rejected);
+    }
+}
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
