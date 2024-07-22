@@ -2,12 +2,13 @@ use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
 use log::{info, warn, error};
+use std::sync::{Arc, RwLock};
 
 /// Represents a blockchain, maintaining a list of blocks and pending transactions.
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
-    transaction_validator: Box<dyn TransactionValidator>,
+    transaction_validator: Arc<dyn TransactionValidator>,
 }
 
 /// A trait for validating transactions within a blockchain.
@@ -31,7 +32,7 @@ impl Blockchain {
     /// # Arguments
     ///
     /// * `transaction_validator` - A validator for verifying transactions.
-    pub fn new(transaction_validator: Box<dyn TransactionValidator>) -> Self {
+    pub fn new(transaction_validator: Arc<dyn TransactionValidator>) -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
@@ -163,6 +164,7 @@ impl Blockchain {
 mod tests {
     use super::*;
     use icn_common::CurrencyType;
+    use std::sync::Arc;
 
     struct MockTransactionValidator;
 
@@ -174,14 +176,14 @@ mod tests {
 
     #[test]
     fn test_blockchain_creation() {
-        let blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
         assert_eq!(blockchain.chain.len(), 1);
         assert_eq!(blockchain.chain[0].index, 0);
     }
 
     #[test]
     fn test_add_block() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
         let transaction = Transaction::new(
             "Alice".to_string(),
             "Bob".to_string(),
@@ -196,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_blockchain_validity() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator));
         let transaction = Transaction::new(
             "Alice".to_string(),
             "Bob".to_string(),

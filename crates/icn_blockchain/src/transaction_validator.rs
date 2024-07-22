@@ -55,6 +55,7 @@ mod tests {
     use icn_common::{Transaction, Blockchain};
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
+    use std::sync::Arc;
 
     fn create_signed_transaction(from: &str, to: &str, amount: f64) -> Transaction {
         let mut tx = Transaction::new(
@@ -72,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account
@@ -84,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         // Add some balance to Alice's account, but not enough
@@ -96,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Box::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         // Add some balance to Alice's account

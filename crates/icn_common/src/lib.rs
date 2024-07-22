@@ -1,3 +1,4 @@
+/// Module for common types and utilities used across the ICN project.
 use chrono::{DateTime, Utc};
 use rand_chacha::ChaChaRng;
 use rand_chacha::rand_core::SeedableRng;
@@ -9,6 +10,7 @@ use bls12_381::Bls12;
 pub mod error;
 pub use error::{IcnError, IcnResult};
 
+/// Enumeration representing different types of currencies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CurrencyType {
     BasicNeeds,
@@ -26,6 +28,7 @@ pub enum CurrencyType {
     Bond(String),
 }
 
+/// Structure representing a transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
     pub from: String,
@@ -37,6 +40,7 @@ pub struct Transaction {
     pub zkp: Option<ZKProof>,
 }
 
+/// Structure representing a block in the blockchain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
@@ -47,6 +51,7 @@ pub struct Block {
     pub zkp_accumulator: Option<ZKAccumulator>,
 }
 
+/// Structure representing a proposal for governance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
     pub id: String,
@@ -62,6 +67,7 @@ pub struct Proposal {
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
 
+/// Enumeration representing the status of a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalStatus {
     Active,
@@ -70,6 +76,7 @@ pub enum ProposalStatus {
     Implemented,
 }
 
+/// Enumeration representing the type of a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalType {
     Constitutional,
@@ -77,6 +84,7 @@ pub enum ProposalType {
     NetworkUpgrade,
 }
 
+/// Enumeration representing the category of a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalCategory {
     Constitutional,
@@ -84,6 +92,7 @@ pub enum ProposalCategory {
     Technical,
 }
 
+/// Structure representing a vote on a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     pub voter: String,
@@ -94,29 +103,30 @@ pub struct Vote {
     pub zkp: Option<ZKProof>,
 }
 
+/// Trait defining an object that can be hashed.
 pub trait Hashable {
     fn hash(&self) -> String;
 }
 
-// New ZKP-related structures
+/// Structure representing a zero-knowledge proof.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZKProof {
     pub proof: Vec<u8>,
     pub public_inputs: Vec<Vec<u8>>,
 }
 
+/// Structure representing a zero-knowledge proof accumulator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZKAccumulator {
     pub value: Vec<u8>,
 }
 
+/// Trait for synthesizing zero-knowledge circuits.
 pub trait ZKCircuit<E: bellman::Engine> {
-    fn synthesize<CS: ConstraintSystem<E>>(
-        self,
-        cs: &mut CS
-    ) -> Result<(), SynthesisError>;
+    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError>;
 }
 
+/// Implementation of the Hashable trait for Block.
 impl Hashable for Block {
     fn hash(&self) -> String {
         use sha2::{Sha256, Digest};
@@ -131,6 +141,7 @@ impl Hashable for Block {
     }
 }
 
+/// Implementation of the Hashable trait for Transaction.
 impl Hashable for Transaction {
     fn hash(&self) -> String {
         use sha2::{Sha256, Digest};
@@ -153,6 +164,7 @@ impl Hashable for Transaction {
     }
 }
 
+/// Implementation of methods for Transaction.
 impl Transaction {
     pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
         Transaction {
@@ -214,6 +226,7 @@ impl Transaction {
     }
 }
 
+/// Implementation of methods for Block.
 impl Block {
     pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
         let timestamp = Utc::now().timestamp();
@@ -238,11 +251,13 @@ impl Block {
     }
 }
 
+/// Structure representing a ZK accumulator circuit.
 pub struct ZKAccumulatorCircuit<E: bellman::Engine> {
     pub transactions: Vec<Transaction>,
     pub previous_accumulator: Option<E::Fr>,
 }
 
+/// Implementation of the ZKCircuit trait for ZKAccumulatorCircuit.
 impl<E: bellman::Engine> ZKCircuit<E> for ZKAccumulatorCircuit<E> {
     fn synthesize<CS: ConstraintSystem<E>>(
         self,
