@@ -13,10 +13,10 @@ pub struct ApiResponse<T> {
 }
 
 pub struct ApiLayer {
-    blockchain: Arc<RwLock<BlockchainInterface>>,
-    consensus: Arc<RwLock<ConsensusInterface>>,
-    currency_system: Arc<RwLock<CurrencySystemInterface>>,
-    governance: Arc<RwLock<GovernanceInterface>>,
+    blockchain: Arc<RwLock<dyn BlockchainInterface>>,
+    consensus: Arc<RwLock<dyn ConsensusInterface>>,
+    currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
+    governance: Arc<RwLock<dyn GovernanceInterface>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -35,10 +35,10 @@ pub struct Vote {
 
 impl ApiLayer {
     pub fn new(
-        blockchain: Arc<RwLock<BlockchainInterface>>,
-        consensus: Arc<RwLock<ConsensusInterface>>,
-        currency_system: Arc<RwLock<CurrencySystemInterface>>,
-        governance: Arc<RwLock<GovernanceInterface>>,
+        blockchain: Arc<RwLock<dyn BlockchainInterface>>,
+        consensus: Arc<RwLock<dyn ConsensusInterface>>,
+        currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
+        governance: Arc<RwLock<dyn GovernanceInterface>>,
     ) -> Self {
         ApiLayer {
             blockchain,
