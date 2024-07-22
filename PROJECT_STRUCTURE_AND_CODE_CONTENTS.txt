@@ -9050,177 +9050,218 @@ sha2 = "0.9"
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
-use std::collections::HashMap;
+/// The ICN storage module.
+pub mod storage_manager;
+pub mod storage_node;
+===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_manager.rs =====
+use crate::storage_node::StorageNode;
+use icn_common::{IcnError, IcnResult};
 use std::sync::{Arc, RwLock};
-use tokio::sync::mpsc;
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
+use log::{info, error};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageNode {
-    id: String,
-    data: HashMap<String, Vec<u8>>,
-}
-
-impl StorageNode {
-    pub fn new(id: String) -> Self {
-        StorageNode {
-            id,
-            data: HashMap::new(),
-        }
-    }
-
-    pub fn store(&mut self, content: Vec<u8>) -> String {
-        let hash = calculate_hash(&content);
-        self.data.insert(hash.clone(), content);
-        hash
-    }
-
-    pub fn retrieve(&self, hash: &str) -> Option<&Vec<u8>> {
-        self.data.get(hash)
-    }
-
-    pub fn delete(&mut self, hash: &str) -> bool {
-        self.data.remove(hash).is_some()
-    }
-}
-
-#[derive(Debug)]
+/// Manages storage nodes and handles data storage operations.
 pub struct StorageManager {
-    nodes: Arc<RwLock<HashMap<String, Arc<RwLock<StorageNode>>>>>,
-    replication_factor: usize,
+    nodes: Arc<RwLock<Vec<StorageNode>>>,
 }
 
 impl StorageManager {
-    pub fn new(replication_factor: usize) -> Self {
+    /// Creates a new instance of StorageManager.
+    pub fn new() -> Self {
         StorageManager {
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            replication_factor,
+            nodes: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
-    pub async fn add_node(&self, node: StorageNode) -> Result<(), String> {
-        let mut nodes = self.nodes.write().map_err(|e| e.to_string())?;
-        nodes.insert(node.id.clone(), Arc::new(RwLock::new(node)));
+    /// Adds a storage node to the manager.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The storage node to be added.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn add_node(&self, node: StorageNode) -> IcnResult<()> {
+        let mut nodes = self.nodes.write().unwrap();
+        nodes.push(node);
+        info!("Storage node added");
         Ok(())
     }
 
-    pub async fn store_data(&self, content: Vec<u8>) -> Result<String, String> {
-        let hash = calculate_hash(&content);
-        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
-        
-        if nodes.len() < self.replication_factor {
-            return Err("Not enough nodes for replication".to_string());
-        }
-
-        let selected_nodes: Vec<_> = nodes.values().take(self.replication_factor).collect();
-
-        for node in selected_nodes {
-            let mut node = node.write().map_err(|e| e.to_string())?;
-            node.store(content.clone());
-        }
-
-        Ok(hash)
+    /// Removes a storage node from the manager.
+    ///
+    /// # Arguments
+    ///
+    /// * `node_id` - The ID of the storage node to be removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn remove_node(&self, node_id: &str) -> IcnResult<()> {
+        let mut nodes = self.nodes.write().unwrap();
+        nodes.retain(|node| node.id != node_id);
+        info!("Storage node removed");
+        Ok(())
     }
 
-    pub async fn retrieve_data(&self, hash: &str) -> Result<Option<Vec<u8>>, String> {
-        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
-
-        for node in nodes.values() {
-            let node = node.read().map_err(|e| e.to_string())?;
-            if let Some(data) = node.retrieve(hash) {
-                return Ok(Some(data.clone()));
-            }
+    /// Stores data across available storage nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to be stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn store_data(&self, data: Vec<u8>) -> IcnResult<()> {
+        let nodes = self.nodes.read().unwrap();
+        if nodes.is_empty() {
+            return Err(IcnError::Storage("No available storage nodes".into()));
         }
-
-        Ok(None)
+        // Simple round-robin distribution of data
+        let node = &nodes[0];
+        node.store(data)?;
+        info!("Data stored");
+        Ok(())
     }
 
-    pub async fn delete_data(&self, hash: &str) -> Result<bool, String> {
-        let nodes = self.nodes.read().map_err(|e| e.to_string())?;
-        let mut deleted = false;
-
-        for node in nodes.values() {
-            let mut node = node.write().map_err(|e| e.to_string())?;
-            if node.delete(hash) {
-                deleted = true;
+    /// Retrieves data from storage nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_id` - The ID of the data to be retrieved.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<u8>>` - The retrieved data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn retrieve_data(&self, data_id: &str) -> IcnResult<Vec<u8>> {
+        let nodes = self.nodes.read().unwrap();
+        for node in nodes.iter() {
+            if let Ok(data) = node.retrieve(data_id) {
+                return Ok(data);
             }
         }
-
-        Ok(deleted)
+        Err(IcnError::Storage("Data not found".into()))
     }
 }
 
-fn calculate_hash(content: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    hex::encode(hasher.finalize())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage_node::MockStorageNode;
+
+    #[test]
+    fn test_add_and_remove_node() {
+        let manager = StorageManager::new();
+        let node = MockStorageNode::new("Node1".to_string());
+        assert!(manager.add_node(node).is_ok());
+        assert!(manager.remove_node("Node1").is_ok());
+    }
+
+    #[test]
+    fn test_store_and_retrieve_data() {
+        let manager = StorageManager::new();
+        let node = MockStorageNode::new("Node1".to_string());
+        manager.add_node(node).unwrap();
+
+        let data = vec![1, 2, 3];
+        assert!(manager.store_data(data.clone()).is_ok());
+        let retrieved_data = manager.retrieve_data("data_id").unwrap();
+        assert_eq!(retrieved_data, data);
+    }
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_manager.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_node.rs =====
+use icn_common::{IcnError, IcnResult};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use log::{info, error};
+
+/// Represents a storage node in the ICN project.
+pub struct StorageNode {
+    pub id: String,
+    data_store: Arc<RwLock<HashMap<String, Vec<u8>>>>,
+}
+
+impl StorageNode {
+    /// Creates a new instance of StorageNode.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the storage node.
+    ///
+    /// # Returns
+    ///
+    /// * `StorageNode` - A new instance of StorageNode.
+    pub fn new(id: String) -> Self {
+        StorageNode {
+            id,
+            data_store: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Stores data in the storage node.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to be stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn store(&self, data: Vec<u8>) -> IcnResult<()> {
+        let mut data_store = self.data_store.write().unwrap();
+        let data_id = format!("data_{}", data_store.len() + 1);
+        data_store.insert(data_id.clone(), data);
+        info!("Data stored with ID: {}", data_id);
+        Ok(())
+    }
+
+    /// Retrieves data from the storage node.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_id` - The ID of the data to be retrieved.
+    ///
+    /// # Returns
+    ///
+    /// * `IcnResult<Vec<u8>>` - The retrieved data.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnResult` if the operation fails.
+    pub fn retrieve(&self, data_id: &str) -> IcnResult<Vec<u8>> {
+        let data_store = self.data_store.read().unwrap();
+        data_store.get(data_id).cloned().ok_or_else(|| IcnError::Storage("Data not found".into()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_storage_operations() {
-        let manager = StorageManager::new(2);
-
-        manager.add_node(StorageNode::new("node1".to_string())).await.unwrap();
-        manager.add_node(StorageNode::new("node2".to_string())).await.unwrap();
-
-        let content = b"Test data".to_vec();
-        let hash = manager.store_data(content.clone()).await.unwrap();
-
-        let retrieved_data = manager.retrieve_data(&hash).await.unwrap().unwrap();
-        assert_eq!(retrieved_data, content);
-
-        let deleted = manager.delete_data(&hash).await.unwrap();
-        assert!(deleted);
-
-        let not_found = manager.retrieve_data(&hash).await.unwrap();
-        assert!(not_found.is_none());
-    }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_manager.rs =====
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use uuid::Uuid;
-use crate::storage_node::StorageNode;
-
-#[derive(Debug)]
-pub struct StorageManager {
-    nodes: HashMap<Uuid, Arc<Mutex<StorageNode>>>,
-}
-
-impl StorageManager {
-    pub fn new() -> Self {
-        StorageManager {
-            nodes: HashMap::new(),
-        }
+    #[test]
+    fn test_store_and_retrieve_data() {
+        let node = StorageNode::new("Node1".to_string());
+        let data = vec![1, 2, 3];
+        assert!(node.store(data.clone()).is_ok());
+        let retrieved_data = node.retrieve("data_1").unwrap();
+        assert_eq!(retrieved_data, data);
     }
 
-    pub fn add_node(&mut self, node: Arc<Mutex<StorageNode>>) -> Uuid {
-        let id = Uuid::new_v4();
-        self.nodes.insert(id, node);
-        id
-    }
-
-    pub fn remove_node(&mut self, id: Uuid) {
-        self.nodes.remove(&id);
-    }
-
-    pub fn get_node(&self, id: &Uuid) -> Option<Arc<Mutex<StorageNode>>> {
-        self.nodes.get(id).cloned()
-    }
-
-    pub fn list_nodes(&self) -> Vec<Uuid> {
-        self.nodes.keys().cloned().collect()
+    #[test]
+    fn test_retrieve_non_existent_data() {
+        let node = StorageNode::new("Node1".to_string());
+        assert!(node.retrieve("non_existent_data").is_err());
     }
 }
-===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_manager.rs =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_node.rs =====
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_node.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_testnet/Cargo.toml =====
