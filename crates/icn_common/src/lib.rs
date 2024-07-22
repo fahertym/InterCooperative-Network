@@ -166,6 +166,7 @@ impl Hashable for Transaction {
 
 /// Implementation of methods for Transaction.
 impl Transaction {
+    /// Creates a new transaction
     pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
         Transaction {
             from,
@@ -178,6 +179,7 @@ impl Transaction {
         }
     }
 
+    /// Signs the transaction using the provided private key
     pub fn sign(&mut self, private_key: &[u8]) -> IcnResult<()> {
         use ed25519_dalek::{Keypair, Signer};
         let keypair = Keypair::from_bytes(private_key)
@@ -188,6 +190,7 @@ impl Transaction {
         Ok(())
     }
 
+    /// Verifies the transaction using the provided public key
     pub fn verify(&self, public_key: &[u8]) -> IcnResult<bool> {
         use ed25519_dalek::{PublicKey, Verifier};
         let public_key = PublicKey::from_bytes(public_key)
@@ -202,6 +205,7 @@ impl Transaction {
         }
     }
 
+    /// Adds a zero-knowledge proof to the transaction
     pub fn add_zkp(&mut self, proof: Vec<u8>, public_inputs: Vec<Vec<u8>>) {
         self.zkp = Some(ZKProof {
             proof,
@@ -209,6 +213,7 @@ impl Transaction {
         });
     }
 
+    /// Verifies the zero-knowledge proof of the transaction
     pub fn verify_zkp<E: bellman::Engine, C: ZKCircuit<E>>(&self, circuit: C, verifying_key: &bellman::groth16::VerifyingKey<E>) -> IcnResult<bool> {
         if let Some(zkp) = &self.zkp {
             let proof = bellman::groth16::Proof::<E>::read(&zkp.proof[..])
@@ -228,6 +233,7 @@ impl Transaction {
 
 /// Implementation of methods for Block.
 impl Block {
+    /// Creates a new block
     pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
         let timestamp = Utc::now().timestamp();
         let mut block = Block {
@@ -242,10 +248,12 @@ impl Block {
         block
     }
 
+    /// Creates a genesis block
     pub fn genesis() -> Self {
         Block::new(0, Vec::new(), "0".repeat(64))
     }
 
+    /// Adds a zero-knowledge proof accumulator to the block
     pub fn add_zkp_accumulator(&mut self, accumulator: ZKAccumulator) {
         self.zkp_accumulator = Some(accumulator);
     }

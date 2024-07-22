@@ -5,18 +5,15 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// A generic API response structure
 #[derive(Serialize, Deserialize)]
-/// A structure representing an API response.
 pub struct ApiResponse<T> {
-    /// Indicates if the request was successful.
     pub success: bool,
-    /// The data returned by the request, if any.
     pub data: Option<T>,
-    /// The error message, if any.
     pub error: Option<String>,
 }
 
-/// The API layer struct which interfaces with the blockchain, consensus, currency system, and governance.
+/// API Layer struct to manage different modules
 pub struct ApiLayer {
     blockchain: Arc<RwLock<dyn BlockchainInterface>>,
     consensus: Arc<RwLock<dyn ConsensusInterface>>,
@@ -25,36 +22,21 @@ pub struct ApiLayer {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-/// A structure representing blockchain information.
 pub struct BlockchainInfo {
-    /// The total number of blocks in the blockchain.
     pub block_count: usize,
-    /// The hash of the last block in the blockchain.
     pub last_block_hash: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
-/// A structure representing a vote on a proposal.
 pub struct Vote {
-    /// The voter ID.
     pub voter: String,
-    /// The proposal ID being voted on.
     pub proposal_id: String,
-    /// Indicates if the vote is in favor.
     pub in_favor: bool,
-    /// The weight of the vote.
     pub weight: f64,
 }
 
 impl ApiLayer {
-    /// Creates a new instance of ApiLayer.
-    ///
-    /// # Arguments
-    ///
-    /// * `blockchain` - An Arc-wrapped RwLock of the blockchain interface.
-    /// * `consensus` - An Arc-wrapped RwLock of the consensus interface.
-    /// * `currency_system` - An Arc-wrapped RwLock of the currency system interface.
-    /// * `governance` - An Arc-wrapped RwLock of the governance interface.
+    /// Creates a new instance of ApiLayer
     pub fn new(
         blockchain: Arc<RwLock<dyn BlockchainInterface>>,
         consensus: Arc<RwLock<dyn ConsensusInterface>>,
@@ -69,11 +51,7 @@ impl ApiLayer {
         }
     }
 
-    /// Retrieves information about the blockchain.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing BlockchainInfo.
+    /// Fetches information about the blockchain
     pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
         let blockchain = self.blockchain.read().await;
         let info = blockchain.get_info().await?;
@@ -84,15 +62,7 @@ impl ApiLayer {
         })
     }
 
-    /// Submits a transaction to the blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to be submitted.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing a success message.
+    /// Submits a transaction to the blockchain
     pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
         let mut blockchain = self.blockchain.write().await;
         blockchain.add_transaction(transaction).await?;
@@ -103,16 +73,7 @@ impl ApiLayer {
         })
     }
 
-    /// Retrieves the balance of a specified address.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - The address to check the balance of.
-    /// * `currency_type` - The type of currency to check the balance in.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing the balance.
+    /// Fetches the balance for a given address and currency type
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
         let currency_system = self.currency_system.read().await;
         let balance = currency_system.get_balance(address, currency_type).await?;
@@ -123,15 +84,7 @@ impl ApiLayer {
         })
     }
 
-    /// Creates a new proposal in the governance system.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal` - The proposal to be created.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing the proposal ID.
+    /// Creates a new proposal in the governance system
     pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
         let mut governance = self.governance.write().await;
         let proposal_id = governance.create_proposal(proposal).await?;
@@ -142,15 +95,7 @@ impl ApiLayer {
         })
     }
 
-    /// Submits a vote on a proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `vote` - The vote to be submitted.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing a success message.
+    /// Votes on an existing proposal
     pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
         let mut governance = self.governance.write().await;
         governance.vote_on_proposal(vote).await?;
@@ -161,15 +106,7 @@ impl ApiLayer {
         })
     }
 
-    /// Retrieves the status of a proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal_id` - The ID of the proposal to check the status of.
-    ///
-    /// # Returns
-    ///
-    /// A CommonResult wrapping an ApiResponse containing the proposal status.
+    /// Fetches the status of a given proposal
     pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
         let governance = self.governance.read().await;
         let status = governance.get_proposal_status(proposal_id).await?;
@@ -181,60 +118,27 @@ impl ApiLayer {
     }
 }
 
-/// A trait defining the blockchain interface.
 #[async_trait::async_trait]
 pub trait BlockchainInterface {
-    /// Retrieves information about the blockchain.
     async fn get_info(&self) -> CommonResult<BlockchainInfo>;
-
-    /// Adds a transaction to the blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to be added.
     async fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()>;
 }
 
-/// A trait defining the consensus interface.
 #[async_trait::async_trait]
 pub trait ConsensusInterface {
-    // Add consensus-related methods here
+    /// Add consensus-related methods here
+    async fn validate_block(&self, block: &Block) -> CommonResult<()>;
 }
 
-/// A trait defining the currency system interface.
 #[async_trait::async_trait]
 pub trait CurrencySystemInterface {
-    /// Retrieves the balance of a specified address.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - The address to check the balance of.
-    /// * `currency_type` - The type of currency to check the balance in.
     async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64>;
 }
 
-/// A trait defining the governance interface.
 #[async_trait::async_trait]
 pub trait GovernanceInterface {
-    /// Creates a new proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal` - The proposal to be created.
     async fn create_proposal(&mut self, proposal: Proposal) -> CommonResult<String>;
-
-    /// Submits a vote on a proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `vote` - The vote to be submitted.
     async fn vote_on_proposal(&mut self, vote: Vote) -> CommonResult<()>;
-
-    /// Retrieves the status of a proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal_id` - The ID of the proposal to check the status of.
     async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ProposalStatus>;
 }
 
@@ -264,7 +168,11 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ConsensusInterface for MockConsensus {}
+    impl ConsensusInterface for MockConsensus {
+        async fn validate_block(&self, _block: &Block) -> CommonResult<()> {
+            Ok(())
+        }
+    }
 
     #[async_trait::async_trait]
     impl CurrencySystemInterface for MockCurrencySystem {
