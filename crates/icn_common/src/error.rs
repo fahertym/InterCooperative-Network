@@ -1,3 +1,4 @@
+// icn_common/src/error.rs
 use thiserror::Error;
 
 /// Custom error type for the ICN project.

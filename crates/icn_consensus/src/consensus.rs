@@ -1,3 +1,4 @@
+// icn_consensus/src/consensus.rs
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use log::{info, warn};
@@ -11,7 +12,7 @@ pub struct Member {
     pub is_validator: bool,
 }
 
-/// Proof of Cooperation (PoC) consensus mechanism.
+/// Proof of Contribution (PoC) consensus mechanism.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PoCConsensus {
     pub members: HashMap<String, Member>,

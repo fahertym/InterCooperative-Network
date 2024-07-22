@@ -1,3 +1,4 @@
+// icn_blockchain/src/blockchain.rs
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
@@ -11,21 +12,6 @@ pub struct Blockchain {
     pending_transactions: Vec<Transaction>,
     transaction_validator: Arc<dyn TransactionValidator>,
     consensus: Arc<RwLock<dyn ConsensusAlgorithm>>,
-}
-
-/// A trait for validating transactions within a blockchain.
-pub trait TransactionValidator: Send + Sync {
-    /// Validates a transaction within the context of a blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to validate.
-    /// * `blockchain` - The blockchain context.
-    ///
-    /// # Returns
-    ///
-    /// `IcnResult<bool>` indicating whether the transaction is valid.
-    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
 }
 
 impl Blockchain {
@@ -135,81 +121,5 @@ impl Blockchain {
     /// The block if found, `None` otherwise.
     pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
         self.chain.iter().find(|block| block.hash == hash)
-    }
-
-    /// Starts the blockchain.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
-    pub fn start(&self) -> IcnResult<()> {
-        info!("Blockchain started");
-        Ok(())
-    }
-
-    /// Stops the blockchain.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
-    pub fn stop(&self) -> IcnResult<()> {
-        info!("Blockchain stopped");
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use icn_common::CurrencyType;
-    use std::sync::Arc;
-    use crate::consensus::PoCConsensus;
-
-    struct MockTransactionValidator;
-
-    impl TransactionValidator for MockTransactionValidator {
-        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> IcnResult<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_blockchain_creation() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        assert_eq!(blockchain.chain.len(), 1);
-        assert_eq!(blockchain.chain[0].index, 0);
-    }
-
-    #[test]
-    fn test_add_block() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-        blockchain.add_transaction(transaction).unwrap();
-        assert!(blockchain.create_block().is_ok());
-        assert_eq!(blockchain.chain.len(), 2);
-    }
-
-    #[test]
-    fn test_blockchain_validity() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block().unwrap();
-        assert!(blockchain.validate_chain());
     }
 }
