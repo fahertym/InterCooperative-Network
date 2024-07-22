@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants
-OUTPUT_FILE="all_code_files_content.txt"
+OUTPUT_FILE="PROJECT_STRUCTURE_AND_CODE_CONTENTS.txt"
 PROJECT_DIR="/home/matt/InterCooperative-Network"
 IGNORE_FILES="CHANGELOG.md cliff.toml"
 

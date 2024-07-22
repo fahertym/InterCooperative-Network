@@ -1,30 +1,41 @@
 use crate::{Transaction, Blockchain};
-use icn_utils::error::{Error, Result};
+use icn_common::error::{IcnError, IcnResult};
 
+/// A struct for validating transactions.
 pub struct TransactionValidator;
 
 impl TransactionValidator {
-    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> Result<()> {
+    /// Validates a transaction within the context of a blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to validate.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<()>` indicating whether the transaction is valid.
+    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
         if Self::is_double_spend(transaction, blockchain)? {
-            return Err(Error::BlockchainError("Double spend detected".to_string()));
+            return Err(IcnError::Blockchain("Double spend detected".to_string()));
         }
 
         if !Self::validate_currency_and_amount(transaction) {
-            return Err(Error::BlockchainError("Invalid currency or amount".to_string()));
+            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
         }
 
         if !Self::check_sufficient_balance(transaction, blockchain)? {
-            return Err(Error::BlockchainError("Insufficient balance".to_string()));
+            return Err(IcnError::Currency("Insufficient balance".to_string()));
         }
 
         if !Self::validate_signature(transaction)? {
-            return Err(Error::BlockchainError("Invalid signature".to_string()));
+            return Err(IcnError::Identity("Invalid signature".to_string()));
         }
 
         Ok(())
     }
 
-    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> Result<bool> {
+    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
         for block in &blockchain.chain {
             for tx in &block.transactions {
                 if tx == transaction {
@@ -39,16 +50,26 @@ impl TransactionValidator {
         transaction.amount > 0.0
     }
 
-    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> Result<bool> {
+    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
         let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
         Ok(balance >= transaction.amount + transaction.get_fee())
     }
 
-    fn validate_signature(transaction: &Transaction) -> Result<bool> {
-        transaction.verify().map_err(|e| Error::BlockchainError(format!("Signature verification failed: {}", e)))
+    fn validate_signature(transaction: &Transaction) -> IcnResult<bool> {
+        transaction.verify().map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))
     }
 
-    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> Result<()> {
+    /// Checks if a transaction can be processed by the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to check.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<()>` indicating whether the transaction can be processed.
+    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
         Self::validate_transaction(transaction, blockchain)
     }
 }
