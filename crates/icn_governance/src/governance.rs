@@ -1,19 +1,18 @@
-/// Module for governance mechanisms within the InterCooperative Network.
 use icn_common::{IcnResult, IcnError, Proposal, ProposalStatus, Vote};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use log::{info, warn};
 
 /// Represents the governance system managing proposals and votes.
-pub struct GovernanceSystem {
+pub struct Governance {
     pub proposals: HashMap<String, Proposal>,
     pub votes: HashMap<String, Vec<Vote>>,
 }
 
-impl GovernanceSystem {
+impl Governance {
     /// Creates a new Governance system.
     pub fn new() -> Self {
-        GovernanceSystem {
+        Governance {
             proposals: HashMap::new(),
             votes: HashMap::new(),
         }
@@ -134,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_create_proposal() {
-        let mut governance = GovernanceSystem::new();
+        let mut governance = Governance::new();
         let proposal = Proposal {
             id: "proposal1".to_string(),
             title: "Test Proposal".to_string(),
@@ -154,7 +153,7 @@ mod tests {
 
     #[test]
     fn test_vote_on_proposal() {
-        let mut governance = GovernanceSystem::new();
+        let mut governance = Governance::new();
         let proposal = Proposal {
             id: "proposal1".to_string(),
             title: "Test Proposal".to_string(),
@@ -175,13 +174,14 @@ mod tests {
             in_favor: true,
             weight: 1.0,
             timestamp: Utc::now(),
+            zkp: None,
         };
         assert!(governance.vote_on_proposal(vote).is_ok());
     }
 
     #[test]
     fn test_get_proposal_status() {
-        let mut governance = GovernanceSystem::new();
+        let mut governance = Governance::new();
         let proposal = Proposal {
             id: "proposal1".to_string(),
             title: "Test Proposal".to_string(),
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_close_proposal() {
-        let mut governance = GovernanceSystem::new();
+        let mut governance = Governance::new();
         let proposal = Proposal {
             id: "proposal1".to_string(),
             title: "Test Proposal".to_string(),
@@ -223,6 +223,7 @@ mod tests {
             in_favor: true,
             weight: 0.7,
             timestamp: Utc::now(),
+            zkp: None,
         };
         let vote2 = Vote {
             voter: "Charlie".to_string(),
@@ -230,6 +231,7 @@ mod tests {
             in_favor: false,
             weight: 0.3,
             timestamp: Utc::now(),
+            zkp: None,
         };
         governance.vote_on_proposal(vote1).unwrap();
         governance.vote_on_proposal(vote2).unwrap();
@@ -239,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_list_active_proposals() {
-        let mut governance = GovernanceSystem::new();
+        let mut governance = Governance::new();
         let proposal1 = Proposal {
             id: "proposal1".to_string(),
             title: "Test Proposal 1".to_string(),

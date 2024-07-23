@@ -100,13 +100,6 @@ impl IdentityManager {
         Ok(())
     }
 
-    pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.reputation += change;
-        identity.updated_at = Utc::now();
-        Ok(())
-    }
-
     pub fn suspend_identity(&mut self, id: &str) -> IcnResult<()> {
         let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         identity.status = IdentityStatus::Suspended;
@@ -118,6 +111,12 @@ impl IdentityManager {
         let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
         identity.status = IdentityStatus::Revoked;
         identity.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+        identity.reputation += change;
         Ok(())
     }
 

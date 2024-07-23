@@ -4,12 +4,16 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use log::{info, error};
 
 /// A generic API response structure.
 #[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
+    /// Indicates whether the API call was successful.
     pub success: bool,
+    /// Contains the data returned by the API call, if any.
     pub data: Option<T>,
+    /// Contains the error message, if any.
     pub error: Option<String>,
 }
 
@@ -21,12 +25,14 @@ pub struct ApiLayer {
     governance: Arc<RwLock<dyn GovernanceInterface>>,
 }
 
+/// Struct containing information about the blockchain.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BlockchainInfo {
     pub block_count: usize,
     pub last_block_hash: Option<String>,
 }
 
+/// Struct representing a vote in the governance system.
 #[derive(Serialize, Deserialize)]
 pub struct Vote {
     pub voter: String,
@@ -37,6 +43,13 @@ pub struct Vote {
 
 impl ApiLayer {
     /// Creates a new instance of ApiLayer.
+    ///
+    /// # Arguments
+    ///
+    /// * `blockchain` - A reference to the blockchain module.
+    /// * `consensus` - A reference to the consensus module.
+    /// * `currency_system` - A reference to the currency system module.
+    /// * `governance` - A reference to the governance module.
     pub fn new(
         blockchain: Arc<RwLock<dyn BlockchainInterface>>,
         consensus: Arc<RwLock<dyn ConsensusInterface>>,
@@ -52,69 +65,174 @@ impl ApiLayer {
     }
 
     /// Fetches information about the blockchain.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<BlockchainInfo>>` - The result of the API call containing blockchain information.
     pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
+        info!("Fetching blockchain info");
         let blockchain = self.blockchain.read().await;
-        let info = blockchain.get_info().await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(info),
-            error: None,
-        })
+        match blockchain.get_info().await {
+            Ok(info) => Ok(ApiResponse {
+                success: true,
+                data: Some(info),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to fetch blockchain info: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 
     /// Submits a transaction to the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to be submitted.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
     pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
+        info!("Submitting transaction: {:?}", transaction);
         let mut blockchain = self.blockchain.write().await;
-        blockchain.add_transaction(transaction).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some("Transaction submitted successfully".to_string()),
-            error: None,
-        })
+        match blockchain.add_transaction(transaction).await {
+            Ok(_) => Ok(ApiResponse {
+                success: true,
+                data: Some("Transaction submitted successfully".to_string()),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to submit transaction: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 
     /// Fetches the balance for a given address and currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to fetch the balance for.
+    /// * `currency_type` - The type of currency to fetch the balance of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<f64>>` - The result of the API call.
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
+        info!("Fetching balance for address: {}, currency type: {:?}", address, currency_type);
         let currency_system = self.currency_system.read().await;
-        let balance = currency_system.get_balance(address, currency_type).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(balance),
-            error: None,
-        })
+        match currency_system.get_balance(address, currency_type).await {
+            Ok(balance) => Ok(ApiResponse {
+                success: true,
+                data: Some(balance),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to fetch balance: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 
     /// Creates a new proposal in the governance system.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal` - The proposal to be created.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
     pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
+        info!("Creating proposal: {:?}", proposal);
         let mut governance = self.governance.write().await;
-        let proposal_id = governance.create_proposal(proposal).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(proposal_id),
-            error: None,
-        })
+        match governance.create_proposal(proposal).await {
+            Ok(proposal_id) => Ok(ApiResponse {
+                success: true,
+                data: Some(proposal_id),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to create proposal: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 
     /// Votes on an existing proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `vote` - The vote to be cast.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
     pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
+        info!("Voting on proposal: {:?}", vote);
         let mut governance = self.governance.write().await;
-        governance.vote_on_proposal(vote).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some("Vote recorded successfully".to_string()),
-            error: None,
-        })
+        match governance.vote_on_proposal(vote).await {
+            Ok(_) => Ok(ApiResponse {
+                success: true,
+                data: Some("Vote recorded successfully".to_string()),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to vote on proposal: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 
     /// Fetches the status of a given proposal.
+    ///
+    /// # Arguments
+    ///
+    /// * `proposal_id` - The ID of the proposal to fetch the status of.
+    ///
+    /// # Returns
+    ///
+    /// * `CommonResult<ApiResponse<ProposalStatus>>` - The result of the API call.
     pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
+        info!("Fetching proposal status for ID: {}", proposal_id);
         let governance = self.governance.read().await;
-        let status = governance.get_proposal_status(proposal_id).await?;
-        Ok(ApiResponse {
-            success: true,
-            data: Some(status),
-            error: None,
-        })
+        match governance.get_proposal_status(proposal_id).await {
+            Ok(status) => Ok(ApiResponse {
+                success: true,
+                data: Some(status),
+                error: None,
+            }),
+            Err(e) => {
+                error!("Failed to fetch proposal status: {:?}", e);
+                Ok(ApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
     }
 }
 

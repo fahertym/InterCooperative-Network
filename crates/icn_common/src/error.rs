@@ -1,4 +1,3 @@
-// icn_common/src/error.rs
 use thiserror::Error;
 
 /// Custom error type for the ICN project.
@@ -45,6 +44,9 @@ pub enum IcnError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("Zero-Knowledge Proof error: {0}")]
+    ZKP(String),
 
     #[error("Unknown error: {0}")]
     Unknown(String),

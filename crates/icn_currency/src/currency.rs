@@ -1,143 +1,187 @@
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use icn_common::{IcnResult, IcnError, CurrencyType, Transaction};
 use std::collections::HashMap;
-use std::fmt;
-use log::{info, error, debug, warn};
-use icn_core::error::{Error, Result};
+use chrono::{DateTime, Utc};
+use log::{info, warn};
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
+/// Represents the balance of a particular currency for a given account.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Balance {
+    pub currency: CurrencyType,
+    pub amount: f64,
 }
 
-impl fmt::Display for CurrencyType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            CurrencyType::Custom(name) => write!(f, "Custom({})", name),
-            _ => write!(f, "{:?}", self),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Currency {
-    pub currency_type: CurrencyType,
-    pub total_supply: f64,
-    pub creation_date: DateTime<Utc>,
-    pub last_issuance: DateTime<Utc>,
-    pub issuance_rate: f64,
-}
-
-impl Currency {
-    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
-        let now = Utc::now();
-        debug!("Creating new currency: {:?}", currency_type);
-        Currency {
-            currency_type,
-            total_supply: initial_supply,
-            creation_date: now,
-            last_issuance: now,
-            issuance_rate,
-        }
-    }
-
-    pub fn mint(&mut self, amount: f64) -> Result<()> {
-        self.total_supply += amount;
-        self.last_issuance = Utc::now();
-        info!("Minted {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
-        Ok(())
-    }
-
-    pub fn burn(&mut self, amount: f64) -> Result<()> {
-        if amount > self.total_supply {
-            error!("Attempted to burn more {:?} than available. Requested: {}, Available: {}", self.currency_type, amount, self.total_supply);
-            return Err(Error::CurrencyError("Insufficient supply to burn".to_string()));
-        }
-        self.total_supply -= amount;
-        info!("Burned {} of {:?}. New total supply: {}", amount, self.currency_type, self.total_supply);
-        Ok(())
-    }
-}
-
+/// Represents a currency system managing multiple currencies.
 pub struct CurrencySystem {
-    pub currencies: HashMap<CurrencyType, Currency>,
+    pub accounts: HashMap<String, Vec<Balance>>,
 }
 
 impl CurrencySystem {
+    /// Creates a new CurrencySystem.
     pub fn new() -> Self {
-        debug!("Creating new CurrencySystem");
-        let mut system = CurrencySystem {
-            currencies: HashMap::new(),
-        };
+        CurrencySystem {
+            accounts: HashMap::new(),
+        }
+    }
+
+    /// Mints a specified amount of a currency to a given account.
+    ///
+    /// # Arguments
+    ///
+    /// * `account` - The account to mint the currency to.
+    /// * `currency` - The type of currency to mint.
+    /// * `amount` - The amount of currency to mint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Currency` if the operation fails.
+    pub fn mint(&mut self, account: &str, currency: CurrencyType, amount: f64) -> IcnResult<()> {
+        let balances = self.accounts.entry(account.to_string()).or_insert_with(Vec::new);
+        if let Some(balance) = balances.iter_mut().find(|b| b.currency == currency) {
+            balance.amount += amount;
+        } else {
+            balances.push(Balance { currency, amount });
+        }
+        info!("Minted {} of {:?} to {}", amount, currency, account);
+        Ok(())
+    }
+
+    /// Burns a specified amount of a currency from a given account.
+    ///
+    /// # Arguments
+    ///
+    /// * `account` - The account to burn the currency from.
+    /// * `currency` - The type of currency to burn.
+    /// * `amount` - The amount of currency to burn.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Currency` if the account has insufficient balance.
+    pub fn burn(&mut self, account: &str, currency: CurrencyType, amount: f64) -> IcnResult<()> {
+        let balances = self.accounts.entry(account.to_string()).or_insert_with(Vec::new);
+        if let Some(balance) = balances.iter_mut().find(|b| b.currency == currency) {
+            if balance.amount < amount {
+                return Err(IcnError::Currency("Insufficient balance".into()));
+            }
+            balance.amount -= amount;
+            info!("Burned {} of {:?} from {}", amount, currency, account);
+            Ok(())
+        } else {
+            Err(IcnError::Currency("Currency not found in account".into()))
+        }
+    }
+
+    /// Transfers a specified amount of a currency from one account to another.
+    ///
+    /// # Arguments
+    ///
+    /// * `from` - The account to transfer the currency from.
+    /// * `to` - The account to transfer the currency to.
+    /// * `currency` - The type of currency to transfer.
+    /// * `amount` - The amount of currency to transfer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Currency` if the sender has insufficient balance or if the operation fails.
+    pub fn transfer(&mut self, from: &str, to: &str, currency: CurrencyType, amount: f64) -> IcnResult<()> {
+        self.burn(from, currency.clone(), amount)?;
+        self.mint(to, currency, amount)?;
+        info!("Transferred {} of {:?} from {} to {}", amount, currency, from, to);
+        Ok(())
+    }
+
+    /// Gets the balance of a particular currency for a given account.
+    ///
+    /// # Arguments
+    ///
+    /// * `account` - The account to get the balance for.
+    /// * `currency` - The type of currency to get the balance of.
+    ///
+    /// # Returns
+    ///
+    /// The balance of the specified currency for the given account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Currency` if the currency is not found in the account.
+    pub fn get_balance(&self, account: &str, currency: &CurrencyType) -> IcnResult<f64> {
+        let balances = self.accounts.get(account)
+            .ok_or_else(|| IcnError::Currency("Account not found".into()))?;
         
-        system.add_currency(CurrencyType::BasicNeeds, 1_000_000.0, 0.01);
-        system.add_currency(CurrencyType::Education, 500_000.0, 0.005);
-        system.add_currency(CurrencyType::Environmental, 750_000.0, 0.008);
-        system.add_currency(CurrencyType::Community, 250_000.0, 0.003);
-        system.add_currency(CurrencyType::Volunteer, 100_000.0, 0.002);
-        system.add_currency(CurrencyType::Storage, 1_000_000.0, 0.01);
-        system.add_currency(CurrencyType::Processing, 500_000.0, 0.005);
-        system.add_currency(CurrencyType::Energy, 750_000.0, 0.008);
-        system.add_currency(CurrencyType::Luxury, 100_000.0, 0.001);
-        system.add_currency(CurrencyType::Service, 200_000.0, 0.004);
-
-        info!("CurrencySystem initialized with {} currencies", system.currencies.len());
-        system
+        let balance = balances.iter()
+            .find(|b| &b.currency == currency)
+            .ok_or_else(|| IcnError::Currency("Currency not found in account".into()))?;
+        
+        Ok(balance.amount)
     }
 
-    pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) {
-        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
-        self.currencies.insert(currency_type.clone(), currency);
-        info!("Added new currency: {:?}", currency_type);
+    /// Lists all balances for a given account.
+    ///
+    /// # Arguments
+    ///
+    /// * `account` - The account to list the balances for.
+    ///
+    /// # Returns
+    ///
+    /// A list of balances for the specified account.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IcnError::Currency` if the account is not found.
+    pub fn list_balances(&self, account: &str) -> IcnResult<Vec<Balance>> {
+        let balances = self.accounts.get(account)
+            .ok_or_else(|| IcnError::Currency("Account not found".into()))?;
+        Ok(balances.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mint() {
+        let mut currency_system = CurrencySystem::new();
+        assert!(currency_system.mint("Alice", CurrencyType::BasicNeeds, 100.0).is_ok());
+        assert_eq!(currency_system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
     }
 
-    pub fn get_currency(&self, currency_type: &CurrencyType) -> Option<&Currency> {
-        self.currencies.get(currency_type)
+    #[test]
+    fn test_burn() {
+        let mut currency_system = CurrencySystem::new();
+        currency_system.mint("Alice", CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert!(currency_system.burn("Alice", CurrencyType::BasicNeeds, 50.0).is_ok());
+        assert_eq!(currency_system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert!(currency_system.burn("Alice", CurrencyType::BasicNeeds, 60.0).is_err());
     }
 
-    pub fn get_currency_mut(&mut self, currency_type: &CurrencyType) -> Option<&mut Currency> {
-        self.currencies.get_mut(currency_type)
+    #[test]
+    fn test_transfer() {
+        let mut currency_system = CurrencySystem::new();
+        currency_system.mint("Alice", CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert!(currency_system.transfer("Alice", "Bob", CurrencyType::BasicNeeds, 50.0).is_ok());
+        assert_eq!(currency_system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(currency_system.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert!(currency_system.transfer("Alice", "Bob", CurrencyType::BasicNeeds, 60.0).is_err());
     }
 
-    pub fn create_custom_currency(&mut self, name: String, initial_supply: f64, issuance_rate: f64) -> Result<()> {
-        let currency_type = CurrencyType::Custom(name.clone());
-        if self.currencies.contains_key(&currency_type) {
-            error!("Attempted to create duplicate custom currency: {}", name);
-            return Err(Error::CurrencyError(format!("Currency '{}' already exists", name)));
-        }
-        self.add_currency(currency_type, initial_supply, issuance_rate);
-        Ok(())
+    #[test]
+    fn test_get_balance() {
+        let mut currency_system = CurrencySystem::new();
+        currency_system.mint("Alice", CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert_eq!(currency_system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert!(currency_system.get_balance("Alice", &CurrencyType::Education).is_err());
+        assert!(currency_system.get_balance("Bob", &CurrencyType::BasicNeeds).is_err());
     }
 
-    pub fn adaptive_issuance(&mut self) -> Result<()> {
-        debug!("Performing adaptive issuance for all currencies");
-        let now = Utc::now();
-        for currency in self.currencies.values_mut() {
-            let time_since_last_issuance = now.signed_duration_since(currency.last_issuance);
-            let issuance_amount = currency.total_supply * currency.issuance_rate * time_since_last_issuance.num_milliseconds() as f64 / 86_400_000.0; // Daily rate
-            currency.mint(issuance_amount)?;
-            debug!("Adaptive issuance for {:?}: {}", currency.currency_type, issuance_amount);
-        }
-        info!("Adaptive issuance completed for all currencies");
-        Ok(())
-    }
-
-    pub fn print_currency_supplies(&self) {
-        info!("Current Currency Supplies:");
-        for (currency_type, currency) in &self.currencies {
-            info!("{:?}: {}", currency_type, currency.total_supply);
-        }
+    #[test]
+    fn test_list_balances() {
+        let mut currency_system = CurrencySystem::new();
+        currency_system.mint("Alice", CurrencyType::BasicNeeds, 100.0).unwrap();
+        currency_system.mint("Alice", CurrencyType::Education, 50.0).unwrap();
+        let balances = currency_system.list_balances("Alice").unwrap();
+        assert_eq!(balances.len(), 2);
+        assert_eq!(balances[0].amount, 100.0);
+        assert_eq!(balances[1].amount, 50.0);
+        assert!(currency_system.list_balances("Bob").is_err());
     }
 }

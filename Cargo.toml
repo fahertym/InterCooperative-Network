@@ -1,5 +1,3 @@
-# File: /home/matt/InterCooperative-Network/Cargo.toml
-
 [workspace]
 members = [
     "crates/icn_common",
@@ -14,13 +12,13 @@ members = [
     "crates/icn_vm",
     "crates/icn_api",
     "crates/icn_testnet",
-    "crates/icn_core", 
-    "crates/icn_zkp", 
+    "crates/icn_core",
+    "crates/icn_zkp",
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
     "crates/icn_incentives",
-    "crates/icn_language",  # Add this line
+    "crates/icn_language"
 ]
 
 resolver = "2"
@@ -32,3 +30,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 log = "0.4"
 env_logger = "0.9"
+
+[patch.crates-io]
+bitvec = { version = "0.19.5" }
+funty = { version = "1.1.0" }
