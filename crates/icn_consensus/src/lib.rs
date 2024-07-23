@@ -1,7 +1,10 @@
+// /crates/icn_consensus/src/lib.rs
+
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use log::{info, warn};
 use rand::Rng;
+use serde::{Serialize, Deserialize};
 
 /// Represents a member of the consensus network.
 #[derive(Debug, Clone, Serialize, Deserialize)]

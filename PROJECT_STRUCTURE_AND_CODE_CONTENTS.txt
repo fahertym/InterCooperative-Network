@@ -769,6 +769,9 @@ tokio-test = "0.4"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
+// /crates/icn_blockchain/src/asset_tokenization.rs
+
+use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
 
@@ -1034,6 +1037,9 @@ impl Blockchain {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
+// /crates/icn_blockchain/src/lib.rs
+
+use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
@@ -1405,6 +1411,8 @@ rand_chacha = "0.3"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/bit_utils.rs =====
+// /crates/icn_common/src/bit_utils.rs
+
 //! Custom bit vector and manipulation utilities for the InterCooperative Network project.
 
 /// A custom bit vector implementation.
@@ -1541,7 +1549,8 @@ mod tests {
         let mut bv = BitVec::new(10);
         bv.set(10);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/bit_utils.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/bit_utils.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 use thiserror::Error;
@@ -1603,6 +1612,8 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
+// /crates/icn_common/src/lib.rs
+
 /// Module for common types and utilities used across the ICN project.
 use chrono::{DateTime, Utc};
 use rand_chacha::ChaChaRng;
@@ -1611,7 +1622,9 @@ use rand::RngCore;
 use ed25519_dalek::Keypair;
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use bls12_381::Bls12;
+use serde::{Serialize, Deserialize};
 
+pub mod bit_utils;
 pub mod error;
 pub use error::{IcnError, IcnResult};
 
@@ -2439,10 +2452,13 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+// /crates/icn_consensus/src/lib.rs
+
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use log::{info, warn};
 use rand::Rng;
+use serde::{Serialize, Deserialize};
 
 /// Represents a member of the consensus network.
 #[derive(Debug, Clone, Serialize, Deserialize)]

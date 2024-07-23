@@ -1,3 +1,5 @@
+// /crates/icn_common/src/bit_utils.rs
+
 //! Custom bit vector and manipulation utilities for the InterCooperative Network project.
 
 /// A custom bit vector implementation.

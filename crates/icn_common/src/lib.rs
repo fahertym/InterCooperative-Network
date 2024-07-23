@@ -1,3 +1,5 @@
+// /crates/icn_common/src/lib.rs
+
 /// Module for common types and utilities used across the ICN project.
 use chrono::{DateTime, Utc};
 use rand_chacha::ChaChaRng;
@@ -6,7 +8,9 @@ use rand::RngCore;
 use ed25519_dalek::Keypair;
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use bls12_381::Bls12;
+use serde::{Serialize, Deserialize};
 
+pub mod bit_utils;
 pub mod error;
 pub use error::{IcnError, IcnResult};
 

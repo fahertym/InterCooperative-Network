@@ -1,3 +1,6 @@
+// /crates/icn_blockchain/src/asset_tokenization.rs
+
+use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
 

@@ -1,3 +1,6 @@
+// /crates/icn_blockchain/src/lib.rs
+
+use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
