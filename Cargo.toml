@@ -17,7 +17,7 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives",
+    "crates/icn_incentives", "crates/icn_language",
 ]
 
 resolver = "2"

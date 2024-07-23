@@ -1,132 +1,189 @@
-use icn_common::{Error, Result};
+// File: icn_vm/src/smart_contract.rs
+
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
+use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AssetTokenContract {
-    pub tokens: Vec<AssetToken>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AssetToken {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SmartContract {
     pub id: String,
-    pub owner: String,
-    pub metadata: serde_json::Value,
+    pub code: String,
+    pub state: HashMap<String, Value>,
 }
 
-impl AssetTokenContract {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
+}
+
+pub struct SmartContractExecutor {
+    contracts: HashMap<String, SmartContract>,
+}
+
+impl SmartContractExecutor {
     pub fn new() -> Self {
-        AssetTokenContract {
-            tokens: Vec::new(),
+        SmartContractExecutor {
+            contracts: HashMap::new(),
         }
     }
 
-    pub fn create_token(&mut self, id: String, owner: String, metadata: serde_json::Value) -> Result<AssetToken> {
-        if self.tokens.iter().any(|t| t.id == id) {
-            return Err(Error {
-                message: "Token already exists".to_string(),
-            });
+    pub fn deploy_contract(&mut self, id: String, code: String) -> IcnResult<()> {
+        if self.contracts.contains_key(&id) {
+            return Err(IcnError::VM(format!("Contract with id {} already exists", id)));
         }
 
-        let token = AssetToken {
+        let contract = SmartContract {
             id: id.clone(),
-            owner: owner.clone(),
-            metadata,
+            code,
+            state: HashMap::new(),
         };
 
-        self.tokens.push(token.clone());
-        Ok(token)
-    }
-
-    pub fn transfer_token(&mut self, id: &str, new_owner: String) -> Result<()> {
-        let token = self.tokens.iter_mut().find(|t| t.id == id).ok_or_else(|| Error {
-            message: "Token not found".to_string(),
-        })?;
-
-        token.owner = new_owner;
+        self.contracts.insert(id, contract);
         Ok(())
     }
 
-    pub fn get_token(&self, id: &str) -> Option<&AssetToken> {
-        self.tokens.iter().find(|t| t.id == id)
-    }
-}
+    pub fn execute_contract(&mut self, id: &str, function: &str, args: Vec<Value>) -> IcnResult<Value> {
+        let contract = self.contracts.get_mut(id)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))?;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BondContract {
-    pub bonds: Vec<Bond>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Bond {
-    pub id: String,
-    pub owner: String,
-    pub terms: String,
-}
-
-impl BondContract {
-    pub fn new() -> Self {
-        BondContract {
-            bonds: Vec::new(),
+        // In a real implementation, you would parse and execute the contract code here.
+        // For this example, we'll simulate a simple token transfer function.
+        match function {
+            "transfer" => self.execute_transfer(contract, args),
+            _ => Err(IcnError::VM(format!("Unknown function: {}", function))),
         }
     }
 
-    pub fn create_bond(&mut self, id: String, owner: String, terms: String) -> Result<Bond> {
-        if self.bonds.iter().any(|b| b.id == id) {
-            return Err(Error {
-                message: "Bond already exists".to_string(),
-            });
+    fn execute_transfer(&mut self, contract: &mut SmartContract, args: Vec<Value>) -> IcnResult<Value> {
+        if args.len() != 3 {
+            return Err(IcnError::VM("transfer function requires 3 arguments: from, to, and amount".into()));
         }
 
-        let bond = Bond {
-            id: id.clone(),
-            owner: owner.clone(),
-            terms,
+        let from = match &args[0] {
+            Value::String(s) => s,
+            _ => return Err(IcnError::VM("'from' argument must be a string".into())),
         };
 
-        self.bonds.push(bond.clone());
-        Ok(bond)
+        let to = match &args[1] {
+            Value::String(s) => s,
+            _ => return Err(IcnError::VM("'to' argument must be a string".into())),
+        };
+
+        let amount = match &args[2] {
+            Value::Int(n) => *n as f64,
+            Value::Float(n) => *n,
+            _ => return Err(IcnError::VM("'amount' argument must be a number".into())),
+        };
+
+        let balances = contract.state.entry("balances".to_string())
+            .or_insert_with(|| Value::Map(HashMap::new()));
+
+        if let Value::Map(ref mut balance_map) = balances {
+            let from_balance = balance_map.entry(from.to_string())
+                .or_insert(Value::Float(0.0));
+            
+            let to_balance = balance_map.entry(to.to_string())
+                .or_insert(Value::Float(0.0));
+
+            if let (Value::Float(from_amount), Value::Float(to_amount)) = (from_balance, to_balance) {
+                if *from_amount < amount {
+                    return Err(IcnError::VM("Insufficient balance for transfer".into()));
+                }
+
+                *from_amount -= amount;
+                *to_amount += amount;
+
+                Ok(Value::Bool(true))
+            } else {
+                Err(IcnError::VM("Invalid balance type".into()))
+            }
+        } else {
+            Err(IcnError::VM("Invalid state structure".into()))
+        }
     }
 
-    pub fn transfer_bond(&mut self, id: &str, new_owner: String) -> Result<()> {
-        let bond = self.bonds.iter_mut().find(|b| b.id == id).ok_or_else(|| Error {
-            message: "Bond not found".to_string(),
-        })?;
+    pub fn get_contract_state(&self, id: &str) -> IcnResult<&HashMap<String, Value>> {
+        self.contracts.get(id)
+            .map(|contract| &contract.state)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))
+    }
 
-        bond.owner = new_owner;
+    pub fn update_contract_state(&mut self, id: &str, key: String, value: Value) -> IcnResult<()> {
+        let contract = self.contracts.get_mut(id)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))?;
+
+        contract.state.insert(key, value);
         Ok(())
-    }
-
-    pub fn get_bond(&self, id: &str) -> Option<&Bond> {
-        self.bonds.iter().find(|b| b.id == id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn test_create_and_transfer_token() {
-        let mut contract = AssetTokenContract::new();
-        let metadata = json!({ "type": "Real Estate", "location": "123 Main St" });
+    fn test_smart_contract_deployment_and_execution() {
+        let mut executor = SmartContractExecutor::new();
 
-        let token = contract.create_token("token1".to_string(), "Alice".to_string(), metadata).unwrap();
-        assert_eq!(token.owner, "Alice");
+        // Deploy a simple token contract
+        let contract_id = "token_contract".to_string();
+        let contract_code = r#"
+            function transfer(from, to, amount) {
+                // Transfer logic is implemented in the executor
+            }
+        "#.to_string();
 
-        contract.transfer_token("token1", "Bob".to_string()).unwrap();
-        let updated_token = contract.get_token("token1").unwrap();
-        assert_eq!(updated_token.owner, "Bob");
-    }
+        executor.deploy_contract(contract_id.clone(), contract_code).unwrap();
 
-    #[test]
-    fn test_create_and_transfer_bond() {
-        let mut contract = BondContract::new();
-        let bond = contract.create_bond("bond1".to_string(), "Alice".to_string(), "Terms of the bond".to_string()).unwrap();
-        assert_eq!(bond.owner, "Alice");
+        // Initialize some balances
+        executor.update_contract_state(&contract_id, "balances".to_string(), Value::Map(HashMap::new())).unwrap();
+        let mut initial_balances = HashMap::new();
+        initial_balances.insert("Alice".to_string(), Value::Float(100.0));
+        initial_balances.insert("Bob".to_string(), Value::Float(50.0));
+        executor.update_contract_state(&contract_id, "balances".to_string(), Value::Map(initial_balances)).unwrap();
 
-        contract.transfer_bond("bond1", "Bob".to_string()).unwrap();
-        let updated_bond = contract.get_bond("bond1").unwrap();
-        assert_eq!(updated_bond.owner, "Bob");
+        // Execute a transfer
+        let result = executor.execute_contract(
+            &contract_id,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Float(30.0),
+            ],
+        ).unwrap();
+
+        assert_eq!(result, Value::Bool(true));
+
+        // Check the updated balances
+        let state = executor.get_contract_state(&contract_id).unwrap();
+        if let Value::Map(balances) = &state["balances"] {
+            assert_eq!(balances["Alice"], Value::Float(70.0));
+            assert_eq!(balances["Bob"], Value::Float(80.0));
+        } else {
+            panic!("Invalid state structure");
+        }
+
+        // Test insufficient balance
+        let result = executor.execute_contract(
+            &contract_id,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Float(100.0),
+            ],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            IcnError::VM("Insufficient balance for transfer".into()).to_string()
+        );
     }
 }

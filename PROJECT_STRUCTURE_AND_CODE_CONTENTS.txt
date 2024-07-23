@@ -75,6 +75,10 @@
 │   │   ├── Cargo.toml
 │   │   └── src
 │   │       └── lib.rs
+│   ├── icn_language
+│   │   ├── Cargo.toml
+│   │   └── src
+│   │       └── lib.rs
 │   ├── icn_market
 │   │   ├── Cargo.toml
 │   │   └── src
@@ -162,7 +166,7 @@
 ├── README.md
 └── update_project.sh
 
-49 directories, 113 files
+51 directories, 115 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -185,7 +189,7 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives",
+    "crates/icn_incentives", "crates/icn_language",
 ]
 
 resolver = "2"
@@ -638,6 +642,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
+// icn_blockchain/src/blockchain.rs
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
@@ -651,21 +656,6 @@ pub struct Blockchain {
     pending_transactions: Vec<Transaction>,
     transaction_validator: Arc<dyn TransactionValidator>,
     consensus: Arc<RwLock<dyn ConsensusAlgorithm>>,
-}
-
-/// A trait for validating transactions within a blockchain.
-pub trait TransactionValidator: Send + Sync {
-    /// Validates a transaction within the context of a blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to validate.
-    /// * `blockchain` - The blockchain context.
-    ///
-    /// # Returns
-    ///
-    /// `IcnResult<bool>` indicating whether the transaction is valid.
-    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
 }
 
 impl Blockchain {
@@ -775,82 +765,6 @@ impl Blockchain {
     /// The block if found, `None` otherwise.
     pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
         self.chain.iter().find(|block| block.hash == hash)
-    }
-
-    /// Starts the blockchain.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
-    pub fn start(&self) -> IcnResult<()> {
-        info!("Blockchain started");
-        Ok(())
-    }
-
-    /// Stops the blockchain.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
-    pub fn stop(&self) -> IcnResult<()> {
-        info!("Blockchain stopped");
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use icn_common::CurrencyType;
-    use std::sync::Arc;
-    use crate::consensus::PoCConsensus;
-
-    struct MockTransactionValidator;
-
-    impl TransactionValidator for MockTransactionValidator {
-        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> IcnResult<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_blockchain_creation() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        assert_eq!(blockchain.chain.len(), 1);
-        assert_eq!(blockchain.chain[0].index, 0);
-    }
-
-    #[test]
-    fn test_add_block() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-        blockchain.add_transaction(transaction).unwrap();
-        assert!(blockchain.create_block().is_ok());
-        assert_eq!(blockchain.chain.len(), 2);
-    }
-
-    #[test]
-    fn test_blockchain_validity() {
-        let consensus = Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51).unwrap()));
-        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator), consensus);
-        let transaction = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            Utc::now().timestamp(),
-        );
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block().unwrap();
-        assert!(blockchain.validate_chain());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
@@ -1207,6 +1121,7 @@ rand_chacha = "0.3"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
+// icn_common/src/error.rs
 use thiserror::Error;
 
 /// Custom error type for the ICN project.
@@ -1796,6 +1711,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
+// icn_consensus/src/consensus.rs
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
 use std::collections::HashMap;
 use log::{info, warn};
@@ -1809,7 +1725,7 @@ pub struct Member {
     pub is_validator: bool,
 }
 
-/// Proof of Cooperation (PoC) consensus mechanism.
+/// Proof of Contribution (PoC) consensus mechanism.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PoCConsensus {
     pub members: HashMap<String, Member>,
@@ -4379,12 +4295,29 @@ mod tests {
 // File: crates/icn_governance/src/lib.rs
 
 use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use icn_blockchain::Blockchain;
-use icn_reputation::ReputationSystem;
-use icn_currency::CurrencySystem;
 use chrono::{DateTime, Utc, Duration};
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Implemented,
+    Expired
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+    ResourceAllocation,
+    Reputation,
+    Custom(String)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Proposal {
@@ -4392,109 +4325,77 @@ pub struct Proposal {
     pub title: String,
     pub description: String,
     pub proposer: String,
+    pub proposal_type: ProposalType,
+    pub status: ProposalStatus,
     pub created_at: DateTime<Utc>,
     pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-    pub voting_system: VotingSystem,
+    pub votes_for: u64,
+    pub votes_against: u64,
+    pub quorum_threshold: f64,
+    pub approval_threshold: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
-    pub proposal_id: String,
     pub voter: String,
-    pub vote_power: f64,
+    pub proposal_id: String,
     pub in_favor: bool,
+    pub voting_power: f64,
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-    Expired,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum ProposalCategory {
-    Constitutional,
-    Economic,
-    Technical,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum VotingSystem {
-    OnePersonOneVote,
-    TokenWeighted { max_power: f64 },
-    Quadratic { max_votes: u32 },
-    ReputationWeighted,
-    Hybrid { reputation_weight: f64, token_weight: f64, max_power: f64 },
-}
-
 pub struct GovernanceSystem {
-    blockchain: Blockchain,
-    reputation_system: ReputationSystem,
+    proposals: Arc<RwLock<HashMap<String, Proposal>>>,
+    votes: Arc<RwLock<HashMap<String, Vec<Vote>>>>,
+    reputation_system: Arc<RwLock<dyn ReputationSystem>>,
+}
+
+pub trait ReputationSystem: Send + Sync {
+    fn get_voting_power(&self, address: &str) -> f64;
+    fn update_reputation(&mut self, address: &str, change: f64) -> IcnResult<()>;
 }
 
 impl GovernanceSystem {
-    pub fn new(blockchain: Blockchain, reputation_system: ReputationSystem) -> Self {
+    pub fn new(reputation_system: Arc<RwLock<dyn ReputationSystem>>) -> Self {
         GovernanceSystem {
-            blockchain,
+            proposals: Arc::new(RwLock::new(HashMap::new())),
+            votes: Arc::new(RwLock::new(HashMap::new())),
             reputation_system,
         }
     }
 
-    pub fn create_proposal(
-        &mut self,
-        title: String,
-        description: String,
-        proposer: String,
-        voting_period: Duration,
+    pub fn create_proposal(&self, 
+        title: String, 
+        description: String, 
+        proposer: String, 
         proposal_type: ProposalType,
-        category: ProposalCategory,
-        required_quorum: f64,
-        voting_system: VotingSystem,
+        voting_duration: Duration,
+        quorum_threshold: f64,
+        approval_threshold: f64
     ) -> IcnResult<String> {
-        let proposal_id = format!("prop_{}", Utc::now().timestamp());
+        let id = format!("prop_{}", Utc::now().timestamp());
         let proposal = Proposal {
-            id: proposal_id.clone(),
+            id: id.clone(),
             title,
             description,
             proposer,
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + voting_period,
-            status: ProposalStatus::Active,
             proposal_type,
-            category,
-            required_quorum,
-            execution_timestamp: None,
-            voting_system,
+            status: ProposalStatus::Active,
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + voting_duration,
+            votes_for: 0,
+            votes_against: 0,
+            quorum_threshold,
+            approval_threshold,
         };
 
-        let transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "CreateProposal".to_string(),
-            serde_json::to_vec(&proposal).map_err(|e| IcnError::Serialization(e.to_string()))?
-        );
-
-        self.blockchain.add_transaction(transaction)?;
-        Ok(proposal_id)
+        self.proposals.write().map_err(|_| IcnError::Governance("Lock poisoned".into()))?.insert(id.clone(), proposal);
+        Ok(id)
     }
 
-    pub fn vote(&mut self, proposal_id: &str, voter: String, in_favor: bool, vote_power: Option<f64>, currency_system: &mut CurrencySystem) -> IcnResult<()> {
-        let proposal = self.get_proposal(proposal_id)?;
+    pub fn vote(&self, voter: String, proposal_id: String, in_favor: bool) -> IcnResult<()> {
+        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Lock poisoned".into()))?;
+        let proposal = proposals.get_mut(&proposal_id).ok_or(IcnError::Governance("Proposal not found".into()))?;
 
         if proposal.status != ProposalStatus::Active {
             return Err(IcnError::Governance("Proposal is not active".into()));
@@ -4504,54 +4405,36 @@ impl GovernanceSystem {
             return Err(IcnError::Governance("Voting period has ended".into()));
         }
 
-        let calculated_vote_power = match proposal.voting_system {
-            VotingSystem::OnePersonOneVote => 1.0,
-            VotingSystem::TokenWeighted { max_power } => {
-                let balance = currency_system.get_balance(&voter, &CurrencyType::Governance)?;
-                balance.min(max_power)
-            },
-            VotingSystem::Quadratic { max_votes } => {
-                let vote_count = vote_power.ok_or(IcnError::Governance("Vote power must be provided for quadratic voting".into()))? as u32;
-                if vote_count > max_votes {
-                    return Err(IcnError::Governance("Exceeded maximum allowed votes".into()));
-                }
-                let cost = (vote_count as f64).powi(2);
-                let balance = currency_system.get_balance(&voter, &CurrencyType::Governance)?;
-                if balance < cost {
-                    return Err(IcnError::Governance("Insufficient balance for quadratic vote".into()));
-                }
-                currency_system.transfer(&voter, "GOVERNANCE_POOL", &CurrencyType::Governance, cost)?;
-                (vote_count as f64).sqrt()
-            },
-            VotingSystem::ReputationWeighted => {
-                self.reputation_system.get_score(&voter).unwrap_or(0.0)
-            },
-            VotingSystem::Hybrid { reputation_weight, token_weight, max_power } => {
-                let reputation = self.reputation_system.get_score(&voter).unwrap_or(0.0);
-                let balance = currency_system.get_balance(&voter, &CurrencyType::Governance)?;
-                (reputation * reputation_weight + balance * token_weight).min(max_power)
-            },
-        };
+        let voting_power = self.reputation_system.read()
+            .map_err(|_| IcnError::Governance("Lock poisoned".into()))?
+            .get_voting_power(&voter);
 
         let vote = Vote {
-            proposal_id: proposal_id.to_string(),
             voter: voter.clone(),
-            vote_power: calculated_vote_power,
+            proposal_id: proposal_id.clone(),
             in_favor,
+            voting_power,
             timestamp: Utc::now(),
         };
 
-        let transaction = Transaction::new_governance(
-            voter,
-            "Vote".to_string(),
-            serde_json::to_vec(&vote).map_err(|e| IcnError::Serialization(e.to_string()))?
-        );
+        if in_favor {
+            proposal.votes_for += voting_power as u64;
+        } else {
+            proposal.votes_against += voting_power as u64;
+        }
 
-        self.blockchain.add_transaction(transaction)
+        self.votes.write()
+            .map_err(|_| IcnError::Governance("Lock poisoned".into()))?
+            .entry(proposal_id)
+            .or_insert_with(Vec::new)
+            .push(vote);
+
+        Ok(())
     }
 
-    pub fn tally_votes(&mut self, proposal_id: &str) -> IcnResult<ProposalStatus> {
-        let mut proposal = self.get_proposal(proposal_id)?;
+    pub fn tally_votes(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Lock poisoned".into()))?;
+        let proposal = proposals.get_mut(proposal_id).ok_or(IcnError::Governance("Proposal not found".into()))?;
 
         if proposal.status != ProposalStatus::Active {
             return Ok(proposal.status.clone());
@@ -4561,739 +4444,225 @@ impl GovernanceSystem {
             return Err(IcnError::Governance("Voting period has not ended yet".into()));
         }
 
-        let votes = self.get_votes(proposal_id)?;
+        let total_votes = proposal.votes_for + proposal.votes_against;
+        let participation_rate = total_votes as f64 / self.get_total_voting_power()?;
 
-        let mut total_power = 0.0;
-        let mut in_favor_power = 0.0;
-
-        for vote in votes {
-            total_power += vote.vote_power;
-            if vote.in_favor {
-                in_favor_power += vote.vote_power;
+        if participation_rate < proposal.quorum_threshold {
+            proposal.status = ProposalStatus::Rejected;
+        } else {
+            let approval_rate = proposal.votes_for as f64 / total_votes as f64;
+            if approval_rate > proposal.approval_threshold {
+                proposal.status = ProposalStatus::Passed;
+            } else {
+                proposal.status = ProposalStatus::Rejected;
             }
         }
 
-        if total_power < proposal.required_quorum {
-            proposal.status = ProposalStatus::Rejected;
-        } else if in_favor_power > total_power / 2.0 {
-            proposal.status = ProposalStatus::Passed;
-        } else {
-            proposal.status = ProposalStatus::Rejected;
-        }
-
-        let transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "TallyVotes".to_string(),
-            serde_json::to_vec(&proposal).map_err(|e| IcnError::Serialization(e.to_string()))?
-        );
-
-        self.blockchain.add_transaction(transaction)?;
-
-        Ok(proposal.status)
+        Ok(proposal.status.clone())
     }
 
     pub fn get_proposal(&self, proposal_id: &str) -> IcnResult<Proposal> {
-        for block in self.blockchain.chain().iter().rev() {
-            for transaction in &block.transactions {
-                if transaction.transaction_type == "CreateProposal" {
-                    let proposal: Proposal = serde_json::from_slice(&transaction.data)
-                        .map_err(|e| IcnError::Serialization(e.to_string()))?;
-                    if proposal.id == proposal_id {
-                        return Ok(proposal);
-                    }
-                }
-            }
-        }
-        Err(IcnError::Governance("Proposal not found".into()))
+        self.proposals.read()
+            .map_err(|_| IcnError::Governance("Lock poisoned".into()))?
+            .get(proposal_id)
+            .cloned()
+            .ok_or(IcnError::Governance("Proposal not found".into()))
     }
 
     pub fn get_votes(&self, proposal_id: &str) -> IcnResult<Vec<Vote>> {
-        let mut votes = Vec::new();
-        for block in self.blockchain.chain().iter().rev() {
-            for transaction in &block.transactions {
-                if transaction.transaction_type == "Vote" {
-                    let vote: Vote = serde_json::from_slice(&transaction.data)
-                        .map_err(|e| IcnError::Serialization(e.to_string()))?;
-                    if vote.proposal_id == proposal_id {
-                        votes.push(vote);
-                    }
-                }
-            }
-        }
-        Ok(votes)
+        self.votes.read()
+            .map_err(|_| IcnError::Governance("Lock poisoned".into()))?
+            .get(proposal_id)
+            .cloned()
+            .ok_or(IcnError::Governance("No votes found for this proposal".into()))
     }
 
     pub fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        let mut active_proposals = Vec::new();
-        for block in self.blockchain.chain().iter().rev() {
-            for transaction in &block.transactions {
-                if transaction.transaction_type == "CreateProposal" {
-                    let proposal: Proposal = serde_json::from_slice(&transaction.data)
-                        .map_err(|e| IcnError::Serialization(e.to_string()))?;
-                    if proposal.status == ProposalStatus::Active && proposal.voting_ends_at > Utc::now() {
-                        active_proposals.push(proposal);
-                    }
-                }
-            }
-        }
-        Ok(active_proposals)
+        Ok(self.proposals.read()
+            .map_err(|_| IcnError::Governance("Lock poisoned".into()))?
+            .values()
+            .filter(|p| p.status == ProposalStatus::Active)
+            .cloned()
+            .collect())
     }
 
-    pub fn mark_as_implemented(&mut self, proposal_id: &str) -> IcnResult<()> {
-        let mut proposal = self.get_proposal(proposal_id)?;
-        
+    pub fn implement_proposal(&self, proposal_id: &str) -> IcnResult<()> {
+        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Lock poisoned".into()))?;
+        let proposal = proposals.get_mut(proposal_id).ok_or(IcnError::Governance("Proposal not found".into()))?;
+
         if proposal.status != ProposalStatus::Passed {
             return Err(IcnError::Governance("Proposal has not passed".into()));
         }
 
         proposal.status = ProposalStatus::Implemented;
-        proposal.execution_timestamp = Some(Utc::now());
 
-        let transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "ImplementProposal".to_string(),
-            serde_json::to_vec(&proposal).map_err(|e| IcnError::Serialization(e.to_string()))?
-        );
+        // Here you would implement the actual changes proposed
+        // This could involve calling other parts of the system to make the necessary changes
+        match proposal.proposal_type {
+            ProposalType::Constitutional => {
+                // Implement changes to the system's constitution
+            },
+            ProposalType::EconomicAdjustment => {
+                // Implement economic changes, e.g., adjust currency issuance rates
+            },
+            ProposalType::NetworkUpgrade => {
+                // Trigger a network upgrade process
+            },
+            ProposalType::ResourceAllocation => {
+                // Adjust resource allocation in the system
+            },
+            ProposalType::Reputation => {
+                // Make changes to the reputation system
+            },
+            ProposalType::Custom(_) => {
+                // Handle custom proposal types
+            },
+        }
 
-        self.blockchain.add_transaction(transaction)
+        Ok(())
     }
 
-    pub fn get_proposal_result(&self, proposal_id: &str) -> IcnResult<ProposalResult> {
-        let proposal = self.get_proposal(proposal_id)?;
-        let votes = self.get_votes(proposal_id)?;
-
-        let total_votes = votes.len();
-        let total_power: f64 = votes.iter().map(|v| v.vote_power).sum();
-        let in_favor_power: f64 = votes.iter().filter(|v| v.in_favor).map(|v| v.vote_power).sum();
-        let against_power = total_power - in_favor_power;
-
-        Ok(ProposalResult {
-            proposal_id: proposal_id.to_string(),
-            status: proposal.status,
-            total_votes,
-            total_power,
-            in_favor_power,
-            against_power,
-            quorum_reached: total_power >= proposal.required_quorum,
-            passed: proposal.status == ProposalStatus::Passed,
-        })
+    fn get_total_voting_power(&self) -> IcnResult<f64> {
+        // This is a placeholder. In a real system, you'd need to calculate this based on all users' voting power
+        Ok(10000.0)
     }
-}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProposalResult {
-    pub proposal_id: String,
-    pub status: ProposalStatus,
-    pub total_votes: usize,
-    pub total_power: f64,
-    pub in_favor_power: f64,
-    pub against_power: f64,
-    pub quorum_reached: bool,
-    pub passed: bool,
+    pub fn update_proposal_status(&self) -> IcnResult<()> {
+        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Lock poisoned".into()))?;
+        
+        for proposal in proposals.values_mut() {
+            if proposal.status == ProposalStatus::Active && Utc::now() > proposal.voting_ends_at {
+                let total_votes = proposal.votes_for + proposal.votes_against;
+                let participation_rate = total_votes as f64 / self.get_total_voting_power()?;
+
+                if participation_rate < proposal.quorum_threshold {
+                    proposal.status = ProposalStatus::Expired;
+                } else {
+                    let approval_rate = proposal.votes_for as f64 / total_votes as f64;
+                    if approval_rate > proposal.approval_threshold {
+                        proposal.status = ProposalStatus::Passed;
+                    } else {
+                        proposal.status = ProposalStatus::Rejected;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_blockchain::Blockchain;
-    use icn_reputation::ReputationSystem;
-    use icn_currency::CurrencySystem;
+    use std::sync::Mutex;
 
-    fn create_test_environment() -> (Blockchain, ReputationSystem, CurrencySystem) {
-        let blockchain = Blockchain::new();
-        let mut reputation_system = ReputationSystem::new(0.01, 0.0, 100.0);
-        let mut currency_system = CurrencySystem::new();
-        
-        // Initialize some reputation and governance tokens for testing
-        reputation_system.add_score("Alice", 50.0);
-        reputation_system.add_score("Bob", 30.0);
-        currency_system.mint("Alice", &CurrencyType::Governance, 1000.0).unwrap();
-        currency_system.mint("Bob", &CurrencyType::Governance, 1000.0).unwrap();
+    struct MockReputationSystem {
+        voting_power: HashMap<String, f64>,
+    }
 
-        (blockchain, reputation_system, currency_system)
+    impl ReputationSystem for MockReputationSystem {
+        fn get_voting_power(&self, address: &str) -> f64 {
+            *self.voting_power.get(address).unwrap_or(&1.0)
+        }
+
+        fn update_reputation(&mut self, address: &str, change: f64) -> IcnResult<()> {
+            *self.voting_power.entry(address.to_string()).or_insert(1.0) += change;
+            Ok(())
+        }
     }
 
     #[test]
-    fn test_one_person_one_vote() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
+    fn test_create_proposal() {
+        let reputation_system = Arc::new(RwLock::new(MockReputationSystem {
+            voting_power: HashMap::new(),
+        }));
+        let governance = GovernanceSystem::new(reputation_system);
 
-        let proposal_id = gs.create_proposal(
+        let proposal_id = governance.create_proposal(
             "Test Proposal".to_string(),
             "This is a test proposal".to_string(),
             "Alice".to_string(),
-            Duration::days(7),
             ProposalType::Constitutional,
-            ProposalCategory::Economic,
+            Duration::days(7),
             0.5,
-            VotingSystem::OnePersonOneVote,
+            0.66,
         ).unwrap();
 
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 2.0);
-        assert_eq!(proposal_result.in_favor_power, 1.0);
-        assert_eq!(proposal_result.against_power, 1.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
+        let proposal = governance.get_proposal(&proposal_id).unwrap();
+        assert_eq!(proposal.title, "Test Proposal");
+        assert_eq!(proposal.status, ProposalStatus::Active);
     }
 
     #[test]
-    fn test_token_weighted_voting() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
+    fn test_voting_and_tallying() {
+        let mut mock_reputation = MockReputationSystem {
+            voting_power: HashMap::new(),
+        };
+        mock_reputation.voting_power.insert("Alice".to_string(), 100.0);
+        mock_reputation.voting_power.insert("Bob".to_string(), 50.0);
+        mock_reputation.voting_power.insert("Charlie".to_string(), 25.0);
 
-        let proposal_id = gs.create_proposal(
-            "Token Weighted Proposal".to_string(),
-            "This is a token weighted proposal".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::EconomicAdjustment,
-            ProposalCategory::Economic,
-            500.0,
-            VotingSystem::TokenWeighted { max_power: 800.0 },
-        ).unwrap();
+        let reputation_system = Arc::new(RwLock::new(mock_reputation));
+        let governance = GovernanceSystem::new(reputation_system);
 
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 1600.0);
-        assert_eq!(proposal_result.in_favor_power, 800.0);
-        assert_eq!(proposal_result.against_power, 800.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
-    }
-
-    #[test]
-    fn test_quadratic_voting() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
-            "Quadratic Voting Proposal".to_string(),
-            "This is a quadratic voting proposal".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::NetworkUpgrade,
-            ProposalCategory::Technical,
-            5.0,
-            VotingSystem::Quadratic { max_votes: 10 },
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, Some(9.0), &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, Some(4.0), &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 5.0); // 3 (sqrt of 9) + 2 (sqrt of 4)
-        assert_eq!(proposal_result.in_favor_power, 3.0);
-        assert_eq!(proposal_result.against_power, 2.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
-    }
-
-    #[test]
-    fn test_reputation_weighted_voting() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
-            "Reputation Weighted Proposal".to_string(),
-            "This is a reputation weighted proposal".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            40.0,
-            VotingSystem::ReputationWeighted,
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 80.0); // 50 (Alice) + 30 (Bob)
-        assert_eq!(proposal_result.in_favor_power, 50.0);
-        assert_eq!(proposal_result.against_power, 30.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
-    }
-
-    #[test]
-    fn test_hybrid_voting() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
-            "Hybrid Voting Proposal".to_string(),
-            "This is a hybrid voting proposal".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::EconomicAdjustment,
-            ProposalCategory::Economic,
-            100.0,
-            VotingSystem::Hybrid { 
-                reputation_weight: 0.5, 
-                token_weight: 0.001, 
-                max_power: 100.0 
-            },
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        // Alice: min(50 * 0.5 + 1000 * 0.001, 100) = 26
-        // Bob: min(30 * 0.5 + 1000 * 0.001, 100) = 16
-        assert_eq!(proposal_result.total_power, 42.0);
-        assert_eq!(proposal_result.in_favor_power, 26.0);
-        assert_eq!(proposal_result.against_power, 16.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
-    }
-
-    #[test]
-    fn test_quorum_not_reached() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
-            "High Quorum Proposal".to_string(),
-            "This proposal requires high quorum".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::Constitutional,
-            ProposalCategory::Technical,
-            200.0, // High quorum requirement
-            VotingSystem::TokenWeighted { max_power: 100.0 },
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Rejected);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert!(!proposal_result.quorum_reached);
-        assert!(!proposal_result.passed);
-    }
-
-    #[test]
-    fn test_vote_after_end_period() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
+        let proposal_id = governance.create_proposal(
             "Test Proposal".to_string(),
             "This is a test proposal".to_string(),
             "Alice".to_string(),
-            Duration::days(7),
             ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            0.5,
-            VotingSystem::OnePersonOneVote,
-        ).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        // Try to vote after the voting period has ended
-        let vote_result = gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system);
-        assert!(vote_result.is_err());
-    }
-
-    #[test]
-    fn test_multiple_proposals() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id1 = gs.create_proposal(
-            "Proposal 1".to_string(),
-            "This is proposal 1".to_string(),
-            "Alice".to_string(),
             Duration::days(7),
-            ProposalType::Constitutional,
-            ProposalCategory::Economic,
             0.5,
-            VotingSystem::OnePersonOneVote,
+            0.66,
         ).unwrap();
 
-        let proposal_id2 = gs.create_proposal(
-            "Proposal 2".to_string(),
-            "This is proposal 2".to_string(),
-            "Bob".to_string(),
-            Duration::days(7),
-            ProposalType::EconomicAdjustment,
-            ProposalCategory::Economic,
-            0.5,
-            VotingSystem::TokenWeighted { max_power: 100.0 },
-        ).unwrap();
+        governance.vote("Alice".to_string(), proposal_id.clone(), true).unwrap();
+        governance.vote("Bob".to_string(), proposal_id.clone(), false).unwrap();
+        governance.vote("Charlie".to_string(), proposal_id.clone(), true).unwrap();
 
-        gs.vote(&proposal_id1, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id1, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id2, "Alice".to_string(), false, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id2, "Bob".to_string(), true, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        for proposal_id in &[&proposal_id1, &proposal_id2] {
-            let mut proposal = gs.get_proposal(proposal_id).unwrap();
+        // Force the voting period to end
+        {
+            let mut proposals = governance.proposals.write().unwrap();
+            let proposal = proposals.get_mut(&proposal_id).unwrap();
             proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-            let update_transaction = Transaction::new_governance(
-                "SYSTEM".to_string(),
-                "UpdateProposal".to_string(),
-                serde_json::to_vec(&proposal).unwrap()
-            );
-            gs.blockchain.add_transaction(update_transaction).unwrap();
         }
 
-        let result1 = gs.tally_votes(&proposal_id1).unwrap();
-        let result2 = gs.tally_votes(&proposal_id2).unwrap();
-
-        assert_eq!(result1, ProposalStatus::Passed);
-        assert_eq!(result2, ProposalStatus::Passed);
-
-        let active_proposals = gs.list_active_proposals().unwrap();
-        assert_eq!(active_proposals.len(), 0);
-
-        let proposal_result1 = gs.get_proposal_result(&proposal_id1).unwrap();
-        let proposal_result2 = gs.get_proposal_result(&proposal_id2).unwrap();
-
-        assert_eq!(proposal_result1.total_votes, 2);
-        assert_eq!(proposal_result1.total_power, 2.0);
-        assert_eq!(proposal_result1.in_favor_power, 1.0);
-        assert_eq!(proposal_result1.against_power, 1.0);
-
-        assert_eq!(proposal_result2.total_votes, 2);
-        assert_eq!(proposal_result2.total_power, 200.0);
-        assert_eq!(proposal_result2.in_favor_power, 100.0);
-        assert_eq!(proposal_result2.against_power, 100.0);
-    }
-
-    #[test]
-    fn test_proposal_implementation() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        let proposal_id = gs.create_proposal(
-            "Implementation Test".to_string(),
-            "This proposal will be implemented".to_string(),
-            "Alice".to_string(),
-            Duration::days(1),
-            ProposalType::NetworkUpgrade,
-            ProposalCategory::Technical,
-            0.5,
-            VotingSystem::OnePersonOneVote,
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), true, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        gs.tally_votes(&proposal_id).unwrap();
-        
-        assert!(gs.mark_as_implemented(&proposal_id).is_ok());
-        
-        let implemented_proposal = gs.get_proposal(&proposal_id).unwrap();
-        assert_eq!(implemented_proposal.status, ProposalStatus::Implemented);
-        assert!(implemented_proposal.execution_timestamp.is_some());
-    }
-
-    #[test]
-    fn test_vote_power_limits() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        // Mint more tokens for Alice
-        currency_system.mint("Alice", &CurrencyType::Governance, 9000.0).unwrap();
-
-        let proposal_id = gs.create_proposal(
-            "Vote Power Limit Test".to_string(),
-            "This proposal tests vote power limits".to_string(),
-            "Bob".to_string(),
-            Duration::days(7),
-            ProposalType::EconomicAdjustment,
-            ProposalCategory::Economic,
-            5000.0,
-            VotingSystem::TokenWeighted { max_power: 5000.0 },
-        ).unwrap();
-
-        gs.vote(&proposal_id, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id, "Bob".to_string(), false, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
+        let result = governance.tally_votes(&proposal_id).unwrap();
         assert_eq!(result, ProposalStatus::Passed);
 
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 6000.0); // 5000 (Alice's limit) + 1000 (Bob)
-        assert_eq!(proposal_result.in_favor_power, 5000.0);
-        assert_eq!(proposal_result.against_power, 1000.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
+        let proposal = governance.get_proposal(&proposal_id).unwrap();
+        assert_eq!(proposal.votes_for, 125);
+        assert_eq!(proposal.votes_against, 50);
     }
 
     #[test]
-    fn test_quadratic_voting_limits() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
+    fn test_implement_proposal() {
+        let reputation_system = Arc::new(RwLock::new(MockReputationSystem {
+            voting_power: HashMap::new(),
+        }));
+        let governance = GovernanceSystem::new(reputation_system);
 
-        let proposal_id = gs.create_proposal(
-            "Quadratic Voting Limit Test".to_string(),
-            "This proposal tests quadratic voting limits".to_string(),
+        let proposal_id = governance.create_proposal(
+            "Test Proposal".to_string(),
+            "This is a test proposal".to_string(),
             "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::NetworkUpgrade,
-            ProposalCategory::Technical,
-            10.0,
-            VotingSystem::Quadratic { max_votes: 10 },
-        ).unwrap();
-
-        // This should succeed (9 votes, cost of 81 tokens)
-        assert!(gs.vote(&proposal_id, "Alice".to_string(), true, Some(9.0), &mut currency_system).is_ok());
-
-        // This should fail (11 votes, exceeds max_votes)
-        assert!(gs.vote(&proposal_id, "Bob".to_string(), false, Some(11.0), &mut currency_system).is_err());
-
-        // This should succeed (4 votes, cost of 16 tokens)
-        assert!(gs.vote(&proposal_id, "Bob".to_string(), false, Some(4.0), &mut currency_system).is_ok());
-
-        // Fast-forward time
-        let mut proposal = gs.get_proposal(&proposal_id).unwrap();
-        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-        let update_transaction = Transaction::new_governance(
-            "SYSTEM".to_string(),
-            "UpdateProposal".to_string(),
-            serde_json::to_vec(&proposal).unwrap()
-        );
-        gs.blockchain.add_transaction(update_transaction).unwrap();
-
-        let result = gs.tally_votes(&proposal_id).unwrap();
-        assert_eq!(result, ProposalStatus::Passed);
-
-        let proposal_result = gs.get_proposal_result(&proposal_id).unwrap();
-        assert_eq!(proposal_result.total_votes, 2);
-        assert_eq!(proposal_result.total_power, 5.0); // 3 (sqrt of 9) + 2 (sqrt of 4)
-        assert_eq!(proposal_result.in_favor_power, 3.0);
-        assert_eq!(proposal_result.against_power, 2.0);
-        assert!(proposal_result.quorum_reached);
-        assert!(proposal_result.passed);
-
-        // Check if Alice's balance was deducted correctly
-        let alice_balance = currency_system.get_balance("Alice", &CurrencyType::Governance).unwrap();
-        assert_eq!(alice_balance, 919.0); // 1000 - 81 (cost of 9 votes)
-
-        // Check if Bob's balance was deducted correctly
-        let bob_balance = currency_system.get_balance("Bob", &CurrencyType::Governance).unwrap();
-        assert_eq!(bob_balance, 984.0); // 1000 - 16 (cost of 4 votes)
-    }
-
-    #[test]
-    fn test_edge_cases() {
-        let (blockchain, reputation_system, mut currency_system) = create_test_environment();
-        let mut gs = GovernanceSystem::new(blockchain, reputation_system);
-
-        // Test case 1: Create a proposal with 0 quorum requirement
-        let proposal_id1 = gs.create_proposal(
-            "Zero Quorum Proposal".to_string(),
-            "This proposal has zero quorum requirement".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
             ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            0.0,
-            VotingSystem::OnePersonOneVote,
-        ).unwrap();
-
-        // Test case 2: Create a proposal with 100% quorum requirement
-        let proposal_id2 = gs.create_proposal(
-            "Full Quorum Proposal".to_string(),
-            "This proposal requires full quorum".to_string(),
-            "Bob".to_string(),
             Duration::days(7),
-            ProposalType::EconomicAdjustment,
-            ProposalCategory::Economic,
-            f64::MAX,
-            VotingSystem::TokenWeighted { max_power: f64::MAX },
+            0.5,
+            0.66,
         ).unwrap();
 
-        // Vote on zero quorum proposal
-        gs.vote(&proposal_id1, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-
-        // Vote on full quorum proposal
-        gs.vote(&proposal_id2, "Alice".to_string(), true, None, &mut currency_system).unwrap();
-        gs.vote(&proposal_id2, "Bob".to_string(), true, None, &mut currency_system).unwrap();
-
-        // Fast-forward time
-        for proposal_id in &[&proposal_id1, &proposal_id2] {
-            let mut proposal = gs.get_proposal(proposal_id).unwrap();
-            proposal.voting_ends_at = Utc::now() - Duration::hours(1);
-            let update_transaction = Transaction::new_governance(
-                "SYSTEM".to_string(),
-                "UpdateProposal".to_string(),
-                serde_json::to_vec(&proposal).unwrap()
-            );
-            gs.blockchain.add_transaction(update_transaction).unwrap();
+        // Force the proposal to pass
+        {
+            let mut proposals = governance.proposals.write().unwrap();
+            let proposal = proposals.get_mut(&proposal_id).unwrap();
+            proposal.status = ProposalStatus::Passed;
         }
 
-        // Tally votes for zero quorum proposal
-        let result1 = gs.tally_votes(&proposal_id1).unwrap();
-        assert_eq!(result1, ProposalStatus::Passed);
+        governance.implement_proposal(&proposal_id).unwrap();
 
-        let proposal_result1 = gs.get_proposal_result(&proposal_id1).unwrap();
-        assert_eq!(proposal_result1.total_votes, 1);
-        assert_eq!(proposal_result1.total_power, 1.0);
-        assert_eq!(proposal_result1.in_favor_power, 1.0);
-        assert_eq!(proposal_result1.against_power, 0.0);
-        assert!(proposal_result1.quorum_reached);
-        assert!(proposal_result1.passed);
-
-        // Tally votes for full quorum proposal
-        let result2 = gs.tally_votes(&proposal_id2).unwrap();
-        assert_eq!(result2, ProposalStatus::Rejected);
-
-        let proposal_result2 = gs.get_proposal_result(&proposal_id2).unwrap();
-        assert_eq!(proposal_result2.total_votes, 2);
-        assert_eq!(proposal_result2.total_power, 2000.0);
-        assert_eq!(proposal_result2.in_favor_power, 2000.0);
-        assert_eq!(proposal_result2.against_power, 0.0);
-        assert!(!proposal_result2.quorum_reached);
-        assert!(!proposal_result2.passed);
-
-        // Test case 3: Try to vote with negative power (should fail)
-        let proposal_id3 = gs.create_proposal(
-            "Negative Vote Test".to_string(),
-            "This proposal tests negative voting power".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::NetworkUpgrade,
-            ProposalCategory::Technical,
-            1.0,
-            VotingSystem::Quadratic { max_votes: 10 },
-        ).unwrap();
-
-        assert!(gs.vote(&proposal_id3, "Alice".to_string(), true, Some(-1.0), &mut currency_system).is_err());
-
-        // Test case 4: Try to create a proposal with negative quorum (should fail)
-        let proposal_id4 = gs.create_proposal(
-            "Negative Quorum Test".to_string(),
-            "This proposal has a negative quorum requirement".to_string(),
-            "Bob".to_string(),
-            Duration::days(7),
-            ProposalType::Constitutional,
-            ProposalCategory::Economic,
-            -1.0,
-            VotingSystem::OnePersonOneVote,
-        );
-
-        assert!(proposal_id4.is_err());
+        let proposal = governance.get_proposal(&proposal_id).unwrap();
+        assert_eq!(proposal.status, ProposalStatus::Implemented);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
 
@@ -5745,6 +5114,111 @@ mod tests {
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_incentives/src/lib.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
+[package]
+name = "icn_language"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+===== END OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
+// File: crates/icn_language/src/lib.rs
+
+use nom::{
+    IResult,
+    branch::alt,
+    bytes::complete::{tag, take_while1},
+    character::complete::{alpha1, alphanumeric1, char, multispace0},
+    combinator::{map, recognize},
+    multi::many0,
+    sequence::{delimited, pair, preceded, terminated},
+};
+
+#[derive(Debug, PartialEq)]
+pub enum Statement {
+    CoopCreate { name: String, coop_type: String },
+    GovPolicyCreate { name: String, details: String },
+    CommEventSchedule { name: String, date: String },
+    // Add more statement types as needed
+}
+
+fn parse_identifier(input: &str) -> IResult<&str, &str> {
+    recognize(pair(
+        alt((alpha1, tag("_"))),
+        many0(alt((alphanumeric1, tag("_"))))
+    ))(input)
+}
+
+fn parse_string(input: &str) -> IResult<&str, &str> {
+    delimited(
+        char('"'),
+        take_while1(|c| c != '"'),
+        char('"')
+    )(input)
+}
+
+fn parse_coop_create(input: &str) -> IResult<&str, Statement> {
+    let (input, _) = tag("coop-create")(input)?;
+    let (input, _) = multispace0(input)?;
+    let (input, _) = char('(')(input)?;
+    let (input, name) = preceded(tag("name:"), parse_string)(input)?;
+    let (input, _) = char(',')(input)?;
+    let (input, coop_type) = preceded(tag("type:"), parse_string)(input)?;
+    let (input, _) = char(')')(input)?;
+    
+    Ok((input, Statement::CoopCreate { 
+        name: name.to_string(), 
+        coop_type: coop_type.to_string() 
+    }))
+}
+
+// Implement other parsing functions for different statement types
+
+pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
+    alt((
+        parse_coop_create,
+        // Add other statement parsers here
+    ))(input)
+}
+
+pub fn compile(source: &str) -> Result<Vec<Statement>, String> {
+    let mut statements = Vec::new();
+    let mut remaining = source;
+
+    while !remaining.is_empty() {
+        match parse_statement(remaining) {
+            Ok((rest, statement)) => {
+                statements.push(statement);
+                remaining = rest.trim();
+            }
+            Err(_) => return Err("Failed to parse statement".to_string()),
+        }
+    }
+
+    Ok(statements)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_coop_create() {
+        let input = r#"coop-create(name: "Green Community Cooperative", type: "Sustainability")"#;
+        let result = parse_coop_create(input);
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::CoopCreate {
+            name: "Green Community Cooperative".to_string(),
+            coop_type: "Sustainability".to_string(),
+        });
+    }
+
+    // Add more tests for other statement types and the compile function
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/Cargo.toml =====
 [package]
@@ -7789,284 +7263,291 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/cross_shard_transaction_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
-use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
-use std::collections::{HashMap, HashSet};
-use sha2::{Sha256, Digest};
-use chrono::Utc;
+// File: crates/icn_vm/src/coop_vm.rs
 
-pub struct Shard {
-    pub id: u64,
-    pub blockchain: Vec<Block>,
-    pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
-    pub pending_transactions: Vec<Transaction>,
+use std::collections::HashMap;
+use icn_common::{IcnResult, IcnError};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
 }
 
-pub struct ShardingManager {
-    shards: HashMap<u64, Shard>,
-    shard_count: u64,
-    address_to_shard: HashMap<String, u64>,
+#[derive(Clone, Debug)]
+pub enum Opcode {
+    Push(Value),
+    Pop,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    And,
+    Or,
+    Not,
+    Store(String),
+    Load(String),
+    Call(String),
+    Return,
+    JumpIf(usize),
+    Jump(usize),
+    CreateList,
+    AppendList,
+    GetListItem,
+    SetListItem,
+    CreateMap,
+    SetMapItem,
+    GetMapItem,
+    Vote(String),
+    AllocateResource(String),
+    UpdateReputation(String),
+    CreateProposal,
+    GetProposalStatus,
+    Emit(String),
 }
 
-impl ShardingManager {
-    pub fn new(shard_count: u64) -> Self {
-        let mut shards = HashMap::new();
-        for i in 0..shard_count {
-            shards.insert(i, Shard {
-                id: i,
-                blockchain: vec![Block::genesis()],
-                balances: HashMap::new(),
-                pending_transactions: Vec::new(),
-            });
-        }
+pub struct CoopVM {
+    stack: Vec<Value>,
+    memory: HashMap<String, Value>,
+    program: Vec<Opcode>,
+    pc: usize,
+    call_stack: Vec<usize>,
+    functions: HashMap<String, usize>,
+}
 
-        ShardingManager {
-            shards,
-            shard_count,
-            address_to_shard: HashMap::new(),
-        }
-    }
-
-    pub fn get_shard_count(&self) -> u64 {
-        self.shard_count
-    }
-
-    pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
-        let from_shard = self.get_shard_for_address(&transaction.from);
-        let to_shard = self.get_shard_for_address(&transaction.to);
-
-        if from_shard == to_shard {
-            self.process_intra_shard_transaction(from_shard, transaction)
-        } else {
-            self.process_cross_shard_transaction(from_shard, to_shard, transaction)
+impl CoopVM {
+    pub fn new(program: Vec<Opcode>) -> Self {
+        CoopVM {
+            stack: Vec::new(),
+            memory: HashMap::new(),
+            program,
+            pc: 0,
+            call_stack: Vec::new(),
+            functions: HashMap::new(),
         }
     }
 
-    fn process_intra_shard_transaction(&mut self, shard_id: u64, transaction: &Transaction) -> IcnResult<()> {
-        let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
-
-        if !self.verify_transaction(shard, transaction) {
-            return Err(IcnError::Sharding("Invalid transaction".to_string()));
+    pub fn run(&mut self) -> IcnResult<()> {
+        while self.pc < self.program.len() {
+            self.execute_instruction()?;
+            self.pc += 1;
         }
-
-        shard.pending_transactions.push(transaction.clone());
-        self.update_balances(shard, transaction)
-    }
-
-    fn process_cross_shard_transaction(&mut self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
-        // Lock funds in the source shard
-        {
-            let from_shard = self.shards.get_mut(&from_shard).ok_or_else(|| IcnError::Sharding("Source shard not found".to_string()))?;
-            if !self.verify_transaction(from_shard, transaction) {
-                return Err(IcnError::Sharding("Invalid transaction".to_string()));
-            }
-            self.update_balances(from_shard, transaction)?;
-        }
-
-        // Update recipient's balance in the destination shard
-        {
-            let to_shard = self.shards.get_mut(&to_shard).ok_or_else(|| IcnError::Sharding("Destination shard not found".to_string()))?;
-            let mut reverse_transaction = transaction.clone();
-            reverse_transaction.from = transaction.to.clone();
-            reverse_transaction.to = transaction.from.clone();
-            self.update_balances(to_shard, &reverse_transaction)?;
-        }
-
         Ok(())
     }
 
-    fn update_balances(&mut self, shard: &mut Shard, transaction: &Transaction) -> IcnResult<()> {
-        let sender_balances = shard.balances.entry(transaction.from.clone()).or_insert_with(HashMap::new);
-        let sender_balance = sender_balances.entry(transaction.currency_type.clone()).or_insert(0.0);
-
-        if *sender_balance < transaction.amount {
-            return Err(IcnError::Sharding("Insufficient balance".to_string()));
-        }
-
-        *sender_balance -= transaction.amount;
-
-        let recipient_balances = shard.balances.entry(transaction.to.clone()).or_insert_with(HashMap::new);
-        let recipient_balance = recipient_balances.entry(transaction.currency_type.clone()).or_insert(0.0);
-        *recipient_balance += transaction.amount;
-
-        Ok(())
-    }
-
-    pub fn create_block(&mut self, shard_id: u64) -> IcnResult<Block> {
-        let shard = self.shards.get_mut(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
-        let previous_block = shard.blockchain.last().ok_or_else(|| IcnError::Sharding("No previous block found".to_string()))?;
-
-        let new_block = Block {
-            index: shard.blockchain.len() as u64,
-            timestamp: Utc::now().timestamp(),
-            transactions: shard.pending_transactions.clone(),
-            previous_hash: previous_block.hash.clone(),
-            hash: String::new(), // Will be set later
-        };
-
-        let new_block = self.calculate_block_hash(new_block);
-        shard.blockchain.push(new_block.clone());
-        shard.pending_transactions.clear();
-
-        Ok(new_block)
-    }
-
-    pub fn get_shard_for_address(&self, address: &str) -> u64 {
-        *self.address_to_shard.get(address).unwrap_or(&(self.hash_address(address) % self.shard_count))
-    }
-
-    pub fn add_address_to_shard(&mut self, address: String, shard_id: u64) -> IcnResult<()> {
-        if shard_id >= self.shard_count {
-            return Err(IcnError::Sharding("Invalid shard ID".to_string()));
-        }
-        self.address_to_shard.insert(address, shard_id);
-        Ok(())
-    }
-
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        let shard_id = self.get_shard_for_address(address);
-        let shard = self.shards.get(&shard_id).ok_or_else(|| IcnError::Sharding("Shard not found".to_string()))?;
-
-        Ok(shard.balances
-            .get(address)
-            .and_then(|balances| balances.get(currency_type))
-            .cloned()
-            .unwrap_or(0.0))
-    }
-
-    fn verify_transaction(&self, shard: &Shard, transaction: &Transaction) -> bool {
-        if let Some(sender_balances) = shard.balances.get(&transaction.from) {
-            if let Some(balance) = sender_balances.get(&transaction.currency_type) {
-                return *balance >= transaction.amount;
+    fn execute_instruction(&mut self) -> IcnResult<()> {
+        let instruction = self.program[self.pc].clone();
+        match instruction {
+            Opcode::Push(value) => self.stack.push(value),
+            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? ; }
+            Opcode::Add => self.binary_op(|a, b| a + b)?,
+            Opcode::Sub => self.binary_op(|a, b| a - b)?,
+            Opcode::Mul => self.binary_op(|a, b| a * b)?,
+            Opcode::Div => self.binary_op(|a, b| a / b)?,
+            Opcode::Mod => self.binary_op(|a, b| a % b)?,
+            Opcode::Eq => self.compare_op(|a, b| a == b)?,
+            Opcode::Neq => self.compare_op(|a, b| a != b)?,
+            Opcode::Lt => self.compare_op(|a, b| a < b)?,
+            Opcode::Lte => self.compare_op(|a, b| a <= b)?,
+            Opcode::Gt => self.compare_op(|a, b| a > b)?,
+            Opcode::Gte => self.compare_op(|a, b| a >= b)?,
+            Opcode::And => self.logic_op(|a, b| a && b)?,
+            Opcode::Or => self.logic_op(|a, b| a || b)?,
+            Opcode::Not => {
+                let a = self.pop_bool()?;
+                self.stack.push(Value::Bool(!a));
             }
-        }
-        false
-    }
-
-    fn hash_address(&self, address: &str) -> u64 {
-        let mut hasher = Sha256::new();
-        hasher.update(address.as_bytes());
-        let result = hasher.finalize();
-        let hash_bytes: [u8; 8] = result[..8].try_into().unwrap_or([0; 8]);
-        u64::from_le_bytes(hash_bytes)
-    }
-
-    fn calculate_block_hash(&self, mut block: Block) -> Block {
-        let mut hasher = Sha256::new();
-        hasher.update(block.index.to_string().as_bytes());
-        hasher.update(block.timestamp.to_string().as_bytes());
-        for transaction in &block.transactions {
-            hasher.update(transaction.from.as_bytes());
-            hasher.update(transaction.to.as_bytes());
-            hasher.update(transaction.amount.to_string().as_bytes());
-            hasher.update(format!("{:?}", transaction.currency_type).as_bytes());
-        }
-        hasher.update(block.previous_hash.as_bytes());
-
-        let hash = format!("{:x}", hasher.finalize());
-        block.hash = hash;
-        block
-    }
-
-    pub fn rebalance_shards(&mut self) -> IcnResult<()> {
-        let total_addresses: usize = self.address_to_shard.len();
-        let target_addresses_per_shard = total_addresses / self.shard_count as usize;
-        let mut overloaded_shards: Vec<u64> = Vec::new();
-        let mut underloaded_shards: Vec<u64> = Vec::new();
-
-        // Identify overloaded and underloaded shards
-        for shard_id in 0..self.shard_count {
-            let shard_addresses: usize = self.address_to_shard.values().filter(|&&s| s == shard_id).count();
-            if shard_addresses > target_addresses_per_shard + 1 {
-                overloaded_shards.push(shard_id);
-            } else if shard_addresses < target_addresses_per_shard {
-                underloaded_shards.push(shard_id);
+            Opcode::Store(name) => {
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                self.memory.insert(name, value);
             }
-        }
-
-        // Rebalance addresses between shards
-        for overloaded_shard in overloaded_shards {
-            let addresses_to_move: Vec<String> = self.address_to_shard
-                .iter()
-                .filter(|&(_, &shard)| shard == overloaded_shard)
-                .map(|(addr, _)| addr.clone())
-                .take((self.address_to_shard.values().filter(|&&s| s == overloaded_shard).count() - target_addresses_per_shard) as usize)
-                .collect();
-
-            for address in addresses_to_move {
-                if let Some(target_shard) = underloaded_shards.first() {
-                    self.move_address_to_shard(&address, *target_shard)?;
-                    if self.address_to_shard.values().filter(|&&s| s == *target_shard).count() >= target_addresses_per_shard {
-                        underloaded_shards.remove(0);
+            Opcode::Load(name) => {
+                let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
+                self.stack.push(value);
+            }
+            Opcode::Call(func_name) => {
+                let func_pc = self.functions.get(&func_name).ok_or(IcnError::VM("Function not found".into()))?;
+                self.call_stack.push(self.pc);
+                self.pc = *func_pc;
+            }
+            Opcode::Return => {
+                self.pc = self.call_stack.pop().ok_or(IcnError::VM("Return without call".into()))?;
+            }
+            Opcode::JumpIf(target) => {
+                let condition = self.pop_bool()?;
+                if condition {
+                    self.pc = target;
+                }
+            }
+            Opcode::Jump(target) => {
+                self.pc = target;
+            }
+            Opcode::CreateList => self.stack.push(Value::List(Vec::new())),
+            Opcode::AppendList => {
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                if let Some(Value::List(list)) = self.stack.last_mut() {
+                    list.push(value);
+                } else {
+                    return Err(IcnError::VM("Expected list on top of stack".into()));
+                }
+            }
+            Opcode::GetListItem => {
+                let index = self.pop_int()?;
+                if let Some(Value::List(list)) = self.stack.pop() {
+                    let item = list.get(index as usize).ok_or(IcnError::VM("List index out of bounds".into()))?.clone();
+                    self.stack.push(item);
+                } else {
+                    return Err(IcnError::VM("Expected list on top of stack".into()));
+                }
+            }
+            Opcode::SetListItem => {
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                let index = self.pop_int()?;
+                if let Some(Value::List(list)) = self.stack.last_mut() {
+                    if (index as usize) < list.len() {
+                        list[index as usize] = value;
+                    } else {
+                        return Err(IcnError::VM("List index out of bounds".into()));
                     }
+                } else {
+                    return Err(IcnError::VM("Expected list on top of stack".into()));
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    pub fn handle_shard_failure(&mut self, failed_shard_id: u64) -> IcnResult<()> {
-        if failed_shard_id >= self.shard_count {
-            return Err(IcnError::Sharding("Invalid shard ID".to_string()));
-        }
-
-        // Collect addresses from the failed shard
-        let failed_shard_addresses: Vec<String> = self.address_to_shard
-            .iter()
-            .filter(|&(_, &shard)| shard == failed_shard_id)
-            .map(|(addr, _)| addr.clone())
-            .collect();
-
-        // Redistribute addresses to other shards
-        let mut target_shard_id = (failed_shard_id + 1) % self.shard_count;
-        for address in failed_shard_addresses {
-            while target_shard_id == failed_shard_id {
-                target_shard_id = (target_shard_id + 1) % self.shard_count;
-            }
-            self.move_address_to_shard(&address, target_shard_id)?;
-            target_shard_id = (target_shard_id + 1) % self.shard_count;
-        }
-
-        // Clear the failed shard's data
-        if let Some(failed_shard) = self.shards.get_mut(&failed_shard_id) {
-            failed_shard.blockchain = vec![Block::genesis()];
-            failed_shard.balances.clear();
-            failed_shard.pending_transactions.clear();
-        }
-
-        // Trigger a network-wide state update
-        self.update_network_state()?;
-
-        Ok(())
-    }
-
-    fn move_address_to_shard(&mut self, address: &str, new_shard_id: u64) -> IcnResult<()> {
-        let old_shard_id = self.get_shard_for_address(address);
-        if old_shard_id == new_shard_id {
-            return Ok(());
-        }
-
-        // Move balances
-        if let Some(old_shard) = self.shards.get_mut(&old_shard_id) {
-            if let Some(balances) = old_shard.balances.remove(address) {
-                if let Some(new_shard) = self.shards.get_mut(&new_shard_id) {
-                    new_shard.balances.insert(address.to_string(), balances);
+            Opcode::CreateMap => self.stack.push(Value::Map(HashMap::new())),
+            Opcode::SetMapItem => {
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                let key = self.pop_string()?;
+                if let Some(Value::Map(map)) = self.stack.last_mut() {
+                    map.insert(key, value);
+                } else {
+                    return Err(IcnError::VM("Expected map on top of stack".into()));
                 }
             }
+            Opcode::GetMapItem => {
+                let key = self.pop_string()?;
+                if let Some(Value::Map(map)) = self.stack.pop() {
+                    let value = map.get(&key).ok_or(IcnError::VM("Key not found in map".into()))?.clone();
+                    self.stack.push(value);
+                } else {
+                    return Err(IcnError::VM("Expected map on top of stack".into()));
+                }
+            }
+            Opcode::Vote(proposal_id) => {
+                let vote = self.pop_bool()?;
+                // In a real implementation, this would interact with the governance system
+                println!("Voting {} on proposal {}", if vote { "Yes" } else { "No" }, proposal_id);
+            }
+            Opcode::AllocateResource(resource_id) => {
+                let amount = self.pop_int()?;
+                // In a real implementation, this would interact with a resource management system
+                println!("Allocating {} units of resource {}", amount, resource_id);
+            }
+            Opcode::UpdateReputation(address) => {
+                let change = self.pop_int()?;
+                // In a real implementation, this would interact with the reputation system
+                println!("Updating reputation of {} by {}", address, change);
+            }
+            Opcode::CreateProposal => {
+                let description = self.pop_string()?;
+                // In a real implementation, this would interact with the governance system
+                println!("Creating proposal: {}", description);
+                self.stack.push(Value::String("new_proposal_id".to_string()));
+            }
+            Opcode::GetProposalStatus => {
+                let proposal_id = self.pop_string()?;
+                // In a real implementation, this would interact with the governance system
+                println!("Getting status of proposal: {}", proposal_id);
+                self.stack.push(Value::String("Active".to_string()));
+            }
+            Opcode::Emit(event_name) => {
+                let event_data = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                // In a real implementation, this would emit an event to the blockchain
+                println!("Emitting event {}: {:?}", event_name, event_data);
+            }
         }
-
-        // Update address_to_shard mapping
-        self.address_to_shard.insert(address.to_string(), new_shard_id);
-
         Ok(())
     }
 
-    fn update_network_state(&self) -> IcnResult<()> {
-        // In a real implementation, this method would broadcast the updated state
-        // to all nodes in the network, ensuring consistency across the system.
-        // For now, we'll just log the action.
-        println!("Network state update triggered");
+    fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
+    where
+        F: Fn(f64, f64) -> f64,
+    {
+        let b = self.pop_number()?;
+        let a = self.pop_number()?;
+        self.stack.push(Value::Float(op(a, b)));
         Ok(())
+    }
+
+    fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
+    where
+        F: Fn(&Value, &Value) -> bool,
+    {
+        let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        self.stack.push(Value::Bool(op(&a, &b)));
+        Ok(())
+    }
+
+    fn logic_op<F>(&mut self, op: F) -> IcnResult<()>
+    where
+        F: Fn(bool, bool) -> bool,
+    {
+        let b = self.pop_bool()?;
+        let a = self.pop_bool()?;
+        self.stack.push(Value::Bool(op(a, b)));
+        Ok(())
+    }
+
+    fn pop_number(&mut self) -> IcnResult<f64> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Int(i) => Ok(i as f64),
+            Value::Float(f) => Ok(f),
+            _ => Err(IcnError::VM("Expected number".into())),
+        }
+    }
+
+    fn pop_int(&mut self) -> IcnResult<i64> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Int(i) => Ok(i),
+            _ => Err(IcnError::VM("Expected integer".into())),
+        }
+    }
+
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Bool(b) => Ok(b),
+            _ => Err(IcnError::VM("Expected boolean".into())),
+        }
+    }
+
+    fn pop_string(&mut self) -> IcnResult<String> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::String(s) => Ok(s),
+            _ => Err(IcnError::VM("Expected string".into())),
+        }
+    }
+
+    pub fn register_function(&mut self, name: String, pc: usize) {
+        self.functions.insert(name, pc);
+    }
+
+    pub fn get_stack(&self) -> &Vec<Value> {
+        &self.stack
+    }
+
+    pub fn get_memory(&self) -> &HashMap<String, Value> {
+        &self.memory
     }
 }
 
@@ -8075,122 +7556,153 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sharding_manager() {
-        let mut manager = ShardingManager::new(4);
-        assert_eq!(manager.get_shard_count(), 4);
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Int(5)),
+            Opcode::Push(Value::Int(3)),
+            Opcode::Add,
+            Opcode::Push(Value::Int(2)),
+            Opcode::Mul,
+        ];
 
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
-            signature: None,
-        };
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
 
-        manager.add_address_to_shard("Alice".to_string(), 0).unwrap();
-        manager.add_address_to_shard("Bob".to_string(), 1).unwrap();
-
-        // Initialize Alice's balance
-        let alice_shard = manager.shards.get_mut(&0).unwrap();
-        alice_shard.balances.entry("Alice".to_string()).or_insert_with(HashMap::new).insert(CurrencyType::BasicNeeds, 200.0);
-
-        assert!(manager.process_transaction(&transaction).is_ok());
-
-        assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
-        assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 100.0);
-
-        // Test block creation
-        let block = manager.create_block(0).unwrap();
-        assert_eq!(block.index, 1);
-        assert_eq!(block.transactions.len(), 1);
-
-        // Test cross-shard transaction
-        let cross_shard_tx = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 1,
-            signature: None,
-        };
-
-        assert!(manager.process_transaction(&cross_shard_tx).is_ok());
-        assert_eq!(manager.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
-        assert_eq!(manager.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 150.0);
-
-        // Test getting shard state
-        let shard_state = manager.shards.get(&0).unwrap();
-        assert_eq!(shard_state.id, 0);
-        assert_eq!(shard_state.blockchain.len(), 2); // Genesis block + 1 new block
-
-        // Test invalid shard access
-        assert!(manager.get_balance("NonexistentUser", &CurrencyType::BasicNeeds).is_err());
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_rebalance_shards() {
-        let mut manager = ShardingManager::new(3);
-        
-        // Add addresses to shards unevenly
-        for i in 0..10 {
-            manager.add_address_to_shard(format!("Address{}", i), 0).unwrap();
-        }
-        for i in 10..15 {
-            manager.add_address_to_shard(format!("Address{}", i), 1).unwrap();
-        }
-        for i in 15..17 {
-            manager.add_address_to_shard(format!("Address{}", i), 2).unwrap();
-        }
+    fn test_control_flow() {
+        let program = vec![
+            Opcode::Push(Value::Int(10)),
+            Opcode::Push(Value::Int(5)),
+            Opcode::Lt,
+            Opcode::JumpIf(6),
+            Opcode::Push(Value::String("Less".to_string())),
+            Opcode::Jump(7),
+            Opcode::Push(Value::String("Greater or Equal".to_string())),
+        ];
 
-        // Rebalance shards
-        manager.rebalance_shards().unwrap();
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
 
-        // Check if shards are more evenly balanced
-        let shard_0_count = manager.address_to_shard.values().filter(|&&s| s == 0).count();
-        let shard_1_count = manager.address_to_shard.values().filter(|&&s| s == 1).count();
-        let shard_2_count = manager.address_to_shard.values().filter(|&&s| s == 2).count();
-
-        assert!(shard_0_count >= 5 && shard_0_count <= 6);
-        assert!(shard_1_count >= 5 && shard_1_count <= 6);
-        assert!(shard_2_count >= 5 && shard_2_count <= 6);
+        assert_eq!(vm.stack, vec![Value::String("Greater or Equal".to_string())]);
     }
 
     #[test]
-    fn test_handle_shard_failure() {
-        let mut manager = ShardingManager::new(3);
-        
-        // Add addresses and balances to shards
-        for i in 0..9 {
-            let address = format!("Address{}", i);
-            manager.add_address_to_shard(address.clone(), i / 3).unwrap();
-            let shard = manager.shards.get_mut(&(i / 3)).unwrap();
-            shard.balances.entry(address).or_insert_with(HashMap::new).insert(CurrencyType::BasicNeeds, 100.0);
-        }
+    fn test_function_call() {
+        let program = vec![
+            Opcode::Push(Value::Int(5)),
+            Opcode::Call("square".to_string()),
+            Opcode::Push(Value::Int(3)),
+            Opcode::Add,
+            Opcode::Return,
+            // square function
+            Opcode::Mul,
+            Opcode::Return,
+        ];
 
-        // Simulate failure of shard 1
-        manager.handle_shard_failure(1).unwrap();
+        let mut vm = CoopVM::new(program);
+        vm.register_function("square".to_string(), 5);
+        vm.run().unwrap();
 
-        // Check if addresses from shard 1 have been redistributed
-        assert_eq!(manager.address_to_shard.values().filter(|&&s| s == 1).count(), 0);
-
-        // Check if balances have been moved
-        for i in 3..6 {
-            let address = format!("Address{}", i);
-            let new_shard_id = manager.get_shard_for_address(&address);
-            assert_ne!(new_shard_id, 1);
-            let balance = manager.get_balance(&address, &CurrencyType::BasicNeeds).unwrap();
-            assert_eq!(balance, 100.0);
-        }
-
-        // Check if shard 1 has been reset
-        let shard_1 = manager.shards.get(&1).unwrap();
-        assert_eq!(shard_1.blockchain.len(), 1); // Only genesis block
-        assert!(shard_1.balances.is_empty());
-        assert!(shard_1.pending_transactions.is_empty());
+        assert_eq!(vm.stack, vec![Value::Float(28.0)]);
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
+
+    // File: crates/icn_vm/src/coop_vm.rs
+
+    #[test]
+    fn test_list_operations() {
+        let program = vec![
+            Opcode::CreateList,
+            Opcode::Push(Value::Int(1)),
+            Opcode::AppendList,
+            Opcode::Push(Value::Int(2)),
+            Opcode::AppendList,
+            Opcode::Push(Value::Int(3)),
+            Opcode::AppendList,
+            Opcode::Push(Value::Int(1)),
+            Opcode::GetListItem,
+            Opcode::Push(Value::Int(10)),
+            Opcode::Push(Value::Int(0)),
+            Opcode::SetListItem,
+        ];
+
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
+
+        assert_eq!(vm.stack, vec![
+            Value::List(vec![Value::Int(10), Value::Int(2), Value::Int(3)]),
+            Value::Int(2)
+        ]);
+    }
+
+    #[test]
+    fn test_map_operations() {
+        let program = vec![
+            Opcode::CreateMap,
+            Opcode::Push(Value::String("key1".to_string())),
+            Opcode::Push(Value::Int(42)),
+            Opcode::SetMapItem,
+            Opcode::Push(Value::String("key2".to_string())),
+            Opcode::Push(Value::String("value".to_string())),
+            Opcode::SetMapItem,
+            Opcode::Push(Value::String("key1".to_string())),
+            Opcode::GetMapItem,
+        ];
+
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
+
+        let mut expected_map = HashMap::new();
+        expected_map.insert("key1".to_string(), Value::Int(42));
+        expected_map.insert("key2".to_string(), Value::String("value".to_string()));
+
+        assert_eq!(vm.stack, vec![
+            Value::Map(expected_map),
+            Value::Int(42)
+        ]);
+    }
+
+    #[test]
+    fn test_cooperative_operations() {
+        let program = vec![
+            Opcode::Push(Value::String("Proposal 1".to_string())),
+            Opcode::CreateProposal,
+            Opcode::Push(Value::Bool(true)),
+            Opcode::Vote("proposal_1".to_string()),
+            Opcode::Push(Value::Int(100)),
+            Opcode::AllocateResource("computing_power".to_string()),
+            Opcode::Push(Value::Int(5)),
+            Opcode::UpdateReputation("user1".to_string()),
+            Opcode::Push(Value::String("proposal_1".to_string())),
+            Opcode::GetProposalStatus,
+        ];
+
+        let mut vm = CoopVM::new(program);
+        vm.run().unwrap();
+
+        assert_eq!(vm.stack, vec![
+            Value::String("new_proposal_id".to_string()),
+            Value::String("Active".to_string())
+        ]);
+    }
+
+    #[test]
+    fn test_error_handling() {
+        let program = vec![
+            Opcode::Push(Value::Int(5)),
+            Opcode::Push(Value::String("not a number".to_string())),
+            Opcode::Add,
+        ];
+
+        let mut vm = CoopVM::new(program);
+        let result = vm.run();
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "VM error: Expected number");
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
 [package]
@@ -10909,139 +10421,195 @@ pub enum Opcode {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/opcode.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/smart_contract.rs =====
-use icn_common::{Error, Result};
+// File: icn_vm/src/smart_contract.rs
+
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
+use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AssetTokenContract {
-    pub tokens: Vec<AssetToken>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AssetToken {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SmartContract {
     pub id: String,
-    pub owner: String,
-    pub metadata: serde_json::Value,
+    pub code: String,
+    pub state: HashMap<String, Value>,
 }
 
-impl AssetTokenContract {
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
+}
+
+pub struct SmartContractExecutor {
+    contracts: HashMap<String, SmartContract>,
+}
+
+impl SmartContractExecutor {
     pub fn new() -> Self {
-        AssetTokenContract {
-            tokens: Vec::new(),
+        SmartContractExecutor {
+            contracts: HashMap::new(),
         }
     }
 
-    pub fn create_token(&mut self, id: String, owner: String, metadata: serde_json::Value) -> Result<AssetToken> {
-        if self.tokens.iter().any(|t| t.id == id) {
-            return Err(Error {
-                message: "Token already exists".to_string(),
-            });
+    pub fn deploy_contract(&mut self, id: String, code: String) -> IcnResult<()> {
+        if self.contracts.contains_key(&id) {
+            return Err(IcnError::VM(format!("Contract with id {} already exists", id)));
         }
 
-        let token = AssetToken {
+        let contract = SmartContract {
             id: id.clone(),
-            owner: owner.clone(),
-            metadata,
+            code,
+            state: HashMap::new(),
         };
 
-        self.tokens.push(token.clone());
-        Ok(token)
-    }
-
-    pub fn transfer_token(&mut self, id: &str, new_owner: String) -> Result<()> {
-        let token = self.tokens.iter_mut().find(|t| t.id == id).ok_or_else(|| Error {
-            message: "Token not found".to_string(),
-        })?;
-
-        token.owner = new_owner;
+        self.contracts.insert(id, contract);
         Ok(())
     }
 
-    pub fn get_token(&self, id: &str) -> Option<&AssetToken> {
-        self.tokens.iter().find(|t| t.id == id)
-    }
-}
+    pub fn execute_contract(&mut self, id: &str, function: &str, args: Vec<Value>) -> IcnResult<Value> {
+        let contract = self.contracts.get_mut(id)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))?;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BondContract {
-    pub bonds: Vec<Bond>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Bond {
-    pub id: String,
-    pub owner: String,
-    pub terms: String,
-}
-
-impl BondContract {
-    pub fn new() -> Self {
-        BondContract {
-            bonds: Vec::new(),
+        // In a real implementation, you would parse and execute the contract code here.
+        // For this example, we'll simulate a simple token transfer function.
+        match function {
+            "transfer" => self.execute_transfer(contract, args),
+            _ => Err(IcnError::VM(format!("Unknown function: {}", function))),
         }
     }
 
-    pub fn create_bond(&mut self, id: String, owner: String, terms: String) -> Result<Bond> {
-        if self.bonds.iter().any(|b| b.id == id) {
-            return Err(Error {
-                message: "Bond already exists".to_string(),
-            });
+    fn execute_transfer(&mut self, contract: &mut SmartContract, args: Vec<Value>) -> IcnResult<Value> {
+        if args.len() != 3 {
+            return Err(IcnError::VM("transfer function requires 3 arguments: from, to, and amount".into()));
         }
 
-        let bond = Bond {
-            id: id.clone(),
-            owner: owner.clone(),
-            terms,
+        let from = match &args[0] {
+            Value::String(s) => s,
+            _ => return Err(IcnError::VM("'from' argument must be a string".into())),
         };
 
-        self.bonds.push(bond.clone());
-        Ok(bond)
+        let to = match &args[1] {
+            Value::String(s) => s,
+            _ => return Err(IcnError::VM("'to' argument must be a string".into())),
+        };
+
+        let amount = match &args[2] {
+            Value::Int(n) => *n as f64,
+            Value::Float(n) => *n,
+            _ => return Err(IcnError::VM("'amount' argument must be a number".into())),
+        };
+
+        let balances = contract.state.entry("balances".to_string())
+            .or_insert_with(|| Value::Map(HashMap::new()));
+
+        if let Value::Map(ref mut balance_map) = balances {
+            let from_balance = balance_map.entry(from.to_string())
+                .or_insert(Value::Float(0.0));
+            
+            let to_balance = balance_map.entry(to.to_string())
+                .or_insert(Value::Float(0.0));
+
+            if let (Value::Float(from_amount), Value::Float(to_amount)) = (from_balance, to_balance) {
+                if *from_amount < amount {
+                    return Err(IcnError::VM("Insufficient balance for transfer".into()));
+                }
+
+                *from_amount -= amount;
+                *to_amount += amount;
+
+                Ok(Value::Bool(true))
+            } else {
+                Err(IcnError::VM("Invalid balance type".into()))
+            }
+        } else {
+            Err(IcnError::VM("Invalid state structure".into()))
+        }
     }
 
-    pub fn transfer_bond(&mut self, id: &str, new_owner: String) -> Result<()> {
-        let bond = self.bonds.iter_mut().find(|b| b.id == id).ok_or_else(|| Error {
-            message: "Bond not found".to_string(),
-        })?;
+    pub fn get_contract_state(&self, id: &str) -> IcnResult<&HashMap<String, Value>> {
+        self.contracts.get(id)
+            .map(|contract| &contract.state)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))
+    }
 
-        bond.owner = new_owner;
+    pub fn update_contract_state(&mut self, id: &str, key: String, value: Value) -> IcnResult<()> {
+        let contract = self.contracts.get_mut(id)
+            .ok_or_else(|| IcnError::VM(format!("Contract with id {} not found", id)))?;
+
+        contract.state.insert(key, value);
         Ok(())
-    }
-
-    pub fn get_bond(&self, id: &str) -> Option<&Bond> {
-        self.bonds.iter().find(|b| b.id == id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn test_create_and_transfer_token() {
-        let mut contract = AssetTokenContract::new();
-        let metadata = json!({ "type": "Real Estate", "location": "123 Main St" });
+    fn test_smart_contract_deployment_and_execution() {
+        let mut executor = SmartContractExecutor::new();
 
-        let token = contract.create_token("token1".to_string(), "Alice".to_string(), metadata).unwrap();
-        assert_eq!(token.owner, "Alice");
+        // Deploy a simple token contract
+        let contract_id = "token_contract".to_string();
+        let contract_code = r#"
+            function transfer(from, to, amount) {
+                // Transfer logic is implemented in the executor
+            }
+        "#.to_string();
 
-        contract.transfer_token("token1", "Bob".to_string()).unwrap();
-        let updated_token = contract.get_token("token1").unwrap();
-        assert_eq!(updated_token.owner, "Bob");
+        executor.deploy_contract(contract_id.clone(), contract_code).unwrap();
+
+        // Initialize some balances
+        executor.update_contract_state(&contract_id, "balances".to_string(), Value::Map(HashMap::new())).unwrap();
+        let mut initial_balances = HashMap::new();
+        initial_balances.insert("Alice".to_string(), Value::Float(100.0));
+        initial_balances.insert("Bob".to_string(), Value::Float(50.0));
+        executor.update_contract_state(&contract_id, "balances".to_string(), Value::Map(initial_balances)).unwrap();
+
+        // Execute a transfer
+        let result = executor.execute_contract(
+            &contract_id,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Float(30.0),
+            ],
+        ).unwrap();
+
+        assert_eq!(result, Value::Bool(true));
+
+        // Check the updated balances
+        let state = executor.get_contract_state(&contract_id).unwrap();
+        if let Value::Map(balances) = &state["balances"] {
+            assert_eq!(balances["Alice"], Value::Float(70.0));
+            assert_eq!(balances["Bob"], Value::Float(80.0));
+        } else {
+            panic!("Invalid state structure");
+        }
+
+        // Test insufficient balance
+        let result = executor.execute_contract(
+            &contract_id,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Float(100.0),
+            ],
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            IcnError::VM("Insufficient balance for transfer".into()).to_string()
+        );
     }
-
-    #[test]
-    fn test_create_and_transfer_bond() {
-        let mut contract = BondContract::new();
-        let bond = contract.create_bond("bond1".to_string(), "Alice".to_string(), "Terms of the bond".to_string()).unwrap();
-        assert_eq!(bond.owner, "Alice");
-
-        contract.transfer_bond("bond1", "Bob".to_string()).unwrap();
-        let updated_bond = contract.get_bond("bond1").unwrap();
-        assert_eq!(updated_bond.owner, "Bob");
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/smart_contract.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/smart_contract.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/templates.rs =====
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/templates.rs =====
@@ -11535,6 +11103,8 @@ impl Circuit<Scalar> for TransactionCircuit {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/circuits.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
+// File: icn_zkp/src/lib.rs
+
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use bls12_381::Bls12;
 use icn_common::{IcnResult, IcnError, Transaction};
@@ -11545,25 +11115,69 @@ pub use circuits::*;
 
 pub struct ZKPManager {
     params: bellman::groth16::Parameters<Bls12>,
+    pvk: bellman::groth16::PreparedVerifyingKey<Bls12>,
 }
 
 impl ZKPManager {
+    /// Creates a new ZKPManager with generated parameters.
     pub fn new() -> IcnResult<Self> {
         let mut rng = OsRng;
         let params = bellman::groth16::generate_random_parameters::<Bls12, _, _>(
-            circuits::TransactionCircuit::empty(),
+            TransactionCircuit::empty(),
             &mut rng
         ).map_err(|e| IcnError::ZKP(format!("Failed to generate ZKP parameters: {}", e)))?;
 
-        Ok(ZKPManager { params })
+        let pvk = bellman::groth16::prepare_verifying_key(&params.vk);
+
+        Ok(ZKPManager { params, pvk })
     }
 
-    pub fn create_proof<C>(&self, circuit: C) -> IcnResult<bellman::groth16::Proof<Bls12>>
-    where
-        C: Circuit<bls12_381::Scalar>,
-    {
+    /// Creates a zero-knowledge proof for a given transaction.
+    pub fn create_proof(&self, transaction: &Transaction) -> IcnResult<bellman::groth16::Proof<Bls12>> {
+        let circuit = TransactionCircuit::new(transaction);
         let mut rng = OsRng;
-        bellman::groth16::create_random_proof===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
+
+        bellman::groth16::create_random_proof(circuit, &self.params, &mut rng)
+            .map_err(|e| IcnError::ZKP(format!("Failed to create ZKP proof: {}", e)))
+    }
+
+    /// Verifies a zero-knowledge proof for a given transaction.
+    pub fn verify_proof(
+        &self,
+        proof: &bellman::groth16::Proof<Bls12>,
+        transaction: &Transaction,
+    ) -> IcnResult<bool> {
+        let inputs = TransactionCircuit::public_inputs(transaction);
+
+        bellman::groth16::verify_proof(&self.pvk, proof, &inputs)
+            .map_err(|e| IcnError::ZKP(format!("Failed to verify ZKP proof: {}", e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icn_common::CurrencyType;
+
+    #[test]
+    fn test_zkp_create_and_verify() {
+        let manager = ZKPManager::new().expect("Failed to create ZKPManager");
+
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1234567890,
+            signature: None,
+        };
+
+        let proof = manager.create_proof(&transaction).expect("Failed to create proof");
+        let is_valid = manager.verify_proof(&proof, &transaction).expect("Failed to verify proof");
+
+        assert!(is_valid, "Proof verification failed");
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
 [workspace]
@@ -11585,7 +11199,7 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives",
+    "crates/icn_incentives", "crates/icn_language",
 ]
 
 resolver = "2"
