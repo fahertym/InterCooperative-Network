@@ -1,3 +1,5 @@
+# File: /home/matt/InterCooperative-Network/Cargo.toml
+
 [workspace]
 members = [
     "crates/icn_common",
@@ -17,7 +19,8 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives", "crates/icn_language",
+    "crates/icn_incentives",
+    "crates/icn_language",  # Add this line
 ]
 
 resolver = "2"

@@ -1,3 +1,5 @@
+# File: /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml
+
 [package]
 name = "icn_core"
 version = "0.1.0"
@@ -13,10 +15,11 @@ icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
 icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
-tokio = { version = "1.0", features = ["full"] }
-log = "0.4"
-thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+icn_language = { path = "../icn_language" }  # Add this line
+tokio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

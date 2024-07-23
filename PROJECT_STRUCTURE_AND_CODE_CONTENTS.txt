@@ -170,6 +170,8 @@
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/Cargo.toml
+
 [workspace]
 members = [
     "crates/icn_common",
@@ -189,7 +191,8 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives", "crates/icn_language",
+    "crates/icn_incentives",
+    "crates/icn_language",  # Add this line
 ]
 
 resolver = "2"
@@ -200,8 +203,7 @@ tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 log = "0.4"
-env_logger = "0.9"
-===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+env_logger = "0.9"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 [package]
@@ -2327,6 +2329,8 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml
+
 [package]
 name = "icn_core"
 version = "0.1.0"
@@ -2342,10 +2346,11 @@ icn_identity = { path = "../icn_identity" }
 icn_network = { path = "../icn_network" }
 icn_sharding = { path = "../icn_sharding" }
 icn_vm = { path = "../icn_vm" }
-tokio = { version = "1.0", features = ["full"] }
-log = "0.4"
-thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+icn_language = { path = "../icn_language" }  # Add this line
+tokio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_core/Cargo.toml =====
@@ -5116,13 +5121,21 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_incentives/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml
+
 [package]
 name = "icn_language"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-===== END OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
+nom = "7.1.0"
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
 // File: crates/icn_language/src/lib.rs
@@ -7705,6 +7718,8 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml
+
 [package]
 name = "icn_smart_contracts"
 version = "0.1.0"
@@ -7713,9 +7728,10 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" }
 icn_vm = { path = "../icn_vm" }
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
-log = "0.4"
+icn_language = { path = "../icn_language" }  # Add this line
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
 pest = "2.1"
 pest_derive = "2.1"===== END OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
 
@@ -9263,6 +9279,8 @@ pub fn some_utility_function() {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_utils/src/utils.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml
+
 [package]
 name = "icn_vm"
 version = "0.1.0"
@@ -9270,11 +9288,12 @@ edition = "2021"
 
 [dependencies]
 icn_common = { path = "../icn_common" }
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["full"] }
-log = "0.4"
-thiserror = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+icn_language = { path = "../icn_language" }  # Add this line
+serde = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml =====
@@ -11180,6 +11199,8 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_zkp/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
+# File: /home/matt/InterCooperative-Network/Cargo.toml
+
 [workspace]
 members = [
     "crates/icn_common",
@@ -11199,7 +11220,8 @@ members = [
     "crates/icn_smart_contracts",
     "crates/icn_reputation",
     "crates/icn_market",
-    "crates/icn_incentives", "crates/icn_language",
+    "crates/icn_incentives",
+    "crates/icn_language",  # Add this line
 ]
 
 resolver = "2"
@@ -11210,6 +11232,5 @@ tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 log = "0.4"
-env_logger = "0.9"
-===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
+env_logger = "0.9"===== END OF /home/matt/InterCooperative-Network/Cargo.toml =====
 

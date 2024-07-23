@@ -1,3 +1,5 @@
+# File: /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml
+
 [package]
 name = "icn_smart_contracts"
 version = "0.1.0"
@@ -6,8 +8,9 @@ edition = "2021"
 [dependencies]
 icn_common = { path = "../icn_common" }
 icn_vm = { path = "../icn_vm" }
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
-log = "0.4"
+icn_language = { path = "../icn_language" }  # Add this line
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
 pest = "2.1"
 pest_derive = "2.1"
