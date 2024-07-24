@@ -1,5 +1,3 @@
-// File: crates/icn_language/src/lib.rs
-
 use nom::{
     IResult,
     branch::alt,
@@ -15,13 +13,16 @@ pub enum Statement {
     CoopCreate { name: String, coop_type: String },
     GovPolicyCreate { name: String, details: String },
     CommEventSchedule { name: String, date: String },
-    // Add more statement types as needed
+    ResourceAllocation { resource: String, amount: i64 },
+    ReputationUpdate { address: String, change: i64 },
+    VoteOnProposal { proposal_id: String, vote: bool },
+    MorphemicOperation { function: String, args: Vec<String> },
 }
 
-fn parse_identifier(input: &str) -> IResult<&str, &str> {
+fn parse_morphemic_identifier(input: &str) -> IResult<&str, &str> {
     recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_"))))
+        alpha1,
+        many0(alt((alphanumeric1, tag("-"))))
     ))(input)
 }
 
@@ -33,28 +34,21 @@ fn parse_string(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-fn parse_coop_create(input: &str) -> IResult<&str, Statement> {
-    let (input, _) = tag("coop-create")(input)?;
+fn parse_morphemic_operation(input: &str) -> IResult<&str, Statement> {
+    let (input, function) = parse_morphemic_identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('(')(input)?;
-    let (input, name) = preceded(tag("name:"), parse_string)(input)?;
-    let (input, _) = char(',')(input)?;
-    let (input, coop_type) = preceded(tag("type:"), parse_string)(input)?;
+    let (input, args) = many0(terminated(parse_string, multispace0))(input)?;
     let (input, _) = char(')')(input)?;
-    
-    Ok((input, Statement::CoopCreate { 
-        name: name.to_string(), 
-        coop_type: coop_type.to_string() 
+
+    Ok((input, Statement::MorphemicOperation {
+        function: function.to_string(),
+        args: args.into_iter().map(|s| s.to_string()).collect(),
     }))
 }
 
-// Implement other parsing functions for different statement types
-
 pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
-    alt((
-        parse_coop_create,
-        // Add other statement parsers here
-    ))(input)
+    parse_morphemic_operation(input)
 }
 
 pub fn compile(source: &str) -> Result<Vec<Statement>, String> {
@@ -79,16 +73,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_coop_create() {
-        let input = r#"coop-create(name: "Green Community Cooperative", type: "Sustainability")"#;
-        let result = parse_coop_create(input);
+    fn test_parse_morphemic_operation() {
+        let input = r#"net-node-connect("node1", "node2")"#;
+        let result = parse_morphemic_operation(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::CoopCreate {
-            name: "Green Community Cooperative".to_string(),
-            coop_type: "Sustainability".to_string(),
+        assert_eq!(statement, Statement::MorphemicOperation {
+            function: "net-node-connect".to_string(),
+            args: vec!["node1".to_string(), "node2".to_string()],
         });
     }
 
-    // Add more tests for other statement types and the compile function
+    #[test]
+    fn test_compile_multiple_statements() {
+        let input = r#"
+            econ-currency-mint("100", "BasicNeeds")
+            gov-proposal-submit("New policy for resource allocation")
+            coop-member-add("coop1", "member1")
+        "#;
+        let result = compile(input);
+        assert!(result.is_ok());
+        let statements = result.unwrap();
+        assert_eq!(statements.len(), 3);
+        assert!(matches!(statements[0], Statement::MorphemicOperation { function, .. } if function == "econ-currency-mint"));
+        assert!(matches!(statements[1], Statement::MorphemicOperation { function, .. } if function == "gov-proposal-submit"));
+        assert!(matches!(statements[2], Statement::MorphemicOperation { function, .. } if function == "coop-member-add"));
+    }
 }

@@ -5727,8 +5727,6 @@ log = { workspace = true }
 env_logger = { workspace = true }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
-// File: crates/icn_language/src/lib.rs
-
 use nom::{
     IResult,
     branch::alt,
@@ -5744,13 +5742,16 @@ pub enum Statement {
     CoopCreate { name: String, coop_type: String },
     GovPolicyCreate { name: String, details: String },
     CommEventSchedule { name: String, date: String },
-    // Add more statement types as needed
+    ResourceAllocation { resource: String, amount: i64 },
+    ReputationUpdate { address: String, change: i64 },
+    VoteOnProposal { proposal_id: String, vote: bool },
+    MorphemicOperation { function: String, args: Vec<String> },
 }
 
-fn parse_identifier(input: &str) -> IResult<&str, &str> {
+fn parse_morphemic_identifier(input: &str) -> IResult<&str, &str> {
     recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_"))))
+        alpha1,
+        many0(alt((alphanumeric1, tag("-"))))
     ))(input)
 }
 
@@ -5762,28 +5763,21 @@ fn parse_string(input: &str) -> IResult<&str, &str> {
     )(input)
 }
 
-fn parse_coop_create(input: &str) -> IResult<&str, Statement> {
-    let (input, _) = tag("coop-create")(input)?;
+fn parse_morphemic_operation(input: &str) -> IResult<&str, Statement> {
+    let (input, function) = parse_morphemic_identifier(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('(')(input)?;
-    let (input, name) = preceded(tag("name:"), parse_string)(input)?;
-    let (input, _) = char(',')(input)?;
-    let (input, coop_type) = preceded(tag("type:"), parse_string)(input)?;
+    let (input, args) = many0(terminated(parse_string, multispace0))(input)?;
     let (input, _) = char(')')(input)?;
-    
-    Ok((input, Statement::CoopCreate { 
-        name: name.to_string(), 
-        coop_type: coop_type.to_string() 
+
+    Ok((input, Statement::MorphemicOperation {
+        function: function.to_string(),
+        args: args.into_iter().map(|s| s.to_string()).collect(),
     }))
 }
 
-// Implement other parsing functions for different statement types
-
 pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
-    alt((
-        parse_coop_create,
-        // Add other statement parsers here
-    ))(input)
+    parse_morphemic_operation(input)
 }
 
 pub fn compile(source: &str) -> Result<Vec<Statement>, String> {
@@ -5808,18 +5802,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_coop_create() {
-        let input = r#"coop-create(name: "Green Community Cooperative", type: "Sustainability")"#;
-        let result = parse_coop_create(input);
+    fn test_parse_morphemic_operation() {
+        let input = r#"net-node-connect("node1", "node2")"#;
+        let result = parse_morphemic_operation(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::CoopCreate {
-            name: "Green Community Cooperative".to_string(),
-            coop_type: "Sustainability".to_string(),
+        assert_eq!(statement, Statement::MorphemicOperation {
+            function: "net-node-connect".to_string(),
+            args: vec!["node1".to_string(), "node2".to_string()],
         });
     }
 
-    // Add more tests for other statement types and the compile function
+    #[test]
+    fn test_compile_multiple_statements() {
+        let input = r#"
+            econ-currency-mint("100", "BasicNeeds")
+            gov-proposal-submit("New policy for resource allocation")
+            coop-member-add("coop1", "member1")
+        "#;
+        let result = compile(input);
+        assert!(result.is_ok());
+        let statements = result.unwrap();
+        assert_eq!(statements.len(), 3);
+        assert!(matches!(statements[0], Statement::MorphemicOperation { function, .. } if function == "econ-currency-mint"));
+        assert!(matches!(statements[1], Statement::MorphemicOperation { function, .. } if function == "gov-proposal-submit"));
+        assert!(matches!(statements[2], Statement::MorphemicOperation { function, .. } if function == "coop-member-add"));
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/Cargo.toml =====
@@ -10126,630 +10134,133 @@ chrono = { workspace = true }
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/compiler.rs =====
-use crate::vm::opcode::{Opcode, Value};
-use std::error::Error;
+use crate::{Statement, Expression, Value};
+use icn_vm::{Opcode, Value as VMValue};
 
-// Define the tokens that the lexer will generate from source code
-#[derive(Debug, PartialEq, Clone)]
-enum Token {
-    Identifier(String),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    True,
-    False,
-    If,
-    Else,
-    While,
-    Function,
-    Return,
-    Vote,
-    AllocateResource,
-    UpdateReputation,
-    CreateProposal,
-    GetProposalStatus,
-    Emit,
-    LParen,
-    RParen,
-    LBrace,
-    RBrace,
-    Semicolon,
-    Comma,
-    Equals,
-    Plus,
-    Minus,
-    Multiply,
-    Divide,
-    Modulo,
-    DoubleEquals,
-    NotEquals,
-    GreaterThan,
-    LessThan,
-    GreaterThanEquals,
-    LessThanEquals,
-    And,
-    Or,
-    Not,
+pub struct Compiler {
+    opcodes: Vec<Opcode>,
 }
 
-// Lexer for converting source code into tokens
-struct Lexer {
-    input: Vec<char>,
-    position: usize,
-}
-
-impl Lexer {
-    // Create a new lexer with the given input string
-    fn new(input: &str) -> Self {
-        Lexer {
-            input: input.chars().collect(),
-            position: 0,
-        }
+impl Compiler {
+    pub fn new() -> Self {
+        Compiler { opcodes: Vec::new() }
     }
 
-    // Get the next token from the input
-    fn next_token(&mut self) -> Option<Token> {
-        self.skip_whitespace();
-
-        if self.position >= self.input.len() {
-            return None;
+    pub fn compile(&mut self, statements: Vec<Statement>) -> Vec<Opcode> {
+        for statement in statements {
+            self.compile_statement(statement);
         }
+        self.opcodes.clone()
+    }
 
-        match self.input[self.position] {
-            '(' => {
-                self.position += 1;
-                Some(Token::LParen)
-            }
-            ')' => {
-                self.position += 1;
-                Some(Token::RParen)
-            }
-            '{' => {
-                self.position += 1;
-                Some(Token::LBrace)
-            }
-            '}' => {
-                self.position += 1;
-                Some(Token::RBrace)
-            }
-            ';' => {
-                self.position += 1;
-                Some(Token::Semicolon)
-            }
-            ',' => {
-                self.position += 1;
-                Some(Token::Comma)
-            }
-            '+' => {
-                self.position += 1;
-                Some(Token::Plus)
-            }
-            '-' => {
-                self.position += 1;
-                Some(Token::Minus)
-            }
-            '*' => {
-                self.position += 1;
-                Some(Token::Multiply)
-            }
-            '/' => {
-                self.position += 1;
-                Some(Token::Divide)
-            }
-            '%' => {
-                self.position += 1;
-                Some(Token::Modulo)
-            }
-            '=' => {
-                if self.peek_next() == Some('=') {
-                    self.position += 2;
-                    Some(Token::DoubleEquals)
+    fn compile_statement(&mut self, statement: Statement) {
+        match statement {
+            Statement::VariableDeclaration(name, expr) => {
+                self.compile_expression(expr);
+                self.opcodes.push(Opcode::Store(name));
+            },
+            Statement::FunctionCall(name, args) => {
+                for arg in args {
+                    self.compile_expression(arg);
+                }
+                self.opcodes.push(Opcode::MorphemicCall(name, args.len()));
+            },
+            Statement::IfStatement(condition, true_branch, false_branch) => {
+                self.compile_expression(condition);
+                let jump_false = self.opcodes.len();
+                self.opcodes.push(Opcode::JumpIfFalse(0)); // Placeholder
+                self.compile_statements(true_branch);
+                if let Some(false_branch) = false_branch {
+                    let jump_end = self.opcodes.len();
+                    self.opcodes.push(Opcode::Jump(0)); // Placeholder
+                    let false_start = self.opcodes.len();
+                    self.compile_statements(false_branch);
+                    let end = self.opcodes.len();
+                    self.opcodes[jump_false] = Opcode::JumpIfFalse(false_start);
+                    self.opcodes[jump_end] = Opcode::Jump(end);
                 } else {
-                    self.position += 1;
-                    Some(Token::Equals)
+                    let end = self.opcodes.len();
+                    self.opcodes[jump_false] = Opcode::JumpIfFalse(end);
                 }
-            }
-            '!' => {
-                if self.peek_next() == Some('=') {
-                    self.position += 2;
-                    Some(Token::NotEquals)
-                } else {
-                    self.position += 1;
-                    Some(Token::Not)
+            },
+            Statement::WhileLoop(condition, body) => {
+                let loop_start = self.opcodes.len();
+                self.compile_expression(condition);
+                let jump_false = self.opcodes.len();
+                self.opcodes.push(Opcode::JumpIfFalse(0)); // Placeholder
+                self.compile_statements(body);
+                self.opcodes.push(Opcode::Jump(loop_start));
+                let end = self.opcodes.len();
+                self.opcodes[jump_false] = Opcode::JumpIfFalse(end);
+            },
+        }
+    }
+
+    fn compile_statements(&mut self, statements: Vec<Statement>) {
+        for statement in statements {
+            self.compile_statement(statement);
+        }
+    }
+
+    fn compile_expression(&mut self, expr: Expression) {
+        match expr {
+            Expression::Literal(value) => {
+                self.opcodes.push(Opcode::Push(self.convert_value(value)));
+            },
+            Expression::Variable(name) => {
+                self.opcodes.push(Opcode::Load(name));
+            },
+            Expression::FunctionCall(name, args) => {
+                for arg in args {
+                    self.compile_expression(arg);
                 }
-            }
-            '>' => {
-                if self.peek_next() == Some('=') {
-                    self.position += 2;
-                    Some(Token::GreaterThanEquals)
-                } else {
-                    self.position += 1;
-                    Some(Token::GreaterThan)
-                }
-            }
-            '<' => {
-                if self.peek_next() == Some('=') {
-                    self.position += 2;
-                    Some(Token::LessThanEquals)
-                } else {
-                    self.position += 1;
-                    Some(Token::LessThan)
-                }
-            }
-            '&' => {
-                if self.peek_next() == Some('&') {
-                    self.position += 2;
-                    Some(Token::And)
-                } else {
-                    None // Invalid token
-                }
-            }
-            '|' => {
-                if self.peek_next() == Some('|') {
-                    self.position += 2;
-                    Some(Token::Or)
-                } else {
-                    None // Invalid token
-                }
-            }
-            '"' => Some(self.read_string()),
-            c if c.is_alphabetic() => Some(self.read_identifier()),
-            c if c.is_digit(10) => Some(self.read_number()),
-            _ => None, // Invalid token
+                self.opcodes.push(Opcode::MorphemicCall(name, args.len()));
+            },
         }
     }
 
-    // Skip whitespace characters in the input
-    fn skip_whitespace(&mut self) {
-        while self.position < self.input.len() && self.input[self.position].is_whitespace() {
-            self.position += 1;
+    fn convert_value(&self, value: Value) -> VMValue {
+        match value {
+            Value::Int(i) => VMValue::Int(i),
+            Value::Float(f) => VMValue::Float(f),
+            Value::Bool(b) => VMValue::Bool(b),
+            Value::String(s) => VMValue::String(s),
+            Value::Address(a) => VMValue::Address(a),
         }
-    }
-
-    // Peek at the next character without advancing the position
-    fn peek_next(&self) -> Option<char> {
-        if self.position + 1 < self.input.len() {
-            Some(self.input[self.position + 1])
-        } else {
-            None
-        }
-    }
-
-    // Read a string token from the input
-    fn read_string(&mut self) -> Token {
-        self.position += 1; // Skip opening quote
-        let start = self.position;
-        while self.position < self.input.len() && self.input[self.position] != '"' {
-            self.position += 1;
-        }
-        let value: String = self.input[start..self.position].iter().collect();
-        self.position += 1; // Skip closing quote
-        Token::String(value)
-    }
-
-    // Read an identifier token from the input
-    fn read_identifier(&mut self) -> Token {
-        let start = self.position;
-        while self.position < self.input.len() && (self.input[self.position].is_alphanumeric() || self.input[self.position] == '_') {
-            self.position += 1;
-        }
-        let value: String = self.input[start..self.position].iter().collect();
-        match value.as_str() {
-            "true" => Token::True,
-            "false" => Token::False,
-            "if" => Token::If,
-            "else" => Token::Else,
-            "while" => Token::While,
-            "function" => Token::Function,
-            "return" => Token::Return,
-            "vote" => Token::Vote,
-            "allocate_resource" => Token::AllocateResource,
-            "update_reputation" => Token::UpdateReputation,
-            "create_proposal" => Token::CreateProposal,
-            "get_proposal_status" => Token::GetProposalStatus,
-            "emit" => Token::Emit,
-            _ => Token::Identifier(value),
-        }
-    }
-
-    // Read a number token from the input
-    fn read_number(&mut self) -> Token {
-        let start = self.position;
-        let mut is_float = false;
-        while self.position < self.input.len() && (self.input[self.position].is_digit(10) || self.input[self.position] == '.') {
-            if self.input[self.position] == '.' {
-                is_float = true;
-            }
-            self.position += 1;
-        }
-        let value: String = self.input[start..self.position].iter().collect();
-        if is_float {
-            Token::Float(value.parse().unwrap())
-        } else {
-            Token::Integer(value.parse().unwrap())
-        }
-    }
-}
-
-// Parser for converting tokens into opcodes
-struct Parser {
-    tokens: Vec<Token>,
-    position: usize,
-}
-
-impl Parser {
-    // Create a new parser with the given tokens
-    fn new(tokens: Vec<Token>) -> Self {
-        Parser {
-            tokens,
-            position: 0,
-        }
-    }
-
-    // Parse the tokens into a vector of opcodes
-    fn parse(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let mut opcodes = Vec::new();
-        while self.position < self.tokens.len() {
-            opcodes.append(&mut self.parse_statement()?);
-        }
-        Ok(opcodes)
-    }
-
-    // Parse a single statement into opcodes
-    fn parse_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        match self.current_token() {
-            Some(Token::If) => self.parse_if_statement(),
-            Some(Token::While) => self.parse_while_statement(),
-            Some(Token::Function) => self.parse_function_definition(),
-            Some(Token::Return) => self.parse_return_statement(),
-            Some(Token::Identifier(_)) => self.parse_assignment_or_function_call(),
-            Some(Token::Vote) => self.parse_vote_statement(),
-            Some(Token::AllocateResource) => self.parse_allocate_resource_statement(),
-            Some(Token::UpdateReputation) => self.parse_update_reputation_statement(),
-            Some(Token::CreateProposal) => self.parse_create_proposal_statement(),
-            Some(Token::GetProposalStatus) => self.parse_get_proposal_status_statement(),
-            Some(Token::Emit) => self.parse_emit_statement(),
-            _ => Err("Unexpected token in statement".into()),
-        }
-    }
-
-    // Parse an if statement into opcodes
-    fn parse_if_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        // Implementation for parsing if statements
-        Err("If statement parsing not implemented yet".into())
-    }
-
-    // Parse a while loop into opcodes
-    fn parse_while_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        // Implementation for parsing while loops
-        Err("While statement parsing not implemented yet".into())
-    }
-
-    // Parse a function definition into opcodes
-    fn parse_function_definition(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        // Implementation for parsing function definitions
-        Err("Function definition parsing not implemented yet".into())
-    }
-
-    // Parse a return statement into opcodes
-    fn parse_return_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::Return)?;
-        let mut opcodes = self.parse_expression()?;
-        opcodes.push(Opcode::Return);
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse an assignment or function call into opcodes
-    fn parse_assignment_or_function_call(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let identifier = self.consume_identifier()?;
-        match self.current_token() {
-            Some(Token::Equals) => self.parse_assignment(identifier),
-            Some(Token::LParen) => self.parse_function_call(identifier),
-            _ => Err("Expected '=' or '(' after identifier".into()),
-        }
-    }
-
-    // Parse an assignment statement into opcodes
-    fn parse_assignment(&mut self, identifier: String) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::Equals)?;
-        let mut opcodes = self.parse_expression()?;
-        opcodes.push(Opcode::Store(identifier));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse a function call into opcodes
-    fn parse_function_call(&mut self, identifier: String) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::LParen)?;
-        let mut opcodes = Vec::new();
-        while !matches!(self.current_token(), Some(Token::RParen)) {
-            opcodes.append(&mut self.parse_expression()?);
-            if matches!(self.current_token(), Some(Token::Comma)) {
-                self.consume_token(Token::Comma)?;
-            }
-        }
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::Call(identifier));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse a vote statement into opcodes
-    fn parse_vote_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::Vote)?;
-        self.consume_token(Token::LParen)?;
-        let proposal_id = self.consume_string()?;
-        self.consume_token(Token::Comma)?;
-        let mut opcodes = self.parse_expression()?; // This should push a boolean onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::Vote(proposal_id));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse an allocate resource statement into opcodes
-    fn parse_allocate_resource_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::AllocateResource)?;
-        self.consume_token(Token::LParen)?;
-        let resource_id = self.consume_string()?;
-        self.consume_token(Token::Comma)?;
-        let mut opcodes = self.parse_expression()?; // This should push an integer onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::AllocateResource(resource_id));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse an update reputation statement into opcodes
-    fn parse_update_reputation_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::UpdateReputation)?;
-        self.consume_token(Token::LParen)?;
-        let address = self.consume_string()?;
-        self.consume_token(Token::Comma)?;
-        let mut opcodes = self.parse_expression()?; // This should push an integer onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::UpdateReputation(address));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse a create proposal statement into opcodes
-    fn parse_create_proposal_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::CreateProposal)?;
-        self.consume_token(Token::LParen)?;
-        let mut opcodes = self.parse_expression()?; // This should push a string onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::CreateProposal);
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse a get proposal status statement into opcodes
-    fn parse_get_proposal_status_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::GetProposalStatus)?;
-        self.consume_token(Token::LParen)?;
-        let mut opcodes = self.parse_expression()?; // This should push a string onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::GetProposalStatus);
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse an emit statement into opcodes
-    fn parse_emit_statement(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        self.consume_token(Token::Emit)?;
-        self.consume_token(Token::LParen)?;
-        let event_name = self.consume_string()?;
-        self.consume_token(Token::Comma)?;
-        let mut opcodes = self.parse_expression()?; // This should push the event data onto the stack
-        self.consume_token(Token::RParen)?;
-        opcodes.push(Opcode::Emit(event_name));
-        self.consume_token(Token::Semicolon)?;
-        Ok(opcodes)
-    }
-
-    // Parse an expression into opcodes
-    fn parse_expression(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let mut opcodes = self.parse_term()?;
-
-        while let Some(token) = self.current_token() {
-            match token {
-                Token::Plus => {
-                    self.position += 1;
-                    opcodes.append(&mut self.parse_term()?);
-                    opcodes.push(Opcode::Add);
-                }
-                Token::Minus => {
-                    self.position += 1;
-                    opcodes.append(&mut self.parse_term()?);
-                    opcodes.push(Opcode::Sub);
-                }
-                _ => break,
-            }
-        }
-
-        Ok(opcodes)
-    }
-
-    fn parse_term(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let mut opcodes = self.parse_factor()?;
-
-        while let Some(token) = self.current_token() {
-            match token {
-                Token::Multiply => {
-                    self.position += 1;
-                    opcodes.append(&mut self.parse_factor()?);
-                    opcodes.push(Opcode::Mul);
-                }
-                Token::Divide => {
-                    self.position += 1;
-                    opcodes.append(&mut self.parse_factor()?);
-                    opcodes.push(Opcode::Div);
-                }
-                _ => break,
-            }
-        }
-
-        Ok(opcodes)
-    }
-
-    fn parse_factor(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let token = self.current_token().cloned();
-        match token {
-            Some(Token::Integer(value)) => {
-                self.position += 1;
-                Ok(vec![Opcode::Push(Value::Int(value))])
-            }
-            Some(Token::Float(value)) => {
-                self.position += 1;
-                Ok(vec![Opcode::Push(Value::Float(value))])
-            }
-            Some(Token::String(value)) => {
-                self.position += 1;
-                Ok(vec![Opcode::Push(Value::String(value))])
-            }
-            Some(Token::True) => {
-                self.position += 1;
-                Ok(vec![Opcode::Push(Value::Bool(true))])
-            }
-            Some(Token::False) => {
-                self.position += 1;
-                Ok(vec![Opcode::Push(Value::Bool(false))])
-            }
-            Some(Token::Identifier(name)) => {
-                self.position += 1;
-                Ok(vec![Opcode::Load(name)])
-            }
-            Some(Token::LParen) => {
-                self.position += 1;
-                let expr = self.parse_expression()?;
-                self.consume_token(Token::RParen)?;
-                Ok(expr)
-            }
-            _ => Err("Unexpected token in expression".into()),
-        }
-    }
-
-    // Consume the next token if it matches the expected token
-    fn consume_token(&mut self, expected: Token) -> Result<(), Box<dyn Error>> {
-        if self.current_token() == Some(&expected) {
-            self.position += 1;
-            Ok(())
-        } else {
-            Err(format!("Unexpected token: expected {:?}, found {:?}", expected, self.current_token()).into())
-        }
-    }
-
-    // Consume an identifier token
-    fn consume_identifier(&mut self) -> Result<String, Box<dyn Error>> {
-        if let Some(Token::Identifier(name)) = self.current_token().cloned() {
-            self.position += 1;
-            Ok(name)
-        } else {
-            Err(format!("Expected identifier, found {:?}", self.current_token()).into())
-        }
-    }
-
-    // Consume a string token
-    fn consume_string(&mut self) -> Result<String, Box<dyn Error>> {
-        if let Some(Token::String(value)) = self.current_token().cloned() {
-            self.position += 1;
-            Ok(value)
-        } else {
-            Err(format!("Expected string, found {:?}", self.current_token()).into())
-        }
-    }
-
-    // Get the current token
-    fn current_token(&self) -> Option<&Token> {
-        self.tokens.get(self.position)
-    }
-}
-
-// Compiler for converting source code into opcodes
-pub struct CSCLCompiler {
-    lexer: Lexer,
-}
-
-impl CSCLCompiler {
-    // Create a new compiler with the given input source code
-    pub fn new(input: &str) -> Self {
-        CSCLCompiler {
-            lexer: Lexer::new(input),
-        }
-    }
-
-    // Compile the source code into a vector of opcodes
-    pub fn compile(&mut self) -> Result<Vec<Opcode>, Box<dyn Error>> {
-        let tokens = self.lexer.tokens();
-        let mut parser = Parser::new(tokens);
-        parser.parse()
-    }
-}
-
-impl Lexer {
-    // Get all tokens from the input
-    fn tokens(&mut self) -> Vec<Token> {
-        let mut tokens = Vec::new();
-        while let Some(token) = self.next_token() {
-            tokens.push(token);
-        }
-        tokens
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compile;
 
     #[test]
-    fn test_lexer() {
-        let input = "function test(x, y) { return x + y; }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokens();
-
-        assert_eq!(tokens, vec![
-            Token::Function,
-            Token::Identifier("test".to_string()),
-            Token::LParen,
-            Token::Identifier("x".to_string()),
-            Token::Comma,
-            Token::Identifier("y".to_string()),
-            Token::RParen,
-            Token::LBrace,
-            Token::Return,
-            Token::Identifier("x".to_string()),
-            Token::Plus,
-            Token::Identifier("y".to_string()),
-            Token::Semicolon,
-            Token::RBrace,
-        ]);
+    fn test_compile_program() {
+        let source = r#"
+            let x = 5
+            while x < 10 {
+                net-node-connect("node1", "node2")
+                x = x + 1
+            }
+            if x == 10 {
+                econ-currency-mint(100, "BasicNeeds")
+            } else {
+                gov-proposal-submit("Increase node count")
+            }
+        "#;
+        let ast = compile(source).unwrap();
+        let mut compiler = Compiler::new();
+        let opcodes = compiler.compile(ast);
+        
+        // Assert the number of opcodes and some key instructions
+        assert!(opcodes.len() > 10);
+        assert!(opcodes.contains(&Opcode::Push(VMValue::Int(5))));
+        assert!(opcodes.contains(&Opcode::MorphemicCall("net-node-connect".to_string(), 2)));
+        assert!(opcodes.contains(&Opcode::MorphemicCall("econ-currency-mint".to_string(), 2)));
+        assert!(opcodes.contains(&Opcode::MorphemicCall("gov-proposal-submit".to_string(), 1)));
     }
-
-    #[test]
-    fn test_compiler() {
-        let input = "x = 5 + 3 * 2; y = (10 - 4) / 2;";
-        let mut compiler = CSCLCompiler::new(input);
-        let opcodes = compiler.compile().unwrap();
-
-        assert_eq!(opcodes, vec![
-            Opcode::Push(Value::Int(5)),
-            Opcode::Push(Value::Int(3)),
-            Opcode::Push(Value::Int(2)),
-            Opcode::Mul,
-            Opcode::Add,
-            Opcode::Store("x".to_string()),
-            Opcode::Push(Value::Int(10)),
-            Opcode::Push(Value::Int(4)),
-            Opcode::Sub,
-            Opcode::Push(Value::Int(2)),
-            Opcode::Div,
-            Opcode::Store("y".to_string()),
-        ]);
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/compiler.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/compiler.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/coop_vm.rs =====
 use super::opcode::{Opcode, Value};
@@ -10909,6 +10420,10 @@ impl CoopVM {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
+use icn_blockchain::Block;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencySystem;
+use icn_governance::GovernanceSystem;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -10916,6 +10431,9 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     String(String),
+    Address(String),
+    List(Vec<Value>),
+    Map(HashMap<String, Value>),
 }
 
 #[derive(Clone, Debug)]
@@ -10937,9 +10455,10 @@ pub enum Opcode {
     Not,
     Store(String),
     Load(String),
-    Call(String),
-    JumpIf(usize),
     Jump(usize),
+    JumpIfFalse(usize),
+    MorphemicCall(String, usize),
+    Return,
 }
 
 pub struct CoopVM {
@@ -10947,51 +10466,45 @@ pub struct CoopVM {
     memory: HashMap<String, Value>,
     program: Vec<Opcode>,
     pc: usize,
-    context: Option<ContractContext>,
-}
-
-pub struct ContractContext {
-    pub balances: HashMap<String, f64>,
-    pub votes: HashMap<String, bool>,
-    pub reputation: HashMap<String, i32>,
+    blockchain: Box<dyn Block>,
+    consensus: Box<dyn PoCConsensus>,
+    currency_system: Box<dyn CurrencySystem>,
+    governance: Box<dyn GovernanceSystem>,
 }
 
 impl CoopVM {
-    pub fn new(program: Vec<Opcode>) -> Self {
+    pub fn new(
+        program: Vec<Opcode>,
+        blockchain: Box<dyn Block>,
+        consensus: Box<dyn PoCConsensus>,
+        currency_system: Box<dyn CurrencySystem>,
+        governance: Box<dyn GovernanceSystem>,
+    ) -> Self {
         CoopVM {
             stack: Vec::new(),
             memory: HashMap::new(),
             program,
             pc: 0,
-            context: None,
+            blockchain,
+            consensus,
+            currency_system,
+            governance,
         }
-    }
-
-    pub fn load_program(&mut self, program: Vec<Opcode>) {
-        self.program = program;
-        self.pc = 0;
-    }
-
-    pub fn set_context(&mut self, context: &ContractContext) {
-        self.context = Some(ContractContext {
-            balances: context.balances.clone(),
-            votes: context.votes.clone(),
-            reputation: context.reputation.clone(),
-        });
     }
 
     pub fn run(&mut self) -> IcnResult<()> {
         while self.pc < self.program.len() {
             self.execute_instruction()?;
-            self.pc += 1;
         }
         Ok(())
     }
 
     fn execute_instruction(&mut self) -> IcnResult<()> {
-        let instruction = &self.program[self.pc];
+        let instruction = self.program[self.pc].clone();
+        self.pc += 1;
+
         match instruction {
-            Opcode::Push(value) => self.stack.push(value.clone()),
+            Opcode::Push(value) => self.stack.push(value),
             Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? ; }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
@@ -11011,25 +10524,27 @@ impl CoopVM {
             }
             Opcode::Store(name) => {
                 let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                self.memory.insert(name.clone(), value);
+                self.memory.insert(name, value);
             }
             Opcode::Load(name) => {
-                let value = self.memory.get(name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
+                let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
             }
-            Opcode::Call(function) => {
-                let result = self.execute_built_in(function)?;
-                if let Some(value) = result {
-                    self.stack.push(value);
-                }
-            }
-            Opcode::JumpIf(target) => {
-                if self.pop_bool()? {
-                    self.pc = *target - 1; // -1 because pc will be incremented after this instruction
-                }
-            }
             Opcode::Jump(target) => {
-                self.pc = *target - 1; // -1 because pc will be incremented after this instruction
+                self.pc = target;
+            }
+            Opcode::JumpIfFalse(target) => {
+                let condition = self.pop_bool()?;
+                if !condition {
+                    self.pc = target;
+                }
+            }
+            Opcode::MorphemicCall(function, arg_count) => {
+                self.morphemic_call(&function, arg_count)?;
+            }
+            Opcode::Return => {
+                // For simplicity, we'll just stop execution
+                self.pc = self.program.len();
             }
         }
         Ok(())
@@ -11047,11 +10562,11 @@ impl CoopVM {
 
     fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
     where
-        F: Fn(f64, f64) -> bool,
+        F: Fn(&Value, &Value) -> bool,
     {
-        let b = self.pop_number()?;
-        let a = self.pop_number()?;
-        self.stack.push(Value::Bool(op(a, b)));
+        let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        self.stack.push(Value::Bool(op(&a, &b)));
         Ok(())
     }
 
@@ -11087,146 +10602,228 @@ impl CoopVM {
         }
     }
 
-    fn execute_built_in(&mut self, function: &str) -> IcnResult<Option<Value>> {
+    fn morphemic_call(&mut self, function: &str, arg_count: usize) -> IcnResult<()> {
+        let mut args = Vec::new();
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?);
+        }
+        args.reverse();
+
         match function {
-            "transfer" => self.transfer(),
-            "vote" => self.vote(),
-            "get_balance" => self.get_balance(),
-            "update_reputation" => self.update_reputation(),
-            _ => Err(IcnError::VM(format!("Unknown built-in function: {}", function))),
+            "net-node-connect" => self.net_node_connect(args),
+            "chain-block-validate" => self.chain_block_validate(args),
+            "econ-currency-mint" => self.econ_currency_mint(args),
+            "gov-proposal-submit" => self.gov_proposal_submit(args),
+            "coop-member-add" => self.coop_member_add(args),
+            "comm-event-organize" => self.comm_event_organize(args),
+            _ => Err(IcnError::VM(format!("Unknown morphemic function: {}", function))),
         }
     }
 
-    fn transfer(&mut self) -> IcnResult<Option<Value>> {
-        let amount = self.pop_number()?;
-        let to = self.pop_string()?;
-        let from = self.pop_string()?;
-
-        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
+    fn net_node_connect(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 2 {
+            return Err(IcnError::VM("net-node-connect expects 2 arguments".into()));
+        }
+        let node1 = self.value_to_string(&args[0])?;
+        let node2 = self.value_to_string(&args[1])?;
         
-        let from_balance = context.balances.entry(from.clone()).or_insert(0.0);
-        if *from_balance < amount {
-            return Err(IcnError::VM("Insufficient balance".into()));
+        // Here you would implement the actual node connection logic
+        println!("Connecting nodes: {} and {}", node1, node2);
+        Ok(())
+    }
+
+    fn chain_block_validate(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 1 {
+            return Err(IcnError::VM("chain-block-validate expects 1 argument".into()));
         }
-        *from_balance -= amount;
-
-        let to_balance = context.balances.entry(to.clone()).or_insert(0.0);
-        *to_balance += amount;
-
-        Ok(None)
+        let block_id = self.value_to_string(&args[0])?;
+        
+        // Here you would implement the actual block validation logic
+        let is_valid = self.blockchain.validate_block(&block_id)?;
+        self.stack.push(Value::Bool(is_valid));
+        Ok(())
     }
 
-    fn vote(&mut self) -> IcnResult<Option<Value>> {
-        let vote = self.pop_bool()?;
-        let proposal = self.pop_string()?;
-
-        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
-        context.votes.insert(proposal, vote);
-
-        Ok(None)
+    fn econ_currency_mint(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 2 {
+            return Err(IcnError::VM("econ-currency-mint expects 2 arguments".into()));
+        }
+        let amount = self.value_to_number(&args[0])?;
+        let currency_type = self.value_to_string(&args[1])?;
+        
+        // Here you would implement the actual currency minting logic
+        self.currency_system.mint(&currency_type, amount)?;
+        Ok(())
     }
 
-    fn get_balance(&mut self) -> IcnResult<Option<Value>> {
-        let address = self.pop_string()?;
-
-        let context = self.context.as_ref().ok_or(IcnError::VM("No context set".into()))?;
-        let balance = *context.balances.get(&address).unwrap_or(&0.0);
-
-        Ok(Some(Value::Float(balance)))
+    fn gov_proposal_submit(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 1 {
+            return Err(IcnError::VM("gov-proposal-submit expects 1 argument".into()));
+        }
+        let proposal = self.value_to_string(&args[0])?;
+        
+        // Here you would implement the actual proposal submission logic
+        let proposal_id = self.governance.submit_proposal(&proposal)?;
+        self.stack.push(Value::String(proposal_id));
+        Ok(())
     }
 
-    fn update_reputation(&mut self) -> IcnResult<Option<Value>> {
-        let change = self.pop_number()? as i32;
-        let address = self.pop_string()?;
-
-        let context = self.context.as_mut().ok_or(IcnError::VM("No context set".into()))?;
-        let reputation = context.reputation.entry(address).or_insert(0);
-        *reputation += change;
-
-        Ok(None)
+    fn coop_member_add(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 2 {
+            return Err(IcnError::VM("coop-member-add expects 2 arguments".into()));
+        }
+        let coop_id = self.value_to_string(&args[0])?;
+        let member_id = self.value_to_string(&args[1])?;
+        
+        // Here you would implement the actual member addition logic
+        // For this example, we'll just print the action
+        println!("Adding member {} to cooperative {}", member_id, coop_id);
+        Ok(())
     }
 
-    pub fn get_stack(&self) -> &Vec<Value> {
-        &self.stack
+    fn comm_event_organize(&mut self, args: Vec<Value>) -> IcnResult<()> {
+        if args.len() != 1 {
+            return Err(IcnError::VM("comm-event-organize expects 1 argument".into()));
+        }
+        let event_details = self.value_to_string(&args[0])?;
+        
+        // Here you would implement the actual event organization logic
+        // For this example, we'll just print the action
+        println!("Organizing community event: {}", event_details);
+        Ok(())
     }
 
-    pub fn get_memory(&self) -> &HashMap<String, Value> {
-        &self.memory
+    fn value_to_string(&self, value: &Value) -> IcnResult<String> {
+        match value {
+            Value::String(s) => Ok(s.clone()),
+            _ => Err(IcnError::VM("Expected string value".into())),
+        }
+    }
+
+    fn value_to_number(&self, value: &Value) -> IcnResult<f64> {
+        match value {
+            Value::Int(i) => Ok(*i as f64),
+            Value::Float(f) => Ok(*f),
+            _ => Err(IcnError::VM("Expected numeric value".into())),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct MockBlock;
+    impl Block for MockBlock {
+        fn validate_block(&self, _block_id: &str) -> IcnResult<bool> {
+            Ok(true)
+        }
+    }
+
+    struct MockConsensus;
+    impl PoCConsensus for MockConsensus {}
+
+    struct MockCurrencySystem {
+        minted: Rc<RefCell<HashMap<String, f64>>>,
+    }
+    impl CurrencySystem for MockCurrencySystem {
+        fn mint(&self, currency_type: &str, amount: f64) -> IcnResult<()> {
+            let mut minted = self.minted.borrow_mut();
+            *minted.entry(currency_type.to_string()).or_default() += amount;
+            Ok(())
+        }
+    }
+
+    struct MockGovernance {
+        proposals: Rc<RefCell<Vec<String>>>,
+    }
+    impl GovernanceSystem for MockGovernance {
+        fn submit_proposal(&self, proposal: &str) -> IcnResult<String> {
+            let mut proposals = self.proposals.borrow_mut();
+            proposals.push(proposal.to_string());
+            Ok(format!("proposal_{}", proposals.len()))
+        }
+    }
 
     #[test]
-    fn test_basic_operations() {
+    fn test_morphemic_operations() {
         let program = vec![
-            Opcode::Push(Value::Int(5)),
-            Opcode::Push(Value::Int(3)),
+            Opcode::Push(Value::String("node1".to_string())),
+            Opcode::Push(Value::String("node2".to_string())),
+            Opcode::MorphemicCall("net-node-connect".to_string(), 2),
+            Opcode::Push(Value::Int(100)),
+            Opcode::Push(Value::String("BasicNeeds".to_string())),
+            Opcode::MorphemicCall("econ-currency-mint".to_string(), 2),
+            Opcode::Push(Value::String("Increase node count".to_string())),
+            Opcode::MorphemicCall("gov-proposal-submit".to_string(), 1),
+        ];
+
+        let minted = Rc::new(RefCell::new(HashMap::new()));
+        let proposals = Rc::new(RefCell::new(Vec::new()));
+
+        let mut vm = CoopVM::new(
+            program,
+            Box::new(MockBlock),
+            Box::new(MockConsensus),
+            Box::new(MockCurrencySystem { minted: Rc::clone(&minted) }),
+            Box::new(MockGovernance { proposals: Rc::clone(&proposals) }),
+        );
+
+        assert!(vm.run().is_ok());
+
+        assert_eq!(*minted.borrow().get("BasicNeeds").unwrap(), 100.0);
+        assert_eq!(proposals.borrow().len(), 1);
+        assert_eq!(proposals.borrow()[0], "Increase node count");
+
+        // Check if the proposal ID is on the stack
+        match vm.stack.pop() {
+            Some(Value::String(id)) => assert_eq!(id, "proposal_1"),
+            _ => panic!("Expected proposal ID on the stack"),
+        }
+    }
+
+    #[test]
+    fn test_control_flow() {
+        let program = vec![
+            Opcode::Push(Value::Int(10)),
+            Opcode::Store("x".to_string()),
+            Opcode::Push(Value::Int(0)),
+            Opcode::Store("sum".to_string()),
+            // Start of while loop
+            Opcode::Load("x".to_string()),
+            Opcode::Push(Value::Int(0)),
+            Opcode::Gt,
+            Opcode::JumpIfFalse(17), // Jump to after the loop if x <= 0
+            Opcode::Load("sum".to_string()),
+            Opcode::Load("x".to_string()),
             Opcode::Add,
-            Opcode::Push(Value::Int(2)),
-            Opcode::Mul,
+            Opcode::Store("sum".to_string()),
+            Opcode::Load("x".to_string()),
+            Opcode::Push(Value::Int(1)),
+            Opcode::Sub,
+            Opcode::Store("x".to_string()),
+            Opcode::Jump(4), // Jump back to the start of the loop
+            // End of while loop
+            Opcode::Load("sum".to_string()),
         ];
 
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
+        let mut vm = CoopVM::new(
+            program,
+            Box::new(MockBlock),
+            Box::new(MockConsensus),
+            Box::new(MockCurrencySystem { minted: Rc::new(RefCell::new(HashMap::new())) }),
+            Box::new(MockGovernance { proposals: Rc::new(RefCell::new(Vec::new())) }),
+        );
 
-        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
-    }
+        assert!(vm.run().is_ok());
 
-    #[test]
-    fn test_transfer() {
-        let program = vec![
-            Opcode::Push(Value::String("Alice".to_string())),
-            Opcode::Push(Value::String("Bob".to_string())),
-            Opcode::Push(Value::Float(50.0)),
-            Opcode::Call("transfer".to_string()),
-            Opcode::Push(Value::String("Alice".to_string())),
-            Opcode::Call("get_balance".to_string()),
-            Opcode::Push(Value::String("Bob".to_string())),
-            Opcode::Call("get_balance".to_string()),
-        ];
-
-        let mut vm = CoopVM::new(program);
-        let mut context = ContractContext {
-            balances: HashMap::new(),
-            votes: HashMap::new(),
-            reputation: HashMap::new(),
-        };
-        context.balances.insert("Alice".to_string(), 100.0);
-        context.balances.insert("Bob".to_string(), 0.0);
-        vm.set_context(&context);
-
-        vm.run().unwrap();
-
-        assert_eq!(vm.stack, vec![Value::Float(50.0), Value::Float(50.0)]);
-    }
-
-    #[test]
-    fn test_voting() {
-        let program = vec![
-            Opcode::Push(Value::String("proposal1".to_string())),
-            Opcode::Push(Value::Bool(true)),
-            Opcode::Call("vote".to_string()),
-            Opcode::Push(Value::String("proposal2".to_string())),
-            Opcode::Push(Value::Bool(false)),
-            Opcode::Call("vote".to_string()),
-        ];
-
-        let mut vm = CoopVM::new(program);
-        let context = ContractContext {
-            balances: HashMap::new(),
-            votes: HashMap::new(),
-            reputation: HashMap::new(),
-        };
-        vm.set_context(&context);
-
-        vm.run().unwrap();
-
-        assert_eq!(vm.context.unwrap().votes.len(), 2);
-        assert_eq!(vm.context.unwrap().votes.get("proposal1"), Some(&true));
-        assert_eq!(vm.context.unwrap().votes.get("proposal2"), Some(&false));
+        // Check if the sum is correct (should be 55)
+        match vm.stack.pop() {
+            Some(Value::Float(sum)) => assert_eq!(sum, 55.0),
+            _ => panic!("Expected sum on the stack"),
+        }
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 
