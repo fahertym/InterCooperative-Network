@@ -1,6 +1,6 @@
 // crates/icn_vm/src/lib.rs
 
-use icn_common::{IcnResult, IcnError};
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -291,11 +291,18 @@ impl CoopVM {
         self.stack.push(Value::Bool(op(a, b)));
         Ok(())
     }
+
+    pub fn execute_bytecode(&mut self, bytecode: Vec<Opcode>) -> IcnResult<()> {
+        self.program = bytecode;
+        self.pc = 0;
+        self.run()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_language::compile_to_bytecode;
 
     #[test]
     fn test_basic_operations() {
@@ -335,5 +342,17 @@ mod tests {
         let mut vm = CoopVM::new(program);
         assert!(vm.run().is_ok());
         assert_eq!(vm.stack, vec![Value::String("new_proposal_id".to_string())]);
+    }
+
+    #[test]
+    fn test_execute_bytecode() {
+        let source = r#"
+            net-node-connect("node1", "node2")
+            econ-currency-mint(100.0, "BasicNeeds")
+        "#;
+        let bytecode = compile_to_bytecode(source).unwrap();
+        let mut vm = CoopVM::new(vec![]);
+        assert!(vm.execute_bytecode(bytecode).is_ok());
+        // Add assertions here to check the state of the VM
     }
 }

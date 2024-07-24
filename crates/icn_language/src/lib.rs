@@ -413,4 +413,203 @@ mod tests {
     fn test_parse_chain_block_create() {
         let input = r#"chain-block-create("tx1", "tx2", "tx3")"#;
         let result = parse_chain_block_create(input);
-        assert!(result.is
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Chain_Block_Create {
+            transactions: vec!["tx1".to_string(), "tx2".to_string(), "tx3".to_string()],
+        });
+    }
+
+    #[test]
+    fn test_parse_econ_currency_mint() {
+        let input = r#"econ-currency-mint(100.5, "BasicNeeds")"#;
+        let result = parse_econ_currency_mint(input);
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Econ_Currency_Mint {
+            amount: 100.5,
+            currency_type: "BasicNeeds".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_gov_proposal_submit() {
+        let input = r#"gov-proposal-submit("Increase node count")"#;
+        let result = parse_gov_proposal_submit(input);
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Gov_Proposal_Submit {
+            description: "Increase node count".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_coop_member_add() {
+        let input = r#"coop-member-add("coop1", "member1")"#;
+        let result = parse_coop_member_add(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Coop_Member_Add {
+            coop_id: "coop1".to_string(),
+            member_id: "member1".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_comm_event_organize() {
+        let input = r#"comm-event-organize("Community meetup on Saturday")"#;
+        let result = parse_comm_event_organize(input);
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Comm_Event_Organize {
+            event_details: "Community meetup on Saturday".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_vote_on_proposal() {
+        let input = r#"vote-on-proposal("proposal1", true)"#;
+        let result = parse_vote_on_proposal(input);
+        assert!(result.is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Vote_On_Proposal {
+            proposal_id: "proposal1".to_string(),
+            vote: true,
+        });
+    }
+
+    #[test]
+    fn test_parse_allocate_resource() {
+        let input = r#"allocate-resource("computing_power", 100)"#;
+        let result = parse_allocate_resource(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Allocate_Resource {
+            resource: "computing_power".to_string(),
+            amount: 100,
+        });
+    }
+
+    #[test]
+    fn test_parse_update_reputation() {
+        let input = r#"update-reputation("user1", 5)"#;
+        let result = parse_update_reputation(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Update_Reputation {
+            address: "user1".to_string(),
+            change: 5,
+        });
+    }
+
+    #[test]
+    fn test_parse_create_proposal() {
+        let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
+        let result = parse_create_proposal(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Create_Proposal {
+            title: "New Policy".to_string(),
+            description: "Implement resource sharing".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_get_proposal_status() {
+        let input = r#"get-proposal-status("proposal1")"#;
+        let result = parse_get_proposal_status(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Get_Proposal_Status {
+            proposal_id: "proposal1".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_parse_emit_event() {
+        let input = r#"emit-event("NewMember", "Alice joined the network")"#;
+        let result = parse_emit_event(input);
+        assert!(result is_ok());
+        let (_, statement) = result.unwrap();
+        assert_eq!(statement, Statement::Emit_Event {
+            event_name: "NewMember".to_string(),
+            event_data: "Alice joined the network".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_compile_multiple_statements() {
+        let input = r#"
+            net-node-connect("node1", "node2")
+            econ-currency-mint(100.0, "BasicNeeds")
+            gov-proposal-submit("Increase node count")
+            coop-member-add("coop1", "Alice")
+            comm-event-organize("Community meetup")
+            vote-on-proposal("proposal1", true)
+            allocate-resource("computing_power", 50)
+            update-reputation("Bob", 10)
+            create-proposal("New Policy", "Implement resource sharing")
+            get-proposal-status("proposal2")
+            emit-event("NetworkUpdate", "New node added")
+        "#;
+        let result = compile(input);
+        assert!(result.is_ok());
+        let statements = result.unwrap();
+        assert_eq!(statements.len(), 11);
+        assert!(matches!(statements[0], Statement::Net_Node_Connect { .. }));
+        assert!(matches!(statements[1], Statement::Econ_Currency_Mint { .. }));
+        assert!(matches!(statements[2], Statement::Gov_Proposal_Submit { .. }));
+        assert!(matches!(statements[3], Statement::Coop_Member_Add { .. }));
+        assert!(matches!(statements[4], Statement::Comm_Event_Organize { .. }));
+        assert!(matches!(statements[5], Statement::Vote_On_Proposal { .. }));
+        assert!(matches!(statements[6], Statement::Allocate_Resource { .. }));
+        assert!(matches!(statements[7], Statement::Update_Reputation { .. }));
+        assert!(matches!(statements[8], Statement::Create_Proposal { .. }));
+        assert!(matches!(statements[9], Statement::Get_Proposal_Status { .. }));
+        assert!(matches!(statements[10], Statement::Emit_Event { .. }));
+    }
+
+    #[test]
+    fn test_compile_with_whitespace() {
+        let input = r#"
+            net-node-connect("node1", "node2")
+            
+            econ-currency-mint(100.0, "BasicNeeds")
+                gov-proposal-submit("Increase node count")
+            
+        "#;
+        let result = compile(input);
+        assert!(result.is_ok());
+        let statements = result.unwrap();
+        assert_eq!(statements.len(), 3);
+    }
+
+    #[test]
+    fn test_compile_error() {
+        let input = r#"
+            net-node-connect("node1", "node2")
+            invalid-statement()
+            econ-currency-mint(100.0, "BasicNeeds")
+        "#;
+        let result = compile(input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compile_to_bytecode() {
+        let input = r#"
+            net-node-connect("node1", "node2")
+            econ-currency-mint(100.0, "BasicNeeds")
+        "#;
+        let result = compile_to_bytecode(input);
+        assert!(result.is_ok());
+        let bytecode = result.unwrap();
+        assert_eq!(bytecode.len(), 7); // 2 pushes + 1 op for first statement, 2 pushes + 1 op for second statement
+        assert!(matches!(bytecode[0], Opcode::Push(Value::String(_))));
+        assert!(matches!(bytecode[1], Opcode::Push(Value::String(_))));
+        assert!(matches!(bytecode[2], Opcode::NetNodeConnect));
+        assert!(matches!(bytecode[3], Opcode::Push(Value::Float(_))));
+        assert!(matches!(bytecode[4], Opcode::Push(Value::String(_))));
+        assert!(matches!(bytecode[5], Opcode::EconCurrencyMint));
+    }
+}
