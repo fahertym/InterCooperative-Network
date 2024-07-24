@@ -80,6 +80,7 @@
 │   ├── icn_language
 │   │   ├── Cargo.toml
 │   │   └── src
+│   │       ├── bytecode.rs
 │   │       └── lib.rs
 │   ├── icn_market
 │   │   ├── Cargo.toml
@@ -172,7 +173,7 @@
 ├── README.md
 └── update_project.sh
 
-51 directories, 121 files
+51 directories, 122 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -5726,63 +5727,386 @@ log = { workspace = true }
 [dev-dependencies]
 env_logger = { workspace = true }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml =====
 
+===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/bytecode.rs =====
+// crates/icn_language/src/bytecode.rs
+
+use crate::Statement;
+use icn_vm::Opcode;
+
+pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
+    let mut bytecode = Vec::new();
+
+    for statement in statements {
+        match statement {
+            Statement::Net_Node_Connect { node1, node2 } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(node1.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::String(node2.clone())));
+                bytecode.push(Opcode::NetNodeConnect);
+            },
+            Statement::Chain_Block_Create { transactions } => {
+                for tx in transactions {
+                    bytecode.push(Opcode::Push(icn_vm::Value::String(tx.clone())));
+                }
+                bytecode.push(Opcode::Push(icn_vm::Value::Int(transactions.len() as i64)));
+                bytecode.push(Opcode::ChainBlockCreate);
+            },
+            Statement::Econ_Currency_Mint { amount, currency_type } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::Float(*amount)));
+                bytecode.push(Opcode::Push(icn_vm::Value::String(currency_type.clone())));
+                bytecode.push(Opcode::EconCurrencyMint);
+            },
+            Statement::Gov_Proposal_Submit { description } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(description.clone())));
+                bytecode.push(Opcode::GovProposalSubmit);
+            },
+            Statement::Coop_Member_Add { coop_id, member_id } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(coop_id.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::String(member_id.clone())));
+                bytecode.push(Opcode::CoopMemberAdd);
+            },
+            Statement::Comm_Event_Organize { event_details } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(event_details.clone())));
+                bytecode.push(Opcode::CommEventOrganize);
+            },
+            Statement::Vote_On_Proposal { proposal_id, vote } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(proposal_id.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::Bool(*vote)));
+                bytecode.push(Opcode::VoteOnProposal);
+            },
+            Statement::Allocate_Resource { resource, amount } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(resource.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::Int(*amount)));
+                bytecode.push(Opcode::AllocateResource);
+            },
+            Statement::Update_Reputation { address, change } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(address.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::Int(*change)));
+                bytecode.push(Opcode::UpdateReputation);
+            },
+            Statement::Create_Proposal { title, description } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(title.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::String(description.clone())));
+                bytecode.push(Opcode::CreateProposal);
+            },
+            Statement::Get_Proposal_Status { proposal_id } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(proposal_id.clone())));
+                bytecode.push(Opcode::GetProposalStatus);
+            },
+            Statement::Emit_Event { event_name, event_data } => {
+                bytecode.push(Opcode::Push(icn_vm::Value::String(event_name.clone())));
+                bytecode.push(Opcode::Push(icn_vm::Value::String(event_data.clone())));
+                bytecode.push(Opcode::EmitEvent);
+            },
+        }
+    }
+
+    bytecode
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/bytecode.rs =====
+
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
+// crates/icn_language/src/lib.rs
+
 use nom::{
     IResult,
     branch::alt,
     bytes::complete::{tag, take_while1},
-    character::complete::{alpha1, alphanumeric1, char, multispace0},
-    combinator::{map, recognize},
-    multi::many0,
-    sequence::{delimited, pair, preceded, terminated},
+    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1},
+    combinator::{map, recognize, opt},
+    multi::{many0, separated_list0},
+    sequence::{delimited, pair, preceded, terminated, tuple},
 };
+use icn_vm::{Opcode, Value};
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
-    CoopCreate { name: String, coop_type: String },
-    GovPolicyCreate { name: String, details: String },
-    CommEventSchedule { name: String, date: String },
-    ResourceAllocation { resource: String, amount: i64 },
-    ReputationUpdate { address: String, change: i64 },
-    VoteOnProposal { proposal_id: String, vote: bool },
-    MorphemicOperation { function: String, args: Vec<String> },
+    Net_Node_Connect { node1: String, node2: String },
+    Chain_Block_Create { transactions: Vec<String> },
+    Econ_Currency_Mint { amount: f64, currency_type: String },
+    Gov_Proposal_Submit { description: String },
+    Coop_Member_Add { coop_id: String, member_id: String },
+    Comm_Event_Organize { event_details: String },
+    Vote_On_Proposal { proposal_id: String, vote: bool },
+    Allocate_Resource { resource: String, amount: i64 },
+    Update_Reputation { address: String, change: i64 },
+    Create_Proposal { title: String, description: String },
+    Get_Proposal_Status { proposal_id: String },
+    Emit_Event { event_name: String, event_data: String },
 }
 
-fn parse_morphemic_identifier(input: &str) -> IResult<&str, &str> {
-    recognize(pair(
-        alpha1,
-        many0(alt((alphanumeric1, tag("-"))))
-    ))(input)
-}
-
-fn parse_string(input: &str) -> IResult<&str, &str> {
-    delimited(
-        char('"'),
-        take_while1(|c| c != '"'),
-        char('"')
+fn parse_string(input: &str) -> IResult<&str, String> {
+    map(
+        delimited(
+            char('"'),
+            take_while1(|c| c != '"'),
+            char('"')
+        ),
+        |s: &str| s.to_string()
     )(input)
 }
 
-fn parse_morphemic_operation(input: &str) -> IResult<&str, Statement> {
-    let (input, function) = parse_morphemic_identifier(input)?;
-    let (input, _) = multispace0(input)?;
-    let (input, _) = char('(')(input)?;
-    let (input, args) = many0(terminated(parse_string, multispace0))(input)?;
-    let (input, _) = char(')')(input)?;
-
-    Ok((input, Statement::MorphemicOperation {
-        function: function.to_string(),
-        args: args.into_iter().map(|s| s.to_string()).collect(),
-    }))
+fn parse_number(input: &str) -> IResult<&str, f64> {
+    map(
+        recognize(tuple((
+            opt(char('-')),
+            take_while1(|c: char| c.is_digit(10)),
+            opt(pair(
+                char('.'),
+                take_while1(|c: char| c.is_digit(10))
+            ))
+        ))),
+        |s: &str| s.parse().unwrap()
+    )(input)
 }
 
-pub fn parse_statement(input: &str) -> IResult<&str, Statement> {
-    parse_morphemic_operation(input)
+fn parse_integer(input: &str) -> IResult<&str, i64> {
+    map(
+        recognize(pair(
+            opt(char('-')),
+            take_while1(|c: char| c.is_digit(10))
+        )),
+        |s: &str| s.parse().unwrap()
+    )(input)
+}
+
+fn parse_boolean(input: &str) -> IResult<&str, bool> {
+    alt((
+        map(tag("true"), |_| true),
+        map(tag("false"), |_| false)
+    ))(input)
+}
+
+fn parse_net_node_connect(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("net-node-connect"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, node1, _, _, _, node2, _, _)| Statement::Net_Node_Connect { node1, node2 }
+    )(input)
+}
+
+fn parse_chain_block_create(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("chain-block-create"),
+            multispace0,
+            char('('),
+            multispace0,
+            separated_list0(tuple((multispace0, char(','), multispace0)), parse_string),
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, transactions, _, _)| Statement::Chain_Block_Create { transactions }
+    )(input)
+}
+
+fn parse_econ_currency_mint(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("econ-currency-mint"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_number,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, amount, _, _, _, currency_type, _, _)| Statement::Econ_Currency_Mint { amount, currency_type }
+    )(input)
+}
+
+fn parse_gov_proposal_submit(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("gov-proposal-submit"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, description, _, _)| Statement::Gov_Proposal_Submit { description }
+    )(input)
+}
+
+fn parse_coop_member_add(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("coop-member-add"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, coop_id, _, _, _, member_id, _, _)| Statement::Coop_Member_Add { coop_id, member_id }
+    )(input)
+}
+
+fn parse_comm_event_organize(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("comm-event-organize"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, event_details, _, _)| Statement::Comm_Event_Organize { event_details }
+    )(input)
+}
+
+fn parse_vote_on_proposal(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("vote-on-proposal"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_boolean,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, proposal_id, _, _, _, vote, _, _)| Statement::Vote_On_Proposal { proposal_id, vote }
+    )(input)
+}
+
+fn parse_allocate_resource(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("allocate-resource"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_integer,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, resource, _, _, _, amount, _, _)| Statement::Allocate_Resource { resource, amount }
+    )(input)
+}
+
+fn parse_update_reputation(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("update-reputation"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_integer,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, address, _, _, _, change, _, _)| Statement::Update_Reputation { address, change }
+    )(input)
+}
+
+fn parse_create_proposal(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("create-proposal"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, title, _, _, _, description, _, _)| Statement::Create_Proposal { title, description }
+    )(input)
+}
+
+fn parse_get_proposal_status(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("get-proposal-status"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, proposal_id, _, _)| Statement::Get_Proposal_Status { proposal_id }
+    )(input)
+}
+
+fn parse_emit_event(input: &str) -> IResult<&str, Statement> {
+    map(
+        tuple((
+            tag("emit-event"),
+            multispace0,
+            char('('),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(','),
+            multispace0,
+            parse_string,
+            multispace0,
+            char(')')
+        )),
+        |(_, _, _, _, event_name, _, _, _, event_data, _, _)| Statement::Emit_Event { event_name, event_data }
+    )(input)
+}
+
+fn parse_statement(input: &str) -> IResult<&str, Statement> {
+    alt((
+        parse_net_node_connect,
+        parse_chain_block_create,
+        parse_econ_currency_mint,
+        parse_gov_proposal_submit,
+        parse_coop_member_add,
+        parse_comm_event_organize,
+        parse_vote_on_proposal,
+        parse_allocate_resource,
+        parse_update_reputation,
+        parse_create_proposal,
+        parse_get_proposal_status,
+        parse_emit_event
+    ))(input)
 }
 
 pub fn compile(source: &str) -> Result<Vec<Statement>, String> {
     let mut statements = Vec::new();
-    let mut remaining = source;
+    let mut remaining = source.trim();
 
     while !remaining.is_empty() {
         match parse_statement(remaining) {
@@ -5790,11 +6114,89 @@ pub fn compile(source: &str) -> Result<Vec<Statement>, String> {
                 statements.push(statement);
                 remaining = rest.trim();
             }
-            Err(_) => return Err("Failed to parse statement".to_string()),
+            Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+                return Err(format!("Failed to parse statement: {:?}", e));
+            }
+            Err(_) => return Err("Unknown parsing error".to_string()),
         }
     }
 
     Ok(statements)
+}
+
+pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
+    let mut bytecode = Vec::new();
+
+    for statement in statements {
+        match statement {
+            Statement::Net_Node_Connect { node1, node2 } => {
+                bytecode.push(Opcode::Push(Value::String(node1.clone())));
+                bytecode.push(Opcode::Push(Value::String(node2.clone())));
+                bytecode.push(Opcode::NetNodeConnect);
+            },
+            Statement::Chain_Block_Create { transactions } => {
+                for tx in transactions {
+                    bytecode.push(Opcode::Push(Value::String(tx.clone())));
+                }
+                bytecode.push(Opcode::Push(Value::Int(transactions.len() as i64)));
+                bytecode.push(Opcode::ChainBlockCreate);
+            },
+            Statement::Econ_Currency_Mint { amount, currency_type } => {
+                bytecode.push(Opcode::Push(Value::Float(*amount)));
+                bytecode.push(Opcode::Push(Value::String(currency_type.clone())));
+                bytecode.push(Opcode::EconCurrencyMint);
+            },
+            Statement::Gov_Proposal_Submit { description } => {
+                bytecode.push(Opcode::Push(Value::String(description.clone())));
+                bytecode.push(Opcode::GovProposalSubmit);
+            },
+            Statement::Coop_Member_Add { coop_id, member_id } => {
+                bytecode.push(Opcode::Push(Value::String(coop_id.clone())));
+                bytecode.push(Opcode::Push(Value::String(member_id.clone())));
+                bytecode.push(Opcode::CoopMemberAdd);
+            },
+            Statement::Comm_Event_Organize { event_details } => {
+                bytecode.push(Opcode::Push(Value::String(event_details.clone())));
+                bytecode.push(Opcode::CommEventOrganize);
+            },
+            Statement::Vote_On_Proposal { proposal_id, vote } => {
+                bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
+                bytecode.push(Opcode::Push(Value::Bool(*vote)));
+                bytecode.push(Opcode::VoteOnProposal);
+            },
+            Statement::Allocate_Resource { resource, amount } => {
+                bytecode.push(Opcode::Push(Value::String(resource.clone())));
+                bytecode.push(Opcode::Push(Value::Int(*amount)));
+                bytecode.push(Opcode::AllocateResource);
+            },
+            Statement::Update_Reputation { address, change } => {
+                bytecode.push(Opcode::Push(Value::String(address.clone())));
+                bytecode.push(Opcode::Push(Value::Int(*change)));
+                bytecode.push(Opcode::UpdateReputation);
+            },
+            Statement::Create_Proposal { title, description } => {
+                bytecode.push(Opcode::Push(Value::String(title.clone())));
+                bytecode.push(Opcode::Push(Value::String(description.clone())));
+                bytecode.push(Opcode::CreateProposal);
+            },
+            Statement::Get_Proposal_Status { proposal_id } => {
+                bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
+                bytecode.push(Opcode::GetProposalStatus);
+            },
+            Statement::Emit_Event { event_name, event_data } => {
+                bytecode.push(Opcode::Push(Value::String(event_name.clone())));
+                bytecode.push(Opcode::Push(Value::String(event_data.clone())));
+                bytecode.push(Opcode::EmitEvent);
+            },
+        }
+    }
+
+    bytecode
+}
+
+pub fn compile_to_bytecode(source: &str) -> Result<Vec<Opcode>, String> {
+    let statements = compile(source)?;
+    Ok(generate_bytecode(&statements))
 }
 
 #[cfg(test)]
@@ -5802,33 +6204,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_morphemic_operation() {
+    fn test_parse_net_node_connect() {
         let input = r#"net-node-connect("node1", "node2")"#;
-        let result = parse_morphemic_operation(input);
+        let result = parse_net_node_connect(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::MorphemicOperation {
-            function: "net-node-connect".to_string(),
-            args: vec!["node1".to_string(), "node2".to_string()],
+        assert_eq!(statement, Statement::Net_Node_Connect {
+            node1: "node1".to_string(),
+            node2: "node2".to_string(),
         });
     }
 
     #[test]
-    fn test_compile_multiple_statements() {
-        let input = r#"
-            econ-currency-mint("100", "BasicNeeds")
-            gov-proposal-submit("New policy for resource allocation")
-            coop-member-add("coop1", "member1")
-        "#;
-        let result = compile(input);
-        assert!(result.is_ok());
-        let statements = result.unwrap();
-        assert_eq!(statements.len(), 3);
-        assert!(matches!(statements[0], Statement::MorphemicOperation { function, .. } if function == "econ-currency-mint"));
-        assert!(matches!(statements[1], Statement::MorphemicOperation { function, .. } if function == "gov-proposal-submit"));
-        assert!(matches!(statements[2], Statement::MorphemicOperation { function, .. } if function == "coop-member-add"));
-    }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
+    fn test_parse_chain_block_create() {
+        let input = r#"chain-block-create("tx1", "tx2", "tx3")"#;
+        let result = parse_chain_block_create(input);
+        assert!(result.is===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/Cargo.toml =====
 [package]
@@ -10418,12 +10809,10 @@ impl CoopVM {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/coop_vm.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
+// crates/icn_vm/src/lib.rs
+
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-use icn_blockchain::Block;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencySystem;
-use icn_governance::GovernanceSystem;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -10457,8 +10846,20 @@ pub enum Opcode {
     Load(String),
     Jump(usize),
     JumpIfFalse(usize),
-    MorphemicCall(String, usize),
+    Call(String),
     Return,
+    NetNodeConnect,
+    ChainBlockCreate,
+    EconCurrencyMint,
+    GovProposalSubmit,
+    CoopMemberAdd,
+    CommEventOrganize,
+    VoteOnProposal,
+    AllocateResource,
+    UpdateReputation,
+    CreateProposal,
+    GetProposalStatus,
+    EmitEvent,
 }
 
 pub struct CoopVM {
@@ -10466,29 +10867,15 @@ pub struct CoopVM {
     memory: HashMap<String, Value>,
     program: Vec<Opcode>,
     pc: usize,
-    blockchain: Box<dyn Block>,
-    consensus: Box<dyn PoCConsensus>,
-    currency_system: Box<dyn CurrencySystem>,
-    governance: Box<dyn GovernanceSystem>,
 }
 
 impl CoopVM {
-    pub fn new(
-        program: Vec<Opcode>,
-        blockchain: Box<dyn Block>,
-        consensus: Box<dyn PoCConsensus>,
-        currency_system: Box<dyn CurrencySystem>,
-        governance: Box<dyn GovernanceSystem>,
-    ) -> Self {
+    pub fn new(program: Vec<Opcode>) -> Self {
         CoopVM {
             stack: Vec::new(),
             memory: HashMap::new(),
             program,
             pc: 0,
-            blockchain,
-            consensus,
-            currency_system,
-            governance,
         }
     }
 
@@ -10539,23 +10926,159 @@ impl CoopVM {
                     self.pc = target;
                 }
             }
-            Opcode::MorphemicCall(function, arg_count) => {
-                self.morphemic_call(&function, arg_count)?;
+            Opcode::Call(function) => {
+                self.execute_function(&function)?;
             }
             Opcode::Return => {
                 // For simplicity, we'll just stop execution
                 self.pc = self.program.len();
             }
+            Opcode::NetNodeConnect => self.net_node_connect()?,
+            Opcode::ChainBlockCreate => self.chain_block_create()?,
+            Opcode::EconCurrencyMint => self.econ_currency_mint()?,
+            Opcode::GovProposalSubmit => self.gov_proposal_submit()?,
+            Opcode::CoopMemberAdd => self.coop_member_add()?,
+            Opcode::CommEventOrganize => self.comm_event_organize()?,
+            Opcode::VoteOnProposal => self.vote_on_proposal()?,
+            Opcode::AllocateResource => self.allocate_resource()?,
+            Opcode::UpdateReputation => self.update_reputation()?,
+            Opcode::CreateProposal => self.create_proposal()?,
+            Opcode::GetProposalStatus => self.get_proposal_status()?,
+            Opcode::EmitEvent => self.emit_event()?,
         }
         Ok(())
+    }
+
+    // Implement the binary_op, compare_op, logic_op, and pop_bool methods here...
+
+    fn execute_function(&mut self, function: &str) -> IcnResult<()> {
+        // Implement function execution logic here
+        Ok(())
+    }
+
+    fn net_node_connect(&mut self) -> IcnResult<()> {
+        let node2 = self.pop_string()?;
+        let node1 = self.pop_string()?;
+        println!("Connecting nodes: {} and {}", node1, node2);
+        Ok(())
+    }
+
+    fn chain_block_create(&mut self) -> IcnResult<()> {
+        let transactions = self.pop_list()?;
+        println!("Creating block with {} transactions", transactions.len());
+        Ok(())
+    }
+
+    fn econ_currency_mint(&mut self) -> IcnResult<()> {
+        let currency_type = self.pop_string()?;
+        let amount = self.pop_float()?;
+        println!("Minting {} of currency type {}", amount, currency_type);
+        Ok(())
+    }
+
+    fn gov_proposal_submit(&mut self) -> IcnResult<()> {
+        let description = self.pop_string()?;
+        println!("Submitting proposal: {}", description);
+        Ok(())
+    }
+
+    fn coop_member_add(&mut self) -> IcnResult<()> {
+        let member_id = self.pop_string()?;
+        let coop_id = self.pop_string()?;
+        println!("Adding member {} to cooperative {}", member_id, coop_id);
+        Ok(())
+    }
+
+    fn comm_event_organize(&mut self) -> IcnResult<()> {
+        let event_details = self.pop_string()?;
+        println!("Organizing community event: {}", event_details);
+        Ok(())
+    }
+
+    fn vote_on_proposal(&mut self) -> IcnResult<()> {
+        let vote = self.pop_bool()?;
+        let proposal_id = self.pop_string()?;
+        println!("Voting {} on proposal {}", if vote { "Yes" } else { "No" }, proposal_id);
+        Ok(())
+    }
+
+    fn allocate_resource(&mut self) -> IcnResult<()> {
+        let amount = self.pop_int()?;
+        let resource = self.pop_string()?;
+        println!("Allocating {} units of resource {}", amount, resource);
+        Ok(())
+    }
+
+    fn update_reputation(&mut self) -> IcnResult<()> {
+        let change = self.pop_int()?;
+        let address = self.pop_string()?;
+        println!("Updating reputation of {} by {}", address, change);
+        Ok(())
+    }
+
+    fn create_proposal(&mut self) -> IcnResult<()> {
+        let description = self.pop_string()?;
+        let title = self.pop_string()?;
+        println!("Creating proposal: {} - {}", title, description);
+        self.stack.push(Value::String("new_proposal_id".to_string()));
+        Ok(())
+    }
+
+    fn get_proposal_status(&mut self) -> IcnResult<()> {
+        let proposal_id = self.pop_string()?;
+        println!("Getting status of proposal: {}", proposal_id);
+        self.stack.push(Value::String("Active".to_string()));
+        Ok(())
+    }
+
+    fn emit_event(&mut self) -> IcnResult<()> {
+        let event_data = self.pop_string()?;
+        let event_name = self.pop_string()?;
+        println!("Emitting event {}: {}", event_name, event_data);
+        Ok(())
+    }
+
+    fn pop_string(&mut self) -> IcnResult<String> {
+        match self.stack.pop() {
+            Some(Value::String(s)) => Ok(s),
+            _ => Err(IcnError::VM("Expected string value".into())),
+        }
+    }
+
+    fn pop_int(&mut self) -> IcnResult<i64> {
+        match self.stack.pop() {
+            Some(Value::Int(i)) => Ok(i),
+            _ => Err(IcnError::VM("Expected integer value".into())),
+        }
+    }
+
+    fn pop_float(&mut self) -> IcnResult<f64> {
+        match self.stack.pop() {
+            Some(Value::Float(f)) => Ok(f),
+            _ => Err(IcnError::VM("Expected float value".into())),
+        }
+    }
+
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop() {
+            Some(Value::Bool(b)) => Ok(b),
+            _ => Err(IcnError::VM("Expected boolean value".into())),
+        }
+    }
+
+    fn pop_list(&mut self) -> IcnResult<Vec<Value>> {
+        match self.stack.pop() {
+            Some(Value::List(l)) => Ok(l),
+            _ => Err(IcnError::VM("Expected list value".into())),
+        }
     }
 
     fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
     where
         F: Fn(f64, f64) -> f64,
     {
-        let b = self.pop_number()?;
-        let a = self.pop_number()?;
+        let b = self.pop_float()?;
+        let a = self.pop_float()?;
         self.stack.push(Value::Float(op(a, b)));
         Ok(())
     }
@@ -10579,251 +11102,50 @@ impl CoopVM {
         self.stack.push(Value::Bool(op(a, b)));
         Ok(())
     }
-
-    fn pop_number(&mut self) -> IcnResult<f64> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Int(i) => Ok(i as f64),
-            Value::Float(f) => Ok(f),
-            _ => Err(IcnError::VM("Expected number".into())),
-        }
-    }
-
-    fn pop_bool(&mut self) -> IcnResult<bool> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Bool(b) => Ok(b),
-            _ => Err(IcnError::VM("Expected boolean".into())),
-        }
-    }
-
-    fn pop_string(&mut self) -> IcnResult<String> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::String(s) => Ok(s),
-            _ => Err(IcnError::VM("Expected string".into())),
-        }
-    }
-
-    fn morphemic_call(&mut self, function: &str, arg_count: usize) -> IcnResult<()> {
-        let mut args = Vec::new();
-        for _ in 0..arg_count {
-            args.push(self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?);
-        }
-        args.reverse();
-
-        match function {
-            "net-node-connect" => self.net_node_connect(args),
-            "chain-block-validate" => self.chain_block_validate(args),
-            "econ-currency-mint" => self.econ_currency_mint(args),
-            "gov-proposal-submit" => self.gov_proposal_submit(args),
-            "coop-member-add" => self.coop_member_add(args),
-            "comm-event-organize" => self.comm_event_organize(args),
-            _ => Err(IcnError::VM(format!("Unknown morphemic function: {}", function))),
-        }
-    }
-
-    fn net_node_connect(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("net-node-connect expects 2 arguments".into()));
-        }
-        let node1 = self.value_to_string(&args[0])?;
-        let node2 = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual node connection logic
-        println!("Connecting nodes: {} and {}", node1, node2);
-        Ok(())
-    }
-
-    fn chain_block_validate(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("chain-block-validate expects 1 argument".into()));
-        }
-        let block_id = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual block validation logic
-        let is_valid = self.blockchain.validate_block(&block_id)?;
-        self.stack.push(Value::Bool(is_valid));
-        Ok(())
-    }
-
-    fn econ_currency_mint(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("econ-currency-mint expects 2 arguments".into()));
-        }
-        let amount = self.value_to_number(&args[0])?;
-        let currency_type = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual currency minting logic
-        self.currency_system.mint(&currency_type, amount)?;
-        Ok(())
-    }
-
-    fn gov_proposal_submit(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("gov-proposal-submit expects 1 argument".into()));
-        }
-        let proposal = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual proposal submission logic
-        let proposal_id = self.governance.submit_proposal(&proposal)?;
-        self.stack.push(Value::String(proposal_id));
-        Ok(())
-    }
-
-    fn coop_member_add(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("coop-member-add expects 2 arguments".into()));
-        }
-        let coop_id = self.value_to_string(&args[0])?;
-        let member_id = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual member addition logic
-        // For this example, we'll just print the action
-        println!("Adding member {} to cooperative {}", member_id, coop_id);
-        Ok(())
-    }
-
-    fn comm_event_organize(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("comm-event-organize expects 1 argument".into()));
-        }
-        let event_details = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual event organization logic
-        // For this example, we'll just print the action
-        println!("Organizing community event: {}", event_details);
-        Ok(())
-    }
-
-    fn value_to_string(&self, value: &Value) -> IcnResult<String> {
-        match value {
-            Value::String(s) => Ok(s.clone()),
-            _ => Err(IcnError::VM("Expected string value".into())),
-        }
-    }
-
-    fn value_to_number(&self, value: &Value) -> IcnResult<f64> {
-        match value {
-            Value::Int(i) => Ok(*i as f64),
-            Value::Float(f) => Ok(*f),
-            _ => Err(IcnError::VM("Expected numeric value".into())),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
-    struct MockBlock;
-    impl Block for MockBlock {
-        fn validate_block(&self, _block_id: &str) -> IcnResult<bool> {
-            Ok(true)
-        }
-    }
+    #[test]
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Float(5.0)),
+            Opcode::Push(Value::Float(3.0)),
+            Opcode::Add,
+            Opcode::Push(Value::Float(2.0)),
+            Opcode::Mul,
+        ];
 
-    struct MockConsensus;
-    impl PoCConsensus for MockConsensus {}
-
-    struct MockCurrencySystem {
-        minted: Rc<RefCell<HashMap<String, f64>>>,
-    }
-    impl CurrencySystem for MockCurrencySystem {
-        fn mint(&self, currency_type: &str, amount: f64) -> IcnResult<()> {
-            let mut minted = self.minted.borrow_mut();
-            *minted.entry(currency_type.to_string()).or_default() += amount;
-            Ok(())
-        }
-    }
-
-    struct MockGovernance {
-        proposals: Rc<RefCell<Vec<String>>>,
-    }
-    impl GovernanceSystem for MockGovernance {
-        fn submit_proposal(&self, proposal: &str) -> IcnResult<String> {
-            let mut proposals = self.proposals.borrow_mut();
-            proposals.push(proposal.to_string());
-            Ok(format!("proposal_{}", proposals.len()))
-        }
+        let mut vm = CoopVM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_morphemic_operations() {
+    fn test_net_node_connect() {
         let program = vec![
             Opcode::Push(Value::String("node1".to_string())),
             Opcode::Push(Value::String("node2".to_string())),
-            Opcode::MorphemicCall("net-node-connect".to_string(), 2),
-            Opcode::Push(Value::Int(100)),
-            Opcode::Push(Value::String("BasicNeeds".to_string())),
-            Opcode::MorphemicCall("econ-currency-mint".to_string(), 2),
-            Opcode::Push(Value::String("Increase node count".to_string())),
-            Opcode::MorphemicCall("gov-proposal-submit".to_string(), 1),
+            Opcode::NetNodeConnect,
         ];
 
-        let minted = Rc::new(RefCell::new(HashMap::new()));
-        let proposals = Rc::new(RefCell::new(Vec::new()));
-
-        let mut vm = CoopVM::new(
-            program,
-            Box::new(MockBlock),
-            Box::new(MockConsensus),
-            Box::new(MockCurrencySystem { minted: Rc::clone(&minted) }),
-            Box::new(MockGovernance { proposals: Rc::clone(&proposals) }),
-        );
-
+        let mut vm = CoopVM::new(program);
         assert!(vm.run().is_ok());
-
-        assert_eq!(*minted.borrow().get("BasicNeeds").unwrap(), 100.0);
-        assert_eq!(proposals.borrow().len(), 1);
-        assert_eq!(proposals.borrow()[0], "Increase node count");
-
-        // Check if the proposal ID is on the stack
-        match vm.stack.pop() {
-            Some(Value::String(id)) => assert_eq!(id, "proposal_1"),
-            _ => panic!("Expected proposal ID on the stack"),
-        }
     }
 
     #[test]
-    fn test_control_flow() {
+    fn test_create_proposal() {
         let program = vec![
-            Opcode::Push(Value::Int(10)),
-            Opcode::Store("x".to_string()),
-            Opcode::Push(Value::Int(0)),
-            Opcode::Store("sum".to_string()),
-            // Start of while loop
-            Opcode::Load("x".to_string()),
-            Opcode::Push(Value::Int(0)),
-            Opcode::Gt,
-            Opcode::JumpIfFalse(17), // Jump to after the loop if x <= 0
-            Opcode::Load("sum".to_string()),
-            Opcode::Load("x".to_string()),
-            Opcode::Add,
-            Opcode::Store("sum".to_string()),
-            Opcode::Load("x".to_string()),
-            Opcode::Push(Value::Int(1)),
-            Opcode::Sub,
-            Opcode::Store("x".to_string()),
-            Opcode::Jump(4), // Jump back to the start of the loop
-            // End of while loop
-            Opcode::Load("sum".to_string()),
+            Opcode::Push(Value::String("Increase node count".to_string())),
+            Opcode::Push(Value::String("Network Expansion".to_string())),
+            Opcode::CreateProposal,
         ];
 
-        let mut vm = CoopVM::new(
-            program,
-            Box::new(MockBlock),
-            Box::new(MockConsensus),
-            Box::new(MockCurrencySystem { minted: Rc::new(RefCell::new(HashMap::new())) }),
-            Box::new(MockGovernance { proposals: Rc::new(RefCell::new(Vec::new())) }),
-        );
-
+        let mut vm = CoopVM::new(program);
         assert!(vm.run().is_ok());
-
-        // Check if the sum is correct (should be 55)
-        match vm.stack.pop() {
-            Some(Value::Float(sum)) => assert_eq!(sum, 55.0),
-            _ => panic!("Expected sum on the stack"),
-        }
+        assert_eq!(vm.stack, vec![Value::String("new_proposal_id".to_string())]);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 

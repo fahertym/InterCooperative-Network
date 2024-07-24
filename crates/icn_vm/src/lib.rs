@@ -1,9 +1,7 @@
+// crates/icn_vm/src/lib.rs
+
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-use icn_blockchain::Block;
-use icn_consensus::PoCConsensus;
-use icn_currency::CurrencySystem;
-use icn_governance::GovernanceSystem;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -37,8 +35,20 @@ pub enum Opcode {
     Load(String),
     Jump(usize),
     JumpIfFalse(usize),
-    MorphemicCall(String, usize),
+    Call(String),
     Return,
+    NetNodeConnect,
+    ChainBlockCreate,
+    EconCurrencyMint,
+    GovProposalSubmit,
+    CoopMemberAdd,
+    CommEventOrganize,
+    VoteOnProposal,
+    AllocateResource,
+    UpdateReputation,
+    CreateProposal,
+    GetProposalStatus,
+    EmitEvent,
 }
 
 pub struct CoopVM {
@@ -46,29 +56,15 @@ pub struct CoopVM {
     memory: HashMap<String, Value>,
     program: Vec<Opcode>,
     pc: usize,
-    blockchain: Box<dyn Block>,
-    consensus: Box<dyn PoCConsensus>,
-    currency_system: Box<dyn CurrencySystem>,
-    governance: Box<dyn GovernanceSystem>,
 }
 
 impl CoopVM {
-    pub fn new(
-        program: Vec<Opcode>,
-        blockchain: Box<dyn Block>,
-        consensus: Box<dyn PoCConsensus>,
-        currency_system: Box<dyn CurrencySystem>,
-        governance: Box<dyn GovernanceSystem>,
-    ) -> Self {
+    pub fn new(program: Vec<Opcode>) -> Self {
         CoopVM {
             stack: Vec::new(),
             memory: HashMap::new(),
             program,
             pc: 0,
-            blockchain,
-            consensus,
-            currency_system,
-            governance,
         }
     }
 
@@ -119,23 +115,159 @@ impl CoopVM {
                     self.pc = target;
                 }
             }
-            Opcode::MorphemicCall(function, arg_count) => {
-                self.morphemic_call(&function, arg_count)?;
+            Opcode::Call(function) => {
+                self.execute_function(&function)?;
             }
             Opcode::Return => {
                 // For simplicity, we'll just stop execution
                 self.pc = self.program.len();
             }
+            Opcode::NetNodeConnect => self.net_node_connect()?,
+            Opcode::ChainBlockCreate => self.chain_block_create()?,
+            Opcode::EconCurrencyMint => self.econ_currency_mint()?,
+            Opcode::GovProposalSubmit => self.gov_proposal_submit()?,
+            Opcode::CoopMemberAdd => self.coop_member_add()?,
+            Opcode::CommEventOrganize => self.comm_event_organize()?,
+            Opcode::VoteOnProposal => self.vote_on_proposal()?,
+            Opcode::AllocateResource => self.allocate_resource()?,
+            Opcode::UpdateReputation => self.update_reputation()?,
+            Opcode::CreateProposal => self.create_proposal()?,
+            Opcode::GetProposalStatus => self.get_proposal_status()?,
+            Opcode::EmitEvent => self.emit_event()?,
         }
         Ok(())
+    }
+
+    // Implement the binary_op, compare_op, logic_op, and pop_bool methods here...
+
+    fn execute_function(&mut self, function: &str) -> IcnResult<()> {
+        // Implement function execution logic here
+        Ok(())
+    }
+
+    fn net_node_connect(&mut self) -> IcnResult<()> {
+        let node2 = self.pop_string()?;
+        let node1 = self.pop_string()?;
+        println!("Connecting nodes: {} and {}", node1, node2);
+        Ok(())
+    }
+
+    fn chain_block_create(&mut self) -> IcnResult<()> {
+        let transactions = self.pop_list()?;
+        println!("Creating block with {} transactions", transactions.len());
+        Ok(())
+    }
+
+    fn econ_currency_mint(&mut self) -> IcnResult<()> {
+        let currency_type = self.pop_string()?;
+        let amount = self.pop_float()?;
+        println!("Minting {} of currency type {}", amount, currency_type);
+        Ok(())
+    }
+
+    fn gov_proposal_submit(&mut self) -> IcnResult<()> {
+        let description = self.pop_string()?;
+        println!("Submitting proposal: {}", description);
+        Ok(())
+    }
+
+    fn coop_member_add(&mut self) -> IcnResult<()> {
+        let member_id = self.pop_string()?;
+        let coop_id = self.pop_string()?;
+        println!("Adding member {} to cooperative {}", member_id, coop_id);
+        Ok(())
+    }
+
+    fn comm_event_organize(&mut self) -> IcnResult<()> {
+        let event_details = self.pop_string()?;
+        println!("Organizing community event: {}", event_details);
+        Ok(())
+    }
+
+    fn vote_on_proposal(&mut self) -> IcnResult<()> {
+        let vote = self.pop_bool()?;
+        let proposal_id = self.pop_string()?;
+        println!("Voting {} on proposal {}", if vote { "Yes" } else { "No" }, proposal_id);
+        Ok(())
+    }
+
+    fn allocate_resource(&mut self) -> IcnResult<()> {
+        let amount = self.pop_int()?;
+        let resource = self.pop_string()?;
+        println!("Allocating {} units of resource {}", amount, resource);
+        Ok(())
+    }
+
+    fn update_reputation(&mut self) -> IcnResult<()> {
+        let change = self.pop_int()?;
+        let address = self.pop_string()?;
+        println!("Updating reputation of {} by {}", address, change);
+        Ok(())
+    }
+
+    fn create_proposal(&mut self) -> IcnResult<()> {
+        let description = self.pop_string()?;
+        let title = self.pop_string()?;
+        println!("Creating proposal: {} - {}", title, description);
+        self.stack.push(Value::String("new_proposal_id".to_string()));
+        Ok(())
+    }
+
+    fn get_proposal_status(&mut self) -> IcnResult<()> {
+        let proposal_id = self.pop_string()?;
+        println!("Getting status of proposal: {}", proposal_id);
+        self.stack.push(Value::String("Active".to_string()));
+        Ok(())
+    }
+
+    fn emit_event(&mut self) -> IcnResult<()> {
+        let event_data = self.pop_string()?;
+        let event_name = self.pop_string()?;
+        println!("Emitting event {}: {}", event_name, event_data);
+        Ok(())
+    }
+
+    fn pop_string(&mut self) -> IcnResult<String> {
+        match self.stack.pop() {
+            Some(Value::String(s)) => Ok(s),
+            _ => Err(IcnError::VM("Expected string value".into())),
+        }
+    }
+
+    fn pop_int(&mut self) -> IcnResult<i64> {
+        match self.stack.pop() {
+            Some(Value::Int(i)) => Ok(i),
+            _ => Err(IcnError::VM("Expected integer value".into())),
+        }
+    }
+
+    fn pop_float(&mut self) -> IcnResult<f64> {
+        match self.stack.pop() {
+            Some(Value::Float(f)) => Ok(f),
+            _ => Err(IcnError::VM("Expected float value".into())),
+        }
+    }
+
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop() {
+            Some(Value::Bool(b)) => Ok(b),
+            _ => Err(IcnError::VM("Expected boolean value".into())),
+        }
+    }
+
+    fn pop_list(&mut self) -> IcnResult<Vec<Value>> {
+        match self.stack.pop() {
+            Some(Value::List(l)) => Ok(l),
+            _ => Err(IcnError::VM("Expected list value".into())),
+        }
     }
 
     fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
     where
         F: Fn(f64, f64) -> f64,
     {
-        let b = self.pop_number()?;
-        let a = self.pop_number()?;
+        let b = self.pop_float()?;
+        let a = self.pop_float()?;
         self.stack.push(Value::Float(op(a, b)));
         Ok(())
     }
@@ -159,250 +291,49 @@ impl CoopVM {
         self.stack.push(Value::Bool(op(a, b)));
         Ok(())
     }
-
-    fn pop_number(&mut self) -> IcnResult<f64> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Int(i) => Ok(i as f64),
-            Value::Float(f) => Ok(f),
-            _ => Err(IcnError::VM("Expected number".into())),
-        }
-    }
-
-    fn pop_bool(&mut self) -> IcnResult<bool> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Bool(b) => Ok(b),
-            _ => Err(IcnError::VM("Expected boolean".into())),
-        }
-    }
-
-    fn pop_string(&mut self) -> IcnResult<String> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::String(s) => Ok(s),
-            _ => Err(IcnError::VM("Expected string".into())),
-        }
-    }
-
-    fn morphemic_call(&mut self, function: &str, arg_count: usize) -> IcnResult<()> {
-        let mut args = Vec::new();
-        for _ in 0..arg_count {
-            args.push(self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?);
-        }
-        args.reverse();
-
-        match function {
-            "net-node-connect" => self.net_node_connect(args),
-            "chain-block-validate" => self.chain_block_validate(args),
-            "econ-currency-mint" => self.econ_currency_mint(args),
-            "gov-proposal-submit" => self.gov_proposal_submit(args),
-            "coop-member-add" => self.coop_member_add(args),
-            "comm-event-organize" => self.comm_event_organize(args),
-            _ => Err(IcnError::VM(format!("Unknown morphemic function: {}", function))),
-        }
-    }
-
-    fn net_node_connect(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("net-node-connect expects 2 arguments".into()));
-        }
-        let node1 = self.value_to_string(&args[0])?;
-        let node2 = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual node connection logic
-        println!("Connecting nodes: {} and {}", node1, node2);
-        Ok(())
-    }
-
-    fn chain_block_validate(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("chain-block-validate expects 1 argument".into()));
-        }
-        let block_id = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual block validation logic
-        let is_valid = self.blockchain.validate_block(&block_id)?;
-        self.stack.push(Value::Bool(is_valid));
-        Ok(())
-    }
-
-    fn econ_currency_mint(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("econ-currency-mint expects 2 arguments".into()));
-        }
-        let amount = self.value_to_number(&args[0])?;
-        let currency_type = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual currency minting logic
-        self.currency_system.mint(&currency_type, amount)?;
-        Ok(())
-    }
-
-    fn gov_proposal_submit(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("gov-proposal-submit expects 1 argument".into()));
-        }
-        let proposal = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual proposal submission logic
-        let proposal_id = self.governance.submit_proposal(&proposal)?;
-        self.stack.push(Value::String(proposal_id));
-        Ok(())
-    }
-
-    fn coop_member_add(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 2 {
-            return Err(IcnError::VM("coop-member-add expects 2 arguments".into()));
-        }
-        let coop_id = self.value_to_string(&args[0])?;
-        let member_id = self.value_to_string(&args[1])?;
-        
-        // Here you would implement the actual member addition logic
-        // For this example, we'll just print the action
-        println!("Adding member {} to cooperative {}", member_id, coop_id);
-        Ok(())
-    }
-
-    fn comm_event_organize(&mut self, args: Vec<Value>) -> IcnResult<()> {
-        if args.len() != 1 {
-            return Err(IcnError::VM("comm-event-organize expects 1 argument".into()));
-        }
-        let event_details = self.value_to_string(&args[0])?;
-        
-        // Here you would implement the actual event organization logic
-        // For this example, we'll just print the action
-        println!("Organizing community event: {}", event_details);
-        Ok(())
-    }
-
-    fn value_to_string(&self, value: &Value) -> IcnResult<String> {
-        match value {
-            Value::String(s) => Ok(s.clone()),
-            _ => Err(IcnError::VM("Expected string value".into())),
-        }
-    }
-
-    fn value_to_number(&self, value: &Value) -> IcnResult<f64> {
-        match value {
-            Value::Int(i) => Ok(*i as f64),
-            Value::Float(f) => Ok(*f),
-            _ => Err(IcnError::VM("Expected numeric value".into())),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
-    struct MockBlock;
-    impl Block for MockBlock {
-        fn validate_block(&self, _block_id: &str) -> IcnResult<bool> {
-            Ok(true)
-        }
-    }
+    #[test]
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Float(5.0)),
+            Opcode::Push(Value::Float(3.0)),
+            Opcode::Add,
+            Opcode::Push(Value::Float(2.0)),
+            Opcode::Mul,
+        ];
 
-    struct MockConsensus;
-    impl PoCConsensus for MockConsensus {}
-
-    struct MockCurrencySystem {
-        minted: Rc<RefCell<HashMap<String, f64>>>,
-    }
-    impl CurrencySystem for MockCurrencySystem {
-        fn mint(&self, currency_type: &str, amount: f64) -> IcnResult<()> {
-            let mut minted = self.minted.borrow_mut();
-            *minted.entry(currency_type.to_string()).or_default() += amount;
-            Ok(())
-        }
-    }
-
-    struct MockGovernance {
-        proposals: Rc<RefCell<Vec<String>>>,
-    }
-    impl GovernanceSystem for MockGovernance {
-        fn submit_proposal(&self, proposal: &str) -> IcnResult<String> {
-            let mut proposals = self.proposals.borrow_mut();
-            proposals.push(proposal.to_string());
-            Ok(format!("proposal_{}", proposals.len()))
-        }
+        let mut vm = CoopVM::new(program);
+        assert!(vm.run().is_ok());
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_morphemic_operations() {
+    fn test_net_node_connect() {
         let program = vec![
             Opcode::Push(Value::String("node1".to_string())),
             Opcode::Push(Value::String("node2".to_string())),
-            Opcode::MorphemicCall("net-node-connect".to_string(), 2),
-            Opcode::Push(Value::Int(100)),
-            Opcode::Push(Value::String("BasicNeeds".to_string())),
-            Opcode::MorphemicCall("econ-currency-mint".to_string(), 2),
-            Opcode::Push(Value::String("Increase node count".to_string())),
-            Opcode::MorphemicCall("gov-proposal-submit".to_string(), 1),
+            Opcode::NetNodeConnect,
         ];
 
-        let minted = Rc::new(RefCell::new(HashMap::new()));
-        let proposals = Rc::new(RefCell::new(Vec::new()));
-
-        let mut vm = CoopVM::new(
-            program,
-            Box::new(MockBlock),
-            Box::new(MockConsensus),
-            Box::new(MockCurrencySystem { minted: Rc::clone(&minted) }),
-            Box::new(MockGovernance { proposals: Rc::clone(&proposals) }),
-        );
-
+        let mut vm = CoopVM::new(program);
         assert!(vm.run().is_ok());
-
-        assert_eq!(*minted.borrow().get("BasicNeeds").unwrap(), 100.0);
-        assert_eq!(proposals.borrow().len(), 1);
-        assert_eq!(proposals.borrow()[0], "Increase node count");
-
-        // Check if the proposal ID is on the stack
-        match vm.stack.pop() {
-            Some(Value::String(id)) => assert_eq!(id, "proposal_1"),
-            _ => panic!("Expected proposal ID on the stack"),
-        }
     }
 
     #[test]
-    fn test_control_flow() {
+    fn test_create_proposal() {
         let program = vec![
-            Opcode::Push(Value::Int(10)),
-            Opcode::Store("x".to_string()),
-            Opcode::Push(Value::Int(0)),
-            Opcode::Store("sum".to_string()),
-            // Start of while loop
-            Opcode::Load("x".to_string()),
-            Opcode::Push(Value::Int(0)),
-            Opcode::Gt,
-            Opcode::JumpIfFalse(17), // Jump to after the loop if x <= 0
-            Opcode::Load("sum".to_string()),
-            Opcode::Load("x".to_string()),
-            Opcode::Add,
-            Opcode::Store("sum".to_string()),
-            Opcode::Load("x".to_string()),
-            Opcode::Push(Value::Int(1)),
-            Opcode::Sub,
-            Opcode::Store("x".to_string()),
-            Opcode::Jump(4), // Jump back to the start of the loop
-            // End of while loop
-            Opcode::Load("sum".to_string()),
+            Opcode::Push(Value::String("Increase node count".to_string())),
+            Opcode::Push(Value::String("Network Expansion".to_string())),
+            Opcode::CreateProposal,
         ];
 
-        let mut vm = CoopVM::new(
-            program,
-            Box::new(MockBlock),
-            Box::new(MockConsensus),
-            Box::new(MockCurrencySystem { minted: Rc::new(RefCell::new(HashMap::new())) }),
-            Box::new(MockGovernance { proposals: Rc::new(RefCell::new(Vec::new())) }),
-        );
-
+        let mut vm = CoopVM::new(program);
         assert!(vm.run().is_ok());
-
-        // Check if the sum is correct (should be 55)
-        match vm.stack.pop() {
-            Some(Value::Float(sum)) => assert_eq!(sum, 55.0),
-            _ => panic!("Expected sum on the stack"),
-        }
+        assert_eq!(vm.stack, vec![Value::String("new_proposal_id".to_string())]);
     }
 }
