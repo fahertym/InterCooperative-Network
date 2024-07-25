@@ -1,21 +1,17 @@
+// File: crates/icn_blockchain/src/transaction_validator.rs
+
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
 use chrono::{DateTime, Utc};
 
-pub struct TransactionValidator;
+pub trait TransactionValidator {
+    fn validate_transaction(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
+}
 
-impl TransactionValidator {
-    /// Validates a transaction within the context of a blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to validate.
-    /// * `blockchain` - The blockchain context.
-    ///
-    /// # Returns
-    ///
-    /// Returns `IcnResult` if the transaction is valid, otherwise an error.
-    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
+pub struct DefaultTransactionValidator;
+
+impl TransactionValidator for DefaultTransactionValidator {
+    fn validate_transaction(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
         if Self::is_double_spend(transaction, blockchain)? {
             return Err(IcnError::Blockchain("Double spend detected".to_string()));
         }
@@ -93,29 +89,29 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
     }
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -124,15 +120,15 @@ mod tests {
         blockchain.add_transaction(tx.clone()).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 
     #[test]
     fn test_invalid_timestamp() {
-        let mut blockchain = Blockchain::new(Arc::new(TransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
         let mut tx = create_signed_transaction("Alice", "Bob", 50.0);
         tx.timestamp = Utc::now().timestamp() + 60 * 60; // Set to future time
 
-        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 }
