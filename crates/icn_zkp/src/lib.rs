@@ -1,5 +1,3 @@
-// File: icn_zkp/src/lib.rs
-
 use bellman::{Circuit, ConstraintSystem, SynthesisError};
 use bls12_381::Bls12;
 use icn_common::{IcnResult, IcnError, Transaction};

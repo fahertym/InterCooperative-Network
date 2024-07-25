@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICN Demo</title>
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <h1>ICN Demo</h1>
+    <div>
+        <h2>Create Identity</h2>
+        <form id="create-identity-form">
+            <label for="name">Name:</label>
+            <input type="text" id="name" name="name" required>
+            <label for="email">Email:</label>
+            <input type="email" id="email" name="email" required>
+            <button type="submit">Create Identity</button>
+        </form>
+    </div>
+    <div>
+        <h2>Submit Transaction</h2>
+        <form id="submit-transaction-form">
+            <label for="from">From:</label>
+            <input type="text" id="from" name="from" required>
+            <label for="to">To:</label>
+            <input type="text" id="to" name="to" required>
+            <label for="amount">Amount:</label>
+            <input type="number" id="amount" name="amount" required>
+            <label for="currency">Currency:</label>
+            <input type="text" id="currency" name="currency" required>
+            <button type="submit">Submit Transaction</button>
+        </form>
+    </div>
+    <div>
+        <h2>Create Proposal</h2>
+        <form id="create-proposal-form">
+            <label for="title">Title:</label>
+            <input type="text" id="title" name="title" required>
+            <label for="description">Description:</label>
+            <textarea id="description" name="description" required></textarea>
+            <label for="proposer">Proposer:</label>
+            <input type="text" id="proposer" name="proposer" required>
+            <button type="submit">Create Proposal</button>
+        </form>
+    </div>
+</body>
+</html>

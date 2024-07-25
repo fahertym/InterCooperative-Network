@@ -1,13 +1,8 @@
 [package]
 name = "icn_market"
 version = "0.1.0"
-edition = "2021"
+edition = "2018"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-chrono = "0.4"
-ed25519-dalek = "1.0"
-rand = "0.8"
-bitvec = { path = "../../vendor/bitvec" }
-funty = { path = "../../vendor/funty" }
+icn_common = { path = "../icn_common" }

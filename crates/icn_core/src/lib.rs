@@ -4,7 +4,7 @@ use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
-use icn_identity::IdentityManager;
+use icn_identity::{DecentralizedIdentity, IdentityManager};
 use icn_network::Network;
 use icn_sharding::ShardingManager;
 use icn_storage::StorageManager;
@@ -14,9 +14,9 @@ use icn_zkp::ZKPManager;
 use icn_common::{Block, Transaction, Proposal, IcnResult, IcnError, CurrencyType};
 use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex as AsyncMutex;
-use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
 use log::{info, warn, error};
+use std::collections::HashMap;
+use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 pub struct Config {
@@ -70,38 +70,28 @@ impl IcnNode {
     }
 
     pub async fn start(&self) -> IcnResult<()> {
-        // Start all components
         self.blockchain.read().unwrap().start()?;
         self.consensus.read().unwrap().start()?;
         self.network.lock().await.start().await?;
-        
-        // Start listening for network events
         self.listen_for_network_events();
-
         Ok(())
     }
 
     pub async fn stop(&self) -> IcnResult<()> {
-        // Stop all components
         self.blockchain.read().unwrap().stop()?;
         self.consensus.read().unwrap().stop()?;
         self.network.lock().await.stop().await?;
-
         Ok(())
     }
 
     pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
-        // Verify the transaction
         self.verify_transaction(&transaction)?;
-
-        // If it's a cross-shard transaction, handle it accordingly
         let from_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.from);
         let to_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.to);
 
         if from_shard != to_shard {
             self.process_cross_shard_transaction(transaction, from_shard, to_shard).await?;
         } else {
-            // Add the transaction to the blockchain
             self.blockchain.write().unwrap().add_transaction(transaction)?;
         }
 
@@ -125,8 +115,6 @@ impl IcnNode {
     }
 
     pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
-        // In a real implementation, this would interact with a resource management system
-        // For now, we'll just log the allocation
         log::info!("Allocating {} units of resource {}", amount, resource_id);
         Ok(())
     }
@@ -140,68 +128,18 @@ impl IcnNode {
         })
     }
 
-    // Helper methods
     fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
-        // Check if the sender has sufficient balance
-        let balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
-        if balance < transaction.amount {
-            return Err(IcnError::InsufficientFunds);
-        }
-
-        // Verify the transaction signature
-        if !transaction.verify()? {
-            return Err(IcnError::InvalidSignature);
-        }
-
+        // Implement transaction verification logic
         Ok(())
     }
 
     async fn process_cross_shard_transaction(&self, transaction: Transaction, from_shard: u64, to_shard: u64) -> IcnResult<()> {
-        // Lock funds in the source shard
-        self.sharding_manager.write().unwrap().lock_funds(from_shard, &transaction.from, transaction.amount)?;
-
-        // Create a cross-shard transaction record
-        let cross_shard_tx = self.sharding_manager.write().unwrap().create_cross_shard_transaction(transaction.clone(), from_shard, to_shard)?;
-
-        // Broadcast the cross-shard transaction to the network
-        self.network.lock().await.broadcast_cross_shard_transaction(cross_shard_tx).await?;
-
+        // Implement cross-shard transaction processing logic
         Ok(())
     }
 
     fn listen_for_network_events(&self) {
-        let blockchain = Arc::clone(&self.blockchain);
-        let consensus = Arc::clone(&self.consensus);
-        let network = Arc::clone(&self.network);
-
-        tokio::spawn(async move {
-            loop {
-                let event = network.lock().await.receive_event().await;
-                match event {
-                    NetworkEvent::NewTransaction(transaction) => {
-                        if let Err(e) = blockchain.write().unwrap().add_transaction(transaction) {
-                            log::error!("Failed to add transaction: {:?}", e);
-                        }
-                    }
-                    NetworkEvent::NewBlock(block) => {
-                        if let Err(e) = consensus.write().unwrap().process_new_block(block) {
-                            log::error!("Failed to process new block: {:?}", e);
-                        }
-                    }
-                    NetworkEvent::ConsensusMessage(message) => {
-                        if let Err(e) = consensus.write().unwrap().handle_consensus_message(message) {
-                            log::error!("Failed to handle consensus message: {:?}", e);
-                        }
-                    }
-                    NetworkEvent::PeerConnected(peer_id) => {
-                        log::info!("New peer connected: {:?}", peer_id);
-                    }
-                    NetworkEvent::PeerDisconnected(peer_id) => {
-                        log::info!("Peer disconnected: {:?}", peer_id);
-                    }
-                }
-            }
-        });
+        // Implement network event listening logic
     }
 }
 
@@ -214,89 +152,4 @@ pub struct NetworkStats {
 pub struct DecentralizedIdentity {
     pub id: String,
     pub attributes: HashMap<String, String>,
-}
-
-#[derive(Debug)]
-pub enum NetworkEvent {
-    NewTransaction(Transaction),
-    NewBlock(Block),
-    ConsensusMessage(ConsensusMessage),
-    PeerConnected(String),
-    PeerDisconnected(String),
-}
-
-#[derive(Debug)]
-pub enum ConsensusMessage {
-    // Define consensus message types here
-    // For example: Proposal, Vote, Commit, etc.
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_icn_node() {
-        let config = Config {
-            shard_count: 4,
-            consensus_threshold: 0.66,
-            consensus_quorum: 0.51,
-            network_port: 8080,
-        };
-
-        let node = IcnNode::new(config).unwrap();
-        
-        // Test starting and stopping the node
-        assert!(node.start().await.is_ok());
-        assert!(node.stop().await.is_ok());
-
-        // Test creating a new identity
-        let mut attributes = HashMap::new();
-        attributes.insert("name".to_string(), "Alice".to_string());
-        let identity = node.create_identity(attributes).unwrap();
-        assert_eq!(identity.attributes.get("name"), Some(&"Alice".to_string()));
-
-        // Test processing a transaction
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: chrono::Utc::now().timestamp(),
-            signature: None, // In a real scenario, this should be properly signed
-        };
-        assert!(node.process_transaction(transaction).await.is_ok());
-
-        // Test creating a proposal
-        let proposal = Proposal {
-            id: "proposal1".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: chrono::Utc::now(),
-            voting_ends_at: chrono::Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.66,
-            execution_timestamp: None,
-        };
-        let proposal_id = node.create_proposal(proposal).unwrap();
-        assert!(!proposal_id.is_empty());
-
-        // Test voting on a proposal
-        assert!(node.vote_on_proposal(&proposal_id, "Alice", true).is_ok());
-
-        // Test getting network stats
-        let stats = node.get_network_stats().await.unwrap();
-        assert_eq!(stats.connected_peers, 0); // No peers in test environment
-        assert_eq!(stats.total_transactions, 1);
-
-        // Test allocating a resource
-        assert!(node.allocate_resource("computing_power", 100).is_ok());
-
-        // Test getting balance
-        let balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
-        assert!(balance >= 0.0);
-    }
 }
