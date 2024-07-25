@@ -1,107 +1,95 @@
-use bellman::{Circuit, ConstraintSystem, SynthesisError};
-use bls12_381::Scalar;
+// File: crates/icn_zkp/src/circuits.rs
+use bulletproofs::r1cs::{ConstraintSystem, R1CSProof, Verifier};
+use bulletproofs::{BulletproofGens, PedersenGens};
+use curve25519_dalek::scalar::Scalar;
+use merlin::Transcript;
+use rand::thread_rng;
+
 use icn_common::Transaction;
 
 pub struct TransactionCircuit {
-    // Private inputs
-    sender: Option<Scalar>,
-    receiver: Option<Scalar>,
-    amount: Option<Scalar>,
-    currency_type: Option<Scalar>,
-
-    // Public inputs
-    sender_hash: Option<Scalar>,
-    receiver_hash: Option<Scalar>,
-    amount_hash: Option<Scalar>,
-    currency_type_hash: Option<Scalar>,
+    amount: u64,
+    balance: u64,
 }
 
 impl TransactionCircuit {
-    pub fn new(transaction: &Transaction) -> Self {
-        // In a real implementation, you would convert transaction fields to Scalar
-        // and compute hashes. This is a simplified version.
+    pub fn new(transaction: &Transaction, balance: u64) -> Self {
         TransactionCircuit {
-            sender: Some(Scalar::from(1u64)),
-            receiver: Some(Scalar::from(2u64)),
-            amount: Some(Scalar::from(transaction.amount as u64)),
-            currency_type: Some(Scalar::from(0u64)), // Simplified representation
-
-            sender_hash: Some(Scalar::from(3u64)),
-            receiver_hash: Some(Scalar::from(4u64)),
-            amount_hash: Some(Scalar::from(5u64)),
-            currency_type_hash: Some(Scalar::from(6u64)),
+            amount: transaction.amount as u64,
+            balance,
         }
     }
 
-    pub fn empty() -> Self {
-        TransactionCircuit {
-            sender: None,
-            receiver: None,
-            amount: None,
-            currency_type: None,
-            sender_hash: None,
-            receiver_hash: None,
-            amount_hash: None,
-            currency_type_hash: None,
-        }
+    pub fn prove(&self) -> (R1CSProof, Vec<Scalar>) {
+        let pc_gens = PedersenGens::default();
+        let bp_gens = BulletproofGens::new(128, 1);
+
+        let (proof, commitments) = bulletproofs::r1cs::Prover::new(&pc_gens)
+            .prove(
+                &bp_gens,
+                &mut Transcript::new(b"TransactionProof"),
+                &|mut cs| {
+                    let amount = cs.allocate_multiplier(self.amount.into())?;
+                    let balance = cs.allocate_multiplier(self.balance.into())?;
+
+                    cs.constrain(amount.0 - balance.0);
+
+                    Ok(())
+                },
+                &mut thread_rng(),
+            )
+            .expect("Proof creation failed");
+
+        (proof, commitments)
     }
 
-    pub fn public_inputs(transaction: &Transaction) -> Vec<Scalar> {
-        // In a real implementation, you would compute actual hashes
-        vec![
-            Scalar::from(3u64),
-            Scalar::from(4u64),
-            Scalar::from(5u64),
-            Scalar::from(6u64),
-        ]
+    pub fn verify(proof: &R1CSProof, commitments: &[Scalar]) -> bool {
+        let pc_gens = PedersenGens::default();
+        let bp_gens = BulletproofGens::new(128, 1);
+
+        let mut verifier_transcript = Transcript::new(b"TransactionProof");
+        let mut verifier = Verifier::new(&mut verifier_transcript);
+
+        let result = verifier
+            .verify(
+                &proof,
+                &pc_gens,
+                &bp_gens,
+                &|mut cs| {
+                    let amount = cs.allocate_multiplier(commitments[0])?;
+                    let balance = cs.allocate_multiplier(commitments[1])?;
+
+                    cs.constrain(amount.0 - balance.0);
+
+                    Ok(())
+                },
+            )
+            .is_ok();
+
+        result
     }
 }
 
-impl Circuit<Scalar> for TransactionCircuit {
-    fn synthesize<CS: ConstraintSystem<Scalar>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-        // Allocate private inputs
-        let sender = cs.alloc(|| "sender", || self.sender.ok_or(SynthesisError::AssignmentMissing))?;
-        let receiver = cs.alloc(|| "receiver", || self.receiver.ok_or(SynthesisError::AssignmentMissing))?;
-        let amount = cs.alloc(|| "amount", || self.amount.ok_or(SynthesisError::AssignmentMissing))?;
-        let currency_type = cs.alloc(|| "currency_type", || self.currency_type.ok_or(SynthesisError::AssignmentMissing))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icn_common::CurrencyType;
 
-        // Allocate public inputs
-        let sender_hash = cs.alloc_input(|| "sender_hash", || self.sender_hash.ok_or(SynthesisError::AssignmentMissing))?;
-        let receiver_hash = cs.alloc_input(|| "receiver_hash", || self.receiver_hash.ok_or(SynthesisError::AssignmentMissing))?;
-        let amount_hash = cs.alloc_input(|| "amount_hash", || self.amount_hash.ok_or(SynthesisError::AssignmentMissing))?;
-        let currency_type_hash = cs.alloc_input(|| "currency_type_hash", || self.currency_type_hash.ok_or(SynthesisError::AssignmentMissing))?;
+    #[test]
+    fn test_transaction_proof() {
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1234567890,
+            signature: None,
+        };
 
-        // Add constraints
-        // In a real implementation, you would add proper constraints to prove the relationship
-        // between private inputs and public inputs (hashes)
-        cs.enforce(
-            || "sender hash constraint",
-            |lc| lc + sender,
-            |lc| lc + CS::one(),
-            |lc| lc + sender_hash
-        );
+        let balance = 100;
+        let circuit = TransactionCircuit::new(&transaction, balance);
 
-        cs.enforce(
-            || "receiver hash constraint",
-            |lc| lc + receiver,
-            |lc| lc + CS::one(),
-            |lc| lc + receiver_hash
-        );
-
-        cs.enforce(
-            || "amount hash constraint",
-            |lc| lc + amount,
-            |lc| lc + CS::one(),
-            |lc| lc + amount_hash
-        );
-
-        cs.enforce(
-            || "currency type hash constraint",
-            |lc| lc + currency_type,
-            |lc| lc + CS::one(),
-            |lc| lc + currency_type_hash
-        );
-
-        Ok(())
+        let (proof, commitments) = circuit.prove();
+        assert!(TransactionCircuit::verify(&proof, &commitments));
     }
 }

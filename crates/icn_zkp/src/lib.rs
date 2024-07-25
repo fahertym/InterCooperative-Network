@@ -1,218 +1,123 @@
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-use thiserror::Error;
+// File: crates/icn_zkp/src/lib.rs
 
-pub mod bit_utils;
-pub mod error;
+use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
+use curve25519_dalek::scalar::Scalar;
+use merlin::Transcript;
+use rand::thread_rng;
+use icn_common::{IcnResult, IcnError, Transaction};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
+pub struct ZKPManager {
+    bp_gens: BulletproofGens,
+    pc_gens: PedersenGens,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Constitutional,
-    Economic,
-    Technical,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-}
-
-pub trait Hashable {
-    fn hash(&self) -> String;
-}
-
-#[derive(Error, Debug)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-
-    #[error("Currency error: {0}")]
-    Currency(String),
-
-    #[error("Governance error: {0}")]
-    Governance(String),
-
-    #[error("Identity error: {0}")]
-    Identity(String),
-
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("Sharding error: {0}")]
-    Sharding(String),
-
-    #[error("Storage error: {0}")]
-    Storage(String),
-
-    #[error("VM error: {0}")]
-    Vm(String),
-
-    #[error("ZKP error: {0}")]
-    ZKP(String),
-
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-}
-
-pub type IcnResult<T> = Result<T, IcnError>;
-
-impl Hashable for Block {
-    fn hash(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(self.index.to_string());
-        hasher.update(&self.timestamp.to_string());
-        for transaction in &self.transactions {
-            hasher.update(&transaction.hash());
+impl ZKPManager {
+    pub fn new(max_bitsize: usize) -> Self {
+        ZKPManager {
+            bp_gens: BulletproofGens::new(max_bitsize, 1),
+            pc_gens: PedersenGens::default(),
         }
-        hasher.update(&self.previous_hash);
-        format!("{:x}", hasher.finalize())
     }
-}
 
-impl Hashable for Transaction {
-    fn hash(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(&self.from);
-        hasher.update(&self.to);
-        hasher.update(self.amount.to_string().as_bytes());
-        hasher.update(format!("{:?}", self.currency_type).as_bytes());
-        hasher.update(self.timestamp.to_string().as_bytes());
-        if let Some(signature) = &self.signature {
-            hasher.update(signature);
+    pub fn create_proof(&self, transaction: &Transaction) -> IcnResult<(RangeProof, Vec<u64>)> {
+        let amount = (transaction.amount * 100.0) as u64; // Convert to cents for integer representation
+        let (proof, committed_value) = self.create_range_proof(amount)?;
+        Ok((proof, vec![committed_value]))
+    }
+
+    pub fn verify_proof(&self, proof: &RangeProof, committed_value: &[u64]) -> IcnResult<bool> {
+        if committed_value.len() != 1 {
+            return Err(IcnError::ZKP("Invalid number of committed values".into()));
         }
-        format!("{:x}", hasher.finalize())
+
+        let mut transcript = Transcript::new(b"TransactionRangeProof");
+        proof
+            .verify_single(&self.bp_gens, &self.pc_gens, &mut transcript, committed_value[0], 64)
+            .map_err(|e| IcnError::ZKP(format!("Proof verification failed: {}", e)))
     }
-}
 
-pub mod zkp {
-    use super::*;
+    fn create_range_proof(&self, value: u64) -> IcnResult<(RangeProof, u64)> {
+        let mut transcript = Transcript::new(b"TransactionRangeProof");
+        let (proof, committed_value) = RangeProof::prove_single(
+            &self.bp_gens,
+            &self.pc_gens,
+            &mut transcript,
+            value,
+            &mut thread_rng(),
+            64,
+        )
+        .map_err(|e| IcnError::ZKP(format!("Failed to create range proof: {}", e)))?;
 
-    #[derive(Clone, Debug, Serialize, Deserialize)]
-    pub struct ZKPProof(pub Vec<u8>);
+        Ok((proof, committed_value))
+    }
 
-    pub trait ZKPSystem {
-        fn create_proof(&self, transaction: &Transaction) -> IcnResult<ZKPProof>;
-        fn verify_proof(&self, proof: &ZKPProof, transaction: &Transaction) -> IcnResult<bool>;
+    pub fn create_multi_proof(&self, values: &[u64]) -> IcnResult<(RangeProof, Vec<u64>)> {
+        let mut transcript = Transcript::new(b"MultiRangeProof");
+        let (proof, committed_values) = RangeProof::prove_multiple(
+            &self.bp_gens,
+            &self.pc_gens,
+            &mut transcript,
+            values,
+            &vec![64; values.len()],
+            &mut thread_rng(),
+        )
+        .map_err(|e| IcnError::ZKP(format!("Failed to create multi-range proof: {}", e)))?;
+
+        Ok((proof, committed_values))
+    }
+
+    pub fn verify_multi_proof(&self, proof: &RangeProof, committed_values: &[u64]) -> IcnResult<bool> {
+        let mut transcript = Transcript::new(b"MultiRangeProof");
+        proof
+            .verify_multiple(&self.bp_gens, &self.pc_gens, &mut transcript, committed_values, &vec![64; committed_values.len()])
+            .map_err(|e| IcnError::ZKP(format!("Multi-proof verification failed: {}", e)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common::CurrencyType;
 
     #[test]
-    fn test_transaction_hash() {
-        let tx = Transaction {
+    fn test_create_and_verify_proof() {
+        let zkp_manager = ZKPManager::new(64);
+        let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
-            amount: 100.0,
+            amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: 1234567890,
             signature: None,
         };
-        let hash = tx.hash();
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64);
+
+        let (proof, committed_value) = zkp_manager.create_proof(&transaction).unwrap();
+        assert!(zkp_manager.verify_proof(&proof, &committed_value).unwrap());
     }
 
     #[test]
-    fn test_block_hash() {
-        let tx = Transaction {
+    fn test_invalid_proof() {
+        let zkp_manager = ZKPManager::new(64);
+        let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
-            amount: 100.0,
+            amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: 1234567890,
             signature: None,
         };
-        let block = Block {
-            index: 1,
-            timestamp: 1234567890,
-            transactions: vec![tx],
-            previous_hash: "previous_hash".to_string(),
-            hash: String::new(),
-        };
-        let hash = block.hash();
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64);
+
+        let (proof, mut committed_value) = zkp_manager.create_proof(&transaction).unwrap();
+        committed_value[0] += 1; // Tamper with the committed value
+        assert!(!zkp_manager.verify_proof(&proof, &committed_value).unwrap());
+    }
+
+    #[test]
+    fn test_multi_proof() {
+        let zkp_manager = ZKPManager::new(64);
+        let values = vec![100, 200, 300];
+
+        let (proof, committed_values) = zkp_manager.create_multi_proof(&values).unwrap();
+        assert!(zkp_manager.verify_multi_proof(&proof, &committed_values).unwrap());
     }
 }
