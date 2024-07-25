@@ -1,378 +1,314 @@
-// /crates/icn_common/src/lib.rs
+use icn_blockchain::Blockchain;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencySystem;
+use icn_governance::GovernanceSystem;
+use icn_identity::IdentityManager;
+use icn_network::Network;
+use icn_sharding::ShardingManager;
+use icn_storage::StorageManager;
+use icn_vm::CoopVM;
+use icn_zkp::ZKPManager;
 
-/// Module for common types and utilities used across the ICN project.
-use chrono::{DateTime, Utc};
-use rand_chacha::ChaChaRng;
-use rand_chacha::rand_core::SeedableRng;
-use rand::RngCore;
-use ed25519_dalek::Keypair;
-use bellman::{Circuit, ConstraintSystem, SynthesisError};
-use bls12_381::Bls12;
-use serde::{Serialize, Deserialize};
+use icn_common::{Block, Transaction, Proposal, IcnResult, IcnError, CurrencyType};
+use std::sync::{Arc, RwLock};
+use tokio::sync::Mutex as AsyncMutex;
+use log::{info, warn, error};
+use std::collections::HashMap;
+use chrono::{Duration, Utc};
+use uuid::Uuid;
 
-pub mod bit_utils;
-pub mod error;
-pub use error::{IcnError, IcnResult};
-
-/// Enumeration representing different types of currencies.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Volunteer,
-    Storage,
-    Processing,
-    Energy,
-    Luxury,
-    Service,
-    Custom(String),
-    AssetToken(String),
-    Bond(String),
+pub struct Config {
+    pub shard_count: u64,
+    pub consensus_threshold: f64,
+    pub consensus_quorum: f64,
+    pub network_port: u16,
+    pub zkp_bit_size: usize,
 }
 
-/// Structure representing a transaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
-    pub zkp: Option<ZKProof>,
+pub struct IcnNode {
+    blockchain: Arc<RwLock<Blockchain>>,
+    consensus: Arc<RwLock<PoCConsensus>>,
+    currency_system: Arc<RwLock<CurrencySystem>>,
+    governance: Arc<RwLock<GovernanceSystem>>,
+    identity_manager: Arc<RwLock<IdentityManager>>,
+    network: Arc<AsyncMutex<Network>>,
+    sharding_manager: Arc<RwLock<ShardingManager>>,
+    storage_manager: Arc<RwLock<StorageManager>>,
+    vm: Arc<RwLock<CoopVM>>,
+    zkp_manager: Arc<RwLock<ZKPManager>>,
 }
 
-/// Structure representing a block in the blockchain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-    pub zkp_accumulator: Option<ZKAccumulator>,
-}
+impl IcnNode {
+    pub fn new(config: Config) -> IcnResult<Self> {
+        let blockchain = Arc::new(RwLock::new(Blockchain::new()?));
+        let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
+        let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
+        let governance = Arc::new(RwLock::new(GovernanceSystem::new(
+            Arc::clone(&blockchain),
+            Arc::clone(&consensus),
+        )));
+        let identity_manager = Arc::new(RwLock::new(IdentityManager::new()));
+        let network = Arc::new(AsyncMutex::new(Network::new(format!("127.0.0.1:{}", config.network_port).parse().map_err(|e| IcnError::Network(e.to_string()))?)));
+        let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
+        let storage_manager = Arc::new(RwLock::new(StorageManager::new(3))); // Replication factor of 3
+        let vm = Arc::new(RwLock::new(CoopVM::new(Vec::new()))); // Empty program for now
+        let zkp_manager = Arc::new(RwLock::new(ZKPManager::new(config.zkp_bit_size)));
 
-/// Structure representing a proposal for governance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-/// Enumeration representing the status of a proposal.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Implemented,
-}
-
-/// Enumeration representing the type of a proposal.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-/// Enumeration representing the category of a proposal.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Constitutional,
-    Economic,
-    Technical,
-}
-
-/// Structure representing a vote on a proposal.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-    pub timestamp: DateTime<Utc>,
-    pub zkp: Option<ZKProof>,
-}
-
-/// Trait defining an object that can be hashed.
-pub trait Hashable {
-    fn hash(&self) -> String;
-}
-
-/// Structure representing a zero-knowledge proof.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZKProof {
-    pub proof: Vec<u8>,
-    pub public_inputs: Vec<Vec<u8>>,
-}
-
-/// Structure representing a zero-knowledge proof accumulator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZKAccumulator {
-    pub value: Vec<u8>,
-}
-
-/// Trait for synthesizing zero-knowledge circuits.
-pub trait ZKCircuit<E: bellman::Engine> {
-    fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError>;
-}
-
-/// Implementation of the Hashable trait for Block.
-impl Hashable for Block {
-    fn hash(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(self.index.to_string());
-        hasher.update(&self.timestamp.to_string());
-        for transaction in &self.transactions {
-            hasher.update(&transaction.hash());
-        }
-        hasher.update(&self.previous_hash);
-        format!("{:x}", hasher.finalize())
-    }
-}
-
-/// Implementation of the Hashable trait for Transaction.
-impl Hashable for Transaction {
-    fn hash(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        hasher.update(&self.from);
-        hasher.update(&self.to);
-        hasher.update(self.amount.to_string().as_bytes());
-        hasher.update(format!("{:?}", self.currency_type).as_bytes());
-        hasher.update(self.timestamp.to_string().as_bytes());
-        if let Some(signature) = &self.signature {
-            hasher.update(signature);
-        }
-        if let Some(zkp) = &self.zkp {
-            hasher.update(&zkp.proof);
-            for input in &zkp.public_inputs {
-                hasher.update(input);
-            }
-        }
-        format!("{:x}", hasher.finalize())
-    }
-}
-
-/// Implementation of methods for Transaction.
-impl Transaction {
-    /// Creates a new transaction
-    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
-        Transaction {
-            from,
-            to,
-            amount,
-            currency_type,
-            timestamp,
-            signature: None,
-            zkp: None,
-        }
+        Ok(IcnNode {
+            blockchain,
+            consensus,
+            currency_system,
+            governance,
+            identity_manager,
+            network,
+            sharding_manager,
+            storage_manager,
+            vm,
+            zkp_manager,
+        })
     }
 
-    /// Signs the transaction using the provided private key
-    pub fn sign(&mut self, private_key: &[u8]) -> IcnResult<()> {
-        use ed25519_dalek::{Keypair, Signer};
-        let keypair = Keypair::from_bytes(private_key)
-            .map_err(|e| IcnError::Identity(format!("Invalid private key: {}", e)))?;
-        let message = self.hash().as_bytes().to_vec();
-        let signature = keypair.sign(&message);
-        self.signature = Some(signature.to_bytes().to_vec());
+    pub async fn start(&self) -> IcnResult<()> {
+        info!("Starting InterCooperative Network node");
+        self.blockchain.read().unwrap().start()?;
+        self.consensus.read().unwrap().start()?;
+        self.network.lock().await.start().await?;
+        self.listen_for_network_events();
         Ok(())
     }
 
-    /// Verifies the transaction using the provided public key
-    pub fn verify(&self, public_key: &[u8]) -> IcnResult<bool> {
-        use ed25519_dalek::{PublicKey, Verifier};
-        let public_key = PublicKey::from_bytes(public_key)
-            .map_err(|e| IcnError::Identity(format!("Invalid public key: {}", e)))?;
-        let message = self.hash().as_bytes().to_vec();
-        if let Some(signature) = &self.signature {
-            let signature = ed25519_dalek::Signature::from_bytes(signature)
-                .map_err(|e| IcnError::Identity(format!("Invalid signature: {}", e)))?;
-            Ok(public_key.verify(&message, &signature).is_ok())
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Adds a zero-knowledge proof to the transaction
-    pub fn add_zkp(&mut self, proof: Vec<u8>, public_inputs: Vec<Vec<u8>>) {
-        self.zkp = Some(ZKProof {
-            proof,
-            public_inputs,
-        });
-    }
-
-    /// Verifies the zero-knowledge proof of the transaction
-    pub fn verify_zkp<E: bellman::Engine, C: ZKCircuit<E>>(&self, circuit: C, verifying_key: &bellman::groth16::VerifyingKey<E>) -> IcnResult<bool> {
-        if let Some(zkp) = &self.zkp {
-            let proof = bellman::groth16::Proof::<E>::read(&zkp.proof[..])
-                .map_err(|e| IcnError::ZKP(format!("Invalid ZKP: {}", e)))?;
-            
-            let public_inputs: Vec<E::Fr> = zkp.public_inputs.iter()
-                .map(|input| E::Fr::from_str(&hex::encode(input)).unwrap())
-                .collect();
-
-            Ok(bellman::groth16::verify_proof(verifying_key, &proof, &public_inputs)
-                .map_err(|e| IcnError::ZKP(format!("ZKP verification failed: {}", e)))?)
-        } else {
-            Ok(false)
-        }
-    }
-}
-
-/// Implementation of methods for Block.
-impl Block {
-    /// Creates a new block
-    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Self {
-        let timestamp = Utc::now().timestamp();
-        let mut block = Block {
-            index,
-            timestamp,
-            transactions,
-            previous_hash,
-            hash: String::new(),
-            zkp_accumulator: None,
-        };
-        block.hash = block.hash();
-        block
-    }
-
-    /// Creates a genesis block
-    pub fn genesis() -> Self {
-        Block::new(0, Vec::new(), "0".repeat(64))
-    }
-
-    /// Adds a zero-knowledge proof accumulator to the block
-    pub fn add_zkp_accumulator(&mut self, accumulator: ZKAccumulator) {
-        self.zkp_accumulator = Some(accumulator);
-    }
-}
-
-/// Structure representing a ZK accumulator circuit.
-pub struct ZKAccumulatorCircuit<E: bellman::Engine> {
-    pub transactions: Vec<Transaction>,
-    pub previous_accumulator: Option<E::Fr>,
-}
-
-/// Implementation of the ZKCircuit trait for ZKAccumulatorCircuit.
-impl<E: bellman::Engine> ZKCircuit<E> for ZKAccumulatorCircuit<E> {
-    fn synthesize<CS: ConstraintSystem<E>>(
-        self,
-        cs: &mut CS
-    ) -> Result<(), SynthesisError> {
-        // Implementation of the ZKP circuit for accumulating transactions
-        // This is a placeholder and should be implemented based on the specific requirements
+    pub async fn stop(&self) -> IcnResult<()> {
+        info!("Stopping InterCooperative Network node");
+        self.blockchain.read().unwrap().stop()?;
+        self.consensus.read().unwrap().stop()?;
+        self.network.lock().await.stop().await?;
         Ok(())
     }
+
+    pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
+        self.verify_transaction(&transaction)?;
+        
+        // Create ZKP proof
+        let zkp_proof = self.zkp_manager.read().unwrap().create_proof(&transaction)?;
+        
+        // Verify ZKP proof
+        if !self.zkp_manager.read().unwrap().verify_proof(&zkp_proof, &transaction)? {
+            return Err(IcnError::ZKP("Invalid ZKP proof".into()));
+        }
+
+        let from_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.from);
+        let to_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.to);
+
+        if from_shard != to_shard {
+            self.process_cross_shard_transaction(transaction, from_shard, to_shard).await?;
+        } else {
+            self.blockchain.write().unwrap().add_transaction(transaction)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
+        self.governance.write().unwrap().create_proposal(proposal)
+    }
+
+    pub fn vote_on_proposal(&self, proposal_id: &str, voter: &str, vote: bool) -> IcnResult<()> {
+        self.governance.write().unwrap().vote_on_proposal(proposal_id, voter, vote)
+    }
+
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currency_system.read().unwrap().get_balance(address, currency_type)
+    }
+
+    pub fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
+        self.identity_manager.write().unwrap().create_identity(attributes)
+    }
+
+    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
+        info!("Allocating {} units of resource {}", amount, resource_id);
+        // Implement resource allocation logic here
+        Ok(())
+    }
+
+    pub async fn get_network_stats(&self) -> IcnResult<NetworkStats> {
+        let network = self.network.lock().await;
+        Ok(NetworkStats {
+            connected_peers: network.get_connected_peers().len() as u32,
+            total_transactions: self.blockchain.read().unwrap().get_total_transactions(),
+            uptime: network.get_uptime(),
+        })
+    }
+
+    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
+        // Implement transaction verification logic
+        // This should include signature verification, balance checks, etc.
+        Ok(())
+    }
+
+    async fn process_cross_shard_transaction(&self, transaction: Transaction, from_shard: u64, to_shard: u64) -> IcnResult<()> {
+        // Implement cross-shard transaction processing logic
+        // This should include locking funds in the source shard, transferring to the destination shard, and updating balances
+        Ok(())
+    }
+
+    fn listen_for_network_events(&self) {
+        // Implement network event listening logic
+        // This should handle incoming messages, new peer connections, etc.
+    }
+}
+
+pub struct NetworkStats {
+    pub connected_peers: u32,
+    pub total_transactions: u64,
+    pub uptime: std::time::Duration,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
-    use rand::SeedableRng;
-    use rand_chacha::ChaChaRng;
 
-    #[test]
-    fn test_transaction_hash() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1234567890,
-        );
-        let hash = tx.hash();
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64);
-    }
+    #[tokio::test]
+    async fn test_node_creation_and_basic_operations() {
+        let config = Config {
+            shard_count: 4,
+            consensus_threshold: 0.66,
+            consensus_quorum: 0.51,
+            network_port: 8080,
+            zkp_bit_size: 64,
+        };
 
-    #[test]
-    fn test_block_hash() {
-        let tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1234567890,
-        );
-        let block = Block::new(1, vec![tx], "previous_hash".to_string());
-        let hash = block.hash();
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64);
-        assert_eq!(block.hash, hash);
-    }
+        let node = IcnNode::new(config).unwrap();
+        node.start().await.unwrap();
 
-    #[test]
-    fn test_transaction_sign_and_verify() {
-        use ed25519_dalek::{Keypair, Signer};
+        // Test create identity
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        attributes.insert("email".to_string(), "alice@example.com".to_string());
+        let identity = node.create_identity(attributes).unwrap();
+        assert_eq!(identity.attributes.get("name"), Some(&"Alice".to_string()));
 
-        let mut rng = ChaChaRng::from_entropy();
-        let keypair: Keypair = Keypair::generate(&mut rng);
+        // Test process transaction
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+        assert!(node.process_transaction(transaction).await.is_ok());
 
-        let mut tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1234567890,
-        );
+// Test create proposal
+let proposal = Proposal {
+    id: Uuid::new_v4().to_string(),
+    title: "Test Proposal".to_string(),
+    description: "This is a test proposal".to_string(),
+    proposer: "Alice".to_string(),
+    created_at: Utc::now(),
+    voting_ends_at: Utc::now() + Duration::days(7),
+    status: icn_common::ProposalStatus::Active,
+    proposal_type: icn_common::ProposalType::Constitutional,
+    category: icn_common::ProposalCategory::Economic,
+    required_quorum: 0.66,
+    execution_timestamp: None,
+};
+assert!(node.create_proposal(proposal).is_ok());
 
-        tx.sign(keypair.to_bytes().as_ref()).unwrap();
-        assert!(tx.verify(keypair.public.as_bytes()).unwrap());
+// Test get network stats
+let stats = node.get_network_stats().await.unwrap();
+assert!(stats.connected_peers >= 0);
 
-        // Test with wrong public key
-        let wrong_keypair: Keypair = Keypair::generate(&mut rng);
-        assert!(!tx.verify(wrong_keypair.public.as_bytes()).unwrap());
-    }
+// Test allocate resource
+assert!(node.allocate_resource("computing_power", 100).is_ok());
 
-    #[test]
-    fn test_zkp_integration() {
-        use bellman::groth16;
-        use bls12_381::Bls12;
+// Test get balance
+let balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
+assert!(balance >= 0.0);
 
-        // This is a dummy circuit for testing purposes
-        struct DummyCircuit;
-        impl ZKCircuit<Bls12> for DummyCircuit {
-            fn synthesize<CS: ConstraintSystem<Bls12>>(
-                self,
-                _cs: &mut CS
-            ) -> Result<(), SynthesisError> {
-                Ok(())
-            }
-        }
+node.stop().await.unwrap();
+}
 
-        let mut rng = ChaChaRng::from_entropy();
-        let params = groth16::generate_random_parameters::<Bls12, _, _>(DummyCircuit, &mut rng).unwrap();
-        let pvk = groth16::prepare_verifying_key(&params.vk);
+#[tokio::test]
+async fn test_cross_shard_transaction() {
+let config = Config {
+    shard_count: 2,
+    consensus_threshold: 0.66,
+    consensus_quorum: 0.51,
+    network_port: 8081,
+    zkp_bit_size: 64,
+};
 
-        let mut tx = Transaction::new(
-            "Alice".to_string(),
-            "Bob".to_string(),
-            100.0,
-            CurrencyType::BasicNeeds,
-            1234567890,
-        );
+let node = IcnNode::new(config).unwrap();
+node.start().await.unwrap();
 
-        let proof = groth16::create_random_proof(DummyCircuit, &params, &mut rng).unwrap();
-        let proof_vec = proof.write(&mut vec![]).unwrap();
-        tx.add_zkp(proof_vec, vec![]);
+// Set up shards and initial balances
+{
+    let mut sharding_manager = node.sharding_manager.write().unwrap();
+    sharding_manager.add_address_to_shard("Alice".to_string(), 0);
+    sharding_manager.add_address_to_shard("Bob".to_string(), 1);
+    sharding_manager.initialize_balance("Alice".to_string(), CurrencyType::BasicNeeds, 1000.0);
+}
 
-        assert!(tx.verify_zkp(DummyCircuit, &pvk).unwrap());
-    }
+// Create and process a cross-shard transaction
+let transaction = Transaction {
+    from: "Alice".to_string(),
+    to: "Bob".to_string(),
+    amount: 500.0,
+    currency_type: CurrencyType::BasicNeeds,
+    timestamp: chrono::Utc::now().timestamp(),
+    signature: None, // In a real scenario, this should be signed
+};
+
+assert!(node.process_transaction(transaction).await.is_ok());
+
+// Verify balances after the transaction
+let alice_balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
+let bob_balance = node.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap();
+
+assert_eq!(alice_balance, 500.0);
+assert_eq!(bob_balance, 500.0);
+
+node.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_zkp_integration() {
+let config = Config {
+    shard_count: 1,
+    consensus_threshold: 0.66,
+    consensus_quorum: 0.51,
+    network_port: 8082,
+    zkp_bit_size: 64,
+};
+
+let node = IcnNode::new(config).unwrap();
+node.start().await.unwrap();
+
+// Set up initial balance
+{
+    let mut currency_system = node.currency_system.write().unwrap();
+    currency_system.mint("Alice", CurrencyType::BasicNeeds, 1000.0).unwrap();
+}
+
+// Create and process a transaction with ZKP
+let transaction = Transaction {
+    from: "Alice".to_string(),
+    to: "Bob".to_string(),
+    amount: 100.0,
+    currency_type: CurrencyType::BasicNeeds,
+    timestamp: chrono::Utc::now().timestamp(),
+    signature: None, // In a real scenario, this should be signed
+};
+
+assert!(node.process_transaction(transaction).await.is_ok());
+
+// Verify balances after the transaction
+let alice_balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap();
+let bob_balance = node.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap();
+
+assert_eq!(alice_balance, 900.0);
+assert_eq!(bob_balance, 100.0);
+
+node.stop().await.unwrap();
+}
 }

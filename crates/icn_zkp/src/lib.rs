@@ -1,62 +1,187 @@
-use bellman::{Circuit, ConstraintSystem, SynthesisError};
-use bls12_381::Bls12;
-use icn_common::{IcnResult, IcnError, Transaction};
-use rand::rngs::OsRng;
+use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use thiserror::Error;
 
-mod circuits;
-pub use circuits::*;
+pub mod bit_utils;
+pub mod error;
 
-pub struct ZKPManager {
-    params: bellman::groth16::Parameters<Bls12>,
-    pvk: bellman::groth16::PreparedVerifyingKey<Bls12>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CurrencyType {
+    BasicNeeds,
+    Education,
+    Environmental,
+    Community,
+    Volunteer,
+    Storage,
+    Processing,
+    Energy,
+    Luxury,
+    Service,
+    Custom(String),
+    AssetToken(String),
+    Bond(String),
 }
 
-impl ZKPManager {
-    /// Creates a new ZKPManager with generated parameters.
-    pub fn new() -> IcnResult<Self> {
-        let mut rng = OsRng;
-        let params = bellman::groth16::generate_random_parameters::<Bls12, _, _>(
-            TransactionCircuit::empty(),
-            &mut rng
-        ).map_err(|e| IcnError::ZKP(format!("Failed to generate ZKP parameters: {}", e)))?;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub currency_type: CurrencyType,
+    pub timestamp: i64,
+    pub signature: Option<Vec<u8>>,
+}
 
-        let pvk = bellman::groth16::prepare_verifying_key(&params.vk);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+}
 
-        Ok(ZKPManager { params, pvk })
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub proposer: String,
+    pub created_at: DateTime<Utc>,
+    pub voting_ends_at: DateTime<Utc>,
+    pub status: ProposalStatus,
+    pub proposal_type: ProposalType,
+    pub category: ProposalCategory,
+    pub required_quorum: f64,
+    pub execution_timestamp: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Implemented,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalCategory {
+    Constitutional,
+    Economic,
+    Technical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+    pub timestamp: DateTime<Utc>,
+}
+
+pub trait Hashable {
+    fn hash(&self) -> String;
+}
+
+#[derive(Error, Debug)]
+pub enum IcnError {
+    #[error("Blockchain error: {0}")]
+    Blockchain(String),
+
+    #[error("Consensus error: {0}")]
+    Consensus(String),
+
+    #[error("Currency error: {0}")]
+    Currency(String),
+
+    #[error("Governance error: {0}")]
+    Governance(String),
+
+    #[error("Identity error: {0}")]
+    Identity(String),
+
+    #[error("Network error: {0}")]
+    Network(String),
+
+    #[error("Sharding error: {0}")]
+    Sharding(String),
+
+    #[error("Storage error: {0}")]
+    Storage(String),
+
+    #[error("VM error: {0}")]
+    Vm(String),
+
+    #[error("ZKP error: {0}")]
+    ZKP(String),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+}
+
+pub type IcnResult<T> = Result<T, IcnError>;
+
+impl Hashable for Block {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(&self.timestamp.to_string());
+        for transaction in &self.transactions {
+            hasher.update(&transaction.hash());
+        }
+        hasher.update(&self.previous_hash);
+        format!("{:x}", hasher.finalize())
     }
+}
 
-    /// Creates a zero-knowledge proof for a given transaction.
-    pub fn create_proof(&self, transaction: &Transaction) -> IcnResult<bellman::groth16::Proof<Bls12>> {
-        let circuit = TransactionCircuit::new(transaction);
-        let mut rng = OsRng;
-
-        bellman::groth16::create_random_proof(circuit, &self.params, &mut rng)
-            .map_err(|e| IcnError::ZKP(format!("Failed to create ZKP proof: {}", e)))
+impl Hashable for Transaction {
+    fn hash(&self) -> String {
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&self.from);
+        hasher.update(&self.to);
+        hasher.update(self.amount.to_string().as_bytes());
+        hasher.update(format!("{:?}", self.currency_type).as_bytes());
+        hasher.update(self.timestamp.to_string().as_bytes());
+        if let Some(signature) = &self.signature {
+            hasher.update(signature);
+        }
+        format!("{:x}", hasher.finalize())
     }
+}
 
-    /// Verifies a zero-knowledge proof for a given transaction.
-    pub fn verify_proof(
-        &self,
-        proof: &bellman::groth16::Proof<Bls12>,
-        transaction: &Transaction,
-    ) -> IcnResult<bool> {
-        let inputs = TransactionCircuit::public_inputs(transaction);
+pub mod zkp {
+    use super::*;
 
-        bellman::groth16::verify_proof(&self.pvk, proof, &inputs)
-            .map_err(|e| IcnError::ZKP(format!("Failed to verify ZKP proof: {}", e)))
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct ZKPProof(pub Vec<u8>);
+
+    pub trait ZKPSystem {
+        fn create_proof(&self, transaction: &Transaction) -> IcnResult<ZKPProof>;
+        fn verify_proof(&self, proof: &ZKPProof, transaction: &Transaction) -> IcnResult<bool>;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::CurrencyType;
 
     #[test]
-    fn test_zkp_create_and_verify() {
-        let manager = ZKPManager::new().expect("Failed to create ZKPManager");
-
-        let transaction = Transaction {
+    fn test_transaction_hash() {
+        let tx = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
             amount: 100.0,
@@ -64,10 +189,30 @@ mod tests {
             timestamp: 1234567890,
             signature: None,
         };
+        let hash = tx.hash();
+        assert!(!hash.is_empty());
+        assert_eq!(hash.len(), 64);
+    }
 
-        let proof = manager.create_proof(&transaction).expect("Failed to create proof");
-        let is_valid = manager.verify_proof(&proof, &transaction).expect("Failed to verify proof");
-
-        assert!(is_valid, "Proof verification failed");
+    #[test]
+    fn test_block_hash() {
+        let tx = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1234567890,
+            signature: None,
+        };
+        let block = Block {
+            index: 1,
+            timestamp: 1234567890,
+            transactions: vec![tx],
+            previous_hash: "previous_hash".to_string(),
+            hash: String::new(),
+        };
+        let hash = block.hash();
+        assert!(!hash.is_empty());
+        assert_eq!(hash.len(), 64);
     }
 }
