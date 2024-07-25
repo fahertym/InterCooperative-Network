@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 
+
 pub struct Config {
     pub shard_count: u64,
     pub consensus_threshold: f64,
@@ -311,4 +312,25 @@ assert_eq!(bob_balance, 100.0);
 
 node.stop().await.unwrap();
 }
-}
+}[package]
+name = "icn_common"
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+edition = "2018"
+
+[dependencies]
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.9"
+rand = "0.8"
+rand_chacha = "0.3"
+ed25519-dalek = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+uuid = "0.8"  # Add this if uuid is used
+
+[dev-dependencies]
+rand = "0.8"
+rand_chacha = "0.3"

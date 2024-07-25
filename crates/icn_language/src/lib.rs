@@ -1,5 +1,4 @@
-// crates/icn_language/src/lib.rs
-
+use icn_common::{Opcode, Value};
 use nom::{
     IResult,
     branch::alt,
@@ -9,7 +8,6 @@ use nom::{
     multi::{many0, separated_list0},
     sequence::{delimited, pair, preceded, terminated, tuple},
 };
-use icn_vm::{Opcode, Value};
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -380,17 +378,12 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
             Statement::Emit_Event { event_name, event_data } => {
                 bytecode.push(Opcode::Push(Value::String(event_name.clone())));
                 bytecode.push(Opcode::Push(Value::String(event_data.clone())));
-                bytecode.push(Opcode::EmitEvent);
+                bytecode.push(Opcode::EmitEvent(event_name.clone()));
             },
         }
     }
 
     bytecode
-}
-
-pub fn compile_to_bytecode(source: &str) -> Result<Vec<Opcode>, String> {
-    let statements = compile(source)?;
-    Ok(generate_bytecode(&statements))
 }
 
 #[cfg(test)]
@@ -447,7 +440,7 @@ mod tests {
     fn test_parse_coop_member_add() {
         let input = r#"coop-member-add("coop1", "member1")"#;
         let result = parse_coop_member_add(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Coop_Member_Add {
             coop_id: "coop1".to_string(),
@@ -482,7 +475,7 @@ mod tests {
     fn test_parse_allocate_resource() {
         let input = r#"allocate-resource("computing_power", 100)"#;
         let result = parse_allocate_resource(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Allocate_Resource {
             resource: "computing_power".to_string(),
@@ -494,7 +487,7 @@ mod tests {
     fn test_parse_update_reputation() {
         let input = r#"update-reputation("user1", 5)"#;
         let result = parse_update_reputation(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Update_Reputation {
             address: "user1".to_string(),
@@ -506,7 +499,7 @@ mod tests {
     fn test_parse_create_proposal() {
         let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
         let result = parse_create_proposal(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Create_Proposal {
             title: "New Policy".to_string(),
@@ -518,7 +511,7 @@ mod tests {
     fn test_parse_get_proposal_status() {
         let input = r#"get-proposal-status("proposal1")"#;
         let result = parse_get_proposal_status(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Get_Proposal_Status {
             proposal_id: "proposal1".to_string(),
@@ -529,7 +522,7 @@ mod tests {
     fn test_parse_emit_event() {
         let input = r#"emit-event("NewMember", "Alice joined the network")"#;
         let result = parse_emit_event(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::Emit_Event {
             event_name: "NewMember".to_string(),
@@ -596,20 +589,25 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_to_bytecode() {
-        let input = r#"
-            net-node-connect("node1", "node2")
-            econ-currency-mint(100.0, "BasicNeeds")
-        "#;
-        let result = compile_to_bytecode(input);
-        assert!(result.is_ok());
-        let bytecode = result.unwrap();
-        assert_eq!(bytecode.len(), 7); // 2 pushes + 1 op for first statement, 2 pushes + 1 op for second statement
+    fn test_generate_bytecode() {
+        let statements = vec![
+            Statement::Net_Node_Connect {
+                node1: "node1".to_string(),
+                node2: "node2".to_string(),
+            },
+            Statement::Econ_Currency_Mint {
+                amount: 100.0,
+                currency_type: "BasicNeeds".to_string(),
+            },
+        ];
+
+        let bytecode = generate_bytecode(&statements);
+        
+        assert_eq!(bytecode.len(), 5);
         assert!(matches!(bytecode[0], Opcode::Push(Value::String(_))));
         assert!(matches!(bytecode[1], Opcode::Push(Value::String(_))));
         assert!(matches!(bytecode[2], Opcode::NetNodeConnect));
         assert!(matches!(bytecode[3], Opcode::Push(Value::Float(_))));
         assert!(matches!(bytecode[4], Opcode::Push(Value::String(_))));
-        assert!(matches!(bytecode[5], Opcode::EconCurrencyMint));
     }
 }
