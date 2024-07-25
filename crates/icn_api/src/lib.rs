@@ -1,372 +1,164 @@
-use icn_common::{Block, Transaction, Proposal, ProposalStatus, CurrencyType};
-use icn_common::{CommonError, CommonResult};
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use log::{info, error};
+// File: crates/icn_core/src/lib.rs
 
-/// A generic API response structure.
-#[derive(Serialize, Deserialize)]
-pub struct ApiResponse<T> {
-    /// Indicates whether the API call was successful.
-    pub success: bool,
-    /// Contains the data returned by the API call, if any.
-    pub data: Option<T>,
-    /// Contains the error message, if any.
-    pub error: Option<String>,
+use icn_blockchain::Blockchain;
+use icn_consensus::PoCConsensus;
+use icn_currency::CurrencySystem;
+use icn_governance::GovernanceSystem;
+use icn_identity::IdentityManager;
+use icn_network::Network;
+use icn_sharding::ShardingManager;
+use icn_storage::StorageManager;
+use icn_vm::CoopVM;
+use icn_zkp::ZKPManager;
+
+use icn_common::{Block, Transaction, Proposal, IcnResult, IcnError, CurrencyType};
+use std::sync::{Arc, RwLock};
+use tokio::sync::Mutex as AsyncMutex;
+
+pub struct Config {
+    pub shard_count: u64,
+    pub consensus_threshold: f64,
+    pub consensus_quorum: f64,
+    pub network_port: u16,
 }
 
-/// API Layer struct to manage different modules.
-pub struct ApiLayer {
-    blockchain: Arc<RwLock<dyn BlockchainInterface>>,
-    consensus: Arc<RwLock<dyn ConsensusInterface>>,
-    currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
-    governance: Arc<RwLock<dyn GovernanceInterface>>,
+pub struct IcnNode {
+    blockchain: Arc<RwLock<Blockchain>>,
+    consensus: Arc<RwLock<PoCConsensus>>,
+    currency_system: Arc<RwLock<CurrencySystem>>,
+    governance: Arc<RwLock<GovernanceSystem>>,
+    identity_manager: Arc<RwLock<IdentityManager>>,
+    network: Arc<AsyncMutex<Network>>,
+    sharding_manager: Arc<RwLock<ShardingManager>>,
+    storage_manager: Arc<RwLock<StorageManager>>,
+    vm: Arc<RwLock<CoopVM>>,
+    zkp_manager: Arc<RwLock<ZKPManager>>,
 }
 
-/// Struct containing information about the blockchain.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct BlockchainInfo {
-    pub block_count: usize,
-    pub last_block_hash: Option<String>,
-}
+impl IcnNode {
+    pub fn new(config: Config) -> IcnResult<Self> {
+        let blockchain = Arc::new(RwLock::new(Blockchain::new()?));
+        let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
+        let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
+        let governance = Arc::new(RwLock::new(GovernanceSystem::new(
+            Arc::clone(&blockchain),
+            Arc::clone(&consensus),
+        )));
+        let identity_manager = Arc::new(RwLock::new(IdentityManager::new()));
+        let network = Arc::new(AsyncMutex::new(Network::new(format!("127.0.0.1:{}", config.network_port).parse().map_err(|e| IcnError::Network(e.to_string()))?)));
+        let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
+        let storage_manager = Arc::new(RwLock::new(StorageManager::new(3))); // Replication factor of 3
+        let vm = Arc::new(RwLock::new(CoopVM::new(Vec::new()))); // Empty program for now
+        let zkp_manager = Arc::new(RwLock::new(ZKPManager::new()?));
 
-/// Struct representing a vote in the governance system.
-#[derive(Serialize, Deserialize)]
-pub struct Vote {
-    pub voter: String,
-    pub proposal_id: String,
-    pub in_favor: bool,
-    pub weight: f64,
-}
-
-impl ApiLayer {
-    /// Creates a new instance of ApiLayer.
-    ///
-    /// # Arguments
-    ///
-    /// * `blockchain` - A reference to the blockchain module.
-    /// * `consensus` - A reference to the consensus module.
-    /// * `currency_system` - A reference to the currency system module.
-    /// * `governance` - A reference to the governance module.
-    pub fn new(
-        blockchain: Arc<RwLock<dyn BlockchainInterface>>,
-        consensus: Arc<RwLock<dyn ConsensusInterface>>,
-        currency_system: Arc<RwLock<dyn CurrencySystemInterface>>,
-        governance: Arc<RwLock<dyn GovernanceInterface>>,
-    ) -> Self {
-        ApiLayer {
+        Ok(IcnNode {
             blockchain,
             consensus,
             currency_system,
             governance,
-        }
+            identity_manager,
+            network,
+            sharding_manager,
+            storage_manager,
+            vm,
+            zkp_manager,
+        })
     }
 
-    /// Fetches information about the blockchain.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<BlockchainInfo>>` - The result of the API call containing blockchain information.
-    pub async fn get_blockchain_info(&self) -> CommonResult<ApiResponse<BlockchainInfo>> {
-        info!("Fetching blockchain info");
-        let blockchain = self.blockchain.read().await;
-        match blockchain.get_info().await {
-            Ok(info) => Ok(ApiResponse {
-                success: true,
-                data: Some(info),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to fetch blockchain info: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+    pub async fn start(&self) -> IcnResult<()> {
+        // Start all components
+        self.blockchain.read().unwrap().start()?;
+        self.consensus.read().unwrap().start()?;
+        self.network.lock().await.start().await?;
+        
+        // Start listening for network events
+        self.listen_for_network_events();
+
+        Ok(())
     }
 
-    /// Submits a transaction to the blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to be submitted.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
-    pub async fn submit_transaction(&self, transaction: Transaction) -> CommonResult<ApiResponse<String>> {
-        info!("Submitting transaction: {:?}", transaction);
-        let mut blockchain = self.blockchain.write().await;
-        match blockchain.add_transaction(transaction).await {
-            Ok(_) => Ok(ApiResponse {
-                success: true,
-                data: Some("Transaction submitted successfully".to_string()),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to submit transaction: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+    pub async fn stop(&self) -> IcnResult<()> {
+        // Stop all components
+        self.blockchain.read().unwrap().stop()?;
+        self.consensus.read().unwrap().stop()?;
+        self.network.lock().await.stop().await?;
+
+        Ok(())
     }
 
-    /// Fetches the balance for a given address and currency type.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - The address to fetch the balance for.
-    /// * `currency_type` - The type of currency to fetch the balance of.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<f64>>` - The result of the API call.
-    pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<ApiResponse<f64>> {
-        info!("Fetching balance for address: {}, currency type: {:?}", address, currency_type);
-        let currency_system = self.currency_system.read().await;
-        match currency_system.get_balance(address, currency_type).await {
-            Ok(balance) => Ok(ApiResponse {
-                success: true,
-                data: Some(balance),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to fetch balance: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
+    pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
+        // Verify the transaction
+        self.verify_transaction(&transaction)?;
+
+        // If it's a cross-shard transaction, handle it accordingly
+        let from_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.from);
+        let to_shard = self.sharding_manager.read().unwrap().get_shard_for_address(&transaction.to);
+
+        if from_shard != to_shard {
+            self.process_cross_shard_transaction(transaction, from_shard, to_shard).await?;
+        } else {
+            // Add the transaction to the blockchain
+            self.blockchain.write().unwrap().add_transaction(transaction)?;
         }
+
+        Ok(())
     }
 
-    /// Creates a new proposal in the governance system.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal` - The proposal to be created.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
-    pub async fn create_proposal(&self, proposal: Proposal) -> CommonResult<ApiResponse<String>> {
-        info!("Creating proposal: {:?}", proposal);
-        let mut governance = self.governance.write().await;
-        match governance.create_proposal(proposal).await {
-            Ok(proposal_id) => Ok(ApiResponse {
-                success: true,
-                data: Some(proposal_id),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to create proposal: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+    pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
+        self.governance.write().unwrap().create_proposal(proposal)
     }
 
-    /// Votes on an existing proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `vote` - The vote to be cast.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<String>>` - The result of the API call.
-    pub async fn vote_on_proposal(&self, vote: Vote) -> CommonResult<ApiResponse<String>> {
-        info!("Voting on proposal: {:?}", vote);
-        let mut governance = self.governance.write().await;
-        match governance.vote_on_proposal(vote).await {
-            Ok(_) => Ok(ApiResponse {
-                success: true,
-                data: Some("Vote recorded successfully".to_string()),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to vote on proposal: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+    pub fn vote_on_proposal(&self, proposal_id: &str, voter: &str, vote: bool) -> IcnResult<()> {
+        self.governance.write().unwrap().vote_on_proposal(proposal_id, voter, vote)
     }
 
-    /// Fetches the status of a given proposal.
-    ///
-    /// # Arguments
-    ///
-    /// * `proposal_id` - The ID of the proposal to fetch the status of.
-    ///
-    /// # Returns
-    ///
-    /// * `CommonResult<ApiResponse<ProposalStatus>>` - The result of the API call.
-    pub async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ApiResponse<ProposalStatus>> {
-        info!("Fetching proposal status for ID: {}", proposal_id);
-        let governance = self.governance.read().await;
-        match governance.get_proposal_status(proposal_id).await {
-            Ok(status) => Ok(ApiResponse {
-                success: true,
-                data: Some(status),
-                error: None,
-            }),
-            Err(e) => {
-                error!("Failed to fetch proposal status: {:?}", e);
-                Ok(ApiResponse {
-                    success: false,
-                    data: None,
-                    error: Some(e.to_string()),
-                })
-            }
-        }
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currency_system.read().unwrap().get_balance(address, currency_type)
+    }
+
+    pub fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
+        self.identity_manager.write().unwrap().create_identity(attributes)
+    }
+
+    pub fn allocate_resource(&self, resource_id: &str, amount: u64) -> IcnResult<()> {
+        // In a real implementation, this would interact with a resource management system
+        // For now, we'll just log the allocation
+        log::info!("Allocating {} units of resource {}", amount, resource_id);
+        Ok(())
+    }
+
+    pub async fn get_network_stats(&self) -> IcnResult<NetworkStats> {
+        let network = self.network.lock().await;
+        Ok(NetworkStats {
+            connected_peers: network.get_connected_peers().len() as u32,
+            total_transactions: self.blockchain.read().unwrap().get_total_transactions(),
+            uptime: network.get_uptime(),
+        })
+    }
+
+    // Helper methods
+    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
+        // Implement transaction verification logic
+        Ok(())
+    }
+
+    async fn process_cross_shard_transaction(&self, transaction: Transaction, from_shard: u64, to_shard: u64) -> IcnResult<()> {
+        // Implement cross-shard transaction logic
+        Ok(())
+    }
+
+    fn listen_for_network_events(&self) {
+        // Implement network event listening logic
     }
 }
 
-#[async_trait::async_trait]
-pub trait BlockchainInterface {
-    async fn get_info(&self) -> CommonResult<BlockchainInfo>;
-    async fn add_transaction(&mut self, transaction: Transaction) -> CommonResult<()>;
+pub struct NetworkStats {
+    pub connected_peers: u32,
+    pub total_transactions: u64,
+    pub uptime: std::time::Duration,
 }
 
-#[async_trait::async_trait]
-pub trait ConsensusInterface {
-    async fn validate_block(&self, block: &Block) -> CommonResult<()>;
-}
-
-#[async_trait::async_trait]
-pub trait CurrencySystemInterface {
-    async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> CommonResult<f64>;
-}
-
-#[async_trait::async_trait]
-pub trait GovernanceInterface {
-    async fn create_proposal(&mut self, proposal: Proposal) -> CommonResult<String>;
-    async fn vote_on_proposal(&mut self, vote: Vote) -> CommonResult<()>;
-    async fn get_proposal_status(&self, proposal_id: &str) -> CommonResult<ProposalStatus>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio;
-
-    struct MockBlockchain;
-    struct MockConsensus;
-    struct MockCurrencySystem;
-    struct MockGovernance;
-
-    #[async_trait::async_trait]
-    impl BlockchainInterface for MockBlockchain {
-        async fn get_info(&self) -> CommonResult<BlockchainInfo> {
-            Ok(BlockchainInfo {
-                block_count: 1,
-                last_block_hash: Some("0000000000000000000000000000000000000000000000000000000000000000".to_string()),
-            })
-        }
-
-        async fn add_transaction(&mut self, _transaction: Transaction) -> CommonResult<()> {
-            Ok(())
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ConsensusInterface for MockConsensus {
-        async fn validate_block(&self, _block: &Block) -> CommonResult<()> {
-            Ok(())
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl CurrencySystemInterface for MockCurrencySystem {
-        async fn get_balance(&self, _address: &str, _currency_type: &CurrencyType) -> CommonResult<f64> {
-            Ok(100.0)
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl GovernanceInterface for MockGovernance {
-        async fn create_proposal(&mut self, _proposal: Proposal) -> CommonResult<String> {
-            Ok("new_proposal_id".to_string())
-        }
-
-        async fn vote_on_proposal(&mut self, _vote: Vote) -> CommonResult<()> {
-            Ok(())
-        }
-
-        async fn get_proposal_status(&self, _proposal_id: &str) -> CommonResult<ProposalStatus> {
-            Ok(ProposalStatus::Active)
-        }
-    }
-
-    #[tokio::test]
-    async fn test_api_layer() {
-        let api = ApiLayer::new(
-            Arc::new(RwLock::new(MockBlockchain)),
-            Arc::new(RwLock::new(MockConsensus)),
-            Arc::new(RwLock::new(MockCurrencySystem)),
-            Arc::new(RwLock::new(MockGovernance)),
-        );
-
-        let blockchain_info = api.get_blockchain_info().await.unwrap();
-        assert!(blockchain_info.success);
-        assert_eq!(blockchain_info.data.unwrap().block_count, 1);
-
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-        let submit_result = api.submit_transaction(transaction).await.unwrap();
-        assert!(submit_result.success);
-
-        let balance_result = api.get_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
-        assert!(balance_result.success);
-        assert_eq!(balance_result.data.unwrap(), 100.0);
-
-        let proposal = Proposal {
-            id: "".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.66,
-            execution_timestamp: None,
-        };
-        let create_proposal_result = api.create_proposal(proposal).await.unwrap();
-        assert!(create_proposal_result.success);
-
-        let vote = Vote {
-            voter: "Bob".to_string(),
-            proposal_id: "new_proposal_id".to_string(),
-            in_favor: true,
-            weight: 1.0,
-        };
-        let vote_result = api.vote_on_proposal(vote).await.unwrap();
-        assert!(vote_result.success);
-
-        let status_result = api.get_proposal_status("new_proposal_id").await.unwrap();
-        assert!(status_result.success);
-        assert_eq!(status_result.data.unwrap(), ProposalStatus::Active);
-    }
+pub struct DecentralizedIdentity {
+    pub id: String,
+    pub attributes: std::collections::HashMap<String, String>,
 }

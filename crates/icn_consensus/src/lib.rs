@@ -1,273 +1,217 @@
-// /crates/icn_consensus/src/lib.rs
+// File: crates/icn_consensus/src/lib.rs
 
-use icn_common::{IcnResult, IcnError, Block, Transaction, CurrencyType};
+use icn_common::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
-use log::{info, warn};
-use rand::Rng;
-use serde::{Serialize, Deserialize};
+use log::{info, warn, error};
+use std::sync::{Arc, RwLock};
 
-/// Represents a member of the consensus network.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Member {
-    pub id: String,
-    pub reputation: f64,
-    pub is_validator: bool,
+pub struct PoCConsensus {
+    threshold: f64,
+    quorum: f64,
+    validators: HashMap<String, Validator>,
+    pending_blocks: Vec<Block>,
+    blockchain: Arc<RwLock<Vec<Block>>>,
 }
 
-/// Proof of Cooperation (PoC) consensus mechanism.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PoCConsensus {
-    pub members: HashMap<String, Member>,
-    pub threshold: f64,
-    pub quorum: f64,
+struct Validator {
+    reputation: f64,
+    // Add more validator-related information as needed
 }
 
 impl PoCConsensus {
-    /// Creates a new PoCConsensus with the specified threshold and quorum.
-    ///
-    /// # Arguments
-    ///
-    /// * `threshold` - The threshold for consensus.
-    /// * `quorum` - The quorum for consensus.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if the threshold or quorum values are invalid.
     pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
         if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
             return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
         }
 
         Ok(PoCConsensus {
-            members: HashMap::new(),
             threshold,
             quorum,
+            validators: HashMap::new(),
+            pending_blocks: Vec::new(),
+            blockchain: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
-    /// Adds a new member to the consensus network.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The ID of the new member.
-    /// * `is_validator` - Whether the new member is a validator.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if the member already exists.
-    pub fn add_member(&mut self, id: String, is_validator: bool) -> IcnResult<()> {
-        if self.members.contains_key(&id) {
-            return Err(IcnError::Consensus("Member already exists".into()));
-        }
-        self.members.insert(id.clone(), Member {
-            id,
-            reputation: 1.0,
-            is_validator,
-        });
-        Ok(())
-    }
-
-    /// Removes a member from the consensus network.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The ID of the member to remove.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if the member is not found.
-    pub fn remove_member(&mut self, id: &str) -> IcnResult<()> {
-        if self.members.remove(id).is_none() {
-            return Err(IcnError::Consensus("Member not found".into()));
-        }
-        Ok(())
-    }
-
-    /// Updates the reputation of a member.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The ID of the member.
-    /// * `change` - The amount to change the reputation by.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if the member is not found.
-    pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
-        let member = self.members.get_mut(id).ok_or_else(|| IcnError::Consensus("Member not found".into()))?;
-        member.reputation += change;
-        member.reputation = member.reputation.max(0.0); // Ensure reputation doesn't go negative
-        Ok(())
-    }
-
-    /// Validates a block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - The block to validate.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if the block is invalid.
-    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        // In a real implementation, this would involve more complex validation logic
-        if block.transactions.is_empty() {
-            return Err(IcnError::Consensus("Block has no transactions".into()));
-        }
-        Ok(true)
-    }
-
-    /// Reaches consensus on a block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block` - The block to reach consensus on.
-    /// * `votes` - The votes for the block.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if consensus is not reached.
-    pub fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
-        let total_reputation: f64 = self.members.values().filter(|m| m.is_validator).map(|m| m.reputation).sum();
-
-        let mut positive_reputation = 0.0;
-        let mut participating_reputation = 0.0;
-
-        for (member_id, vote) in votes {
-            if let Some(member) = self.members.get(*member_id) {
-                if member.is_validator {
-                    participating_reputation += member.reputation;
-                    if *vote {
-                        positive_reputation += member.reputation;
-                    }
-                }
-            } else {
-                return Err(IcnError::Consensus("Invalid member in votes".into()));
-            }
-        }
-
-        if participating_reputation / total_reputation < self.quorum {
-            return Err(IcnError::Consensus("Quorum not reached".into()));
-        }
-
-        Ok(positive_reputation / participating_reputation >= self.threshold)
-    }
-
-    /// Returns a list of all validators.
-    pub fn get_validators(&self) -> Vec<&Member> {
-        self.members.values().filter(|m| m.is_validator).collect()
-    }
-
-    /// Selects a proposer for the next block.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnError::Consensus` if no validators are available.
-    pub fn select_proposer(&self) -> IcnResult<&Member> {
-        let validators: Vec<&Member> = self.get_validators();
-        if validators.is_empty() {
-            return Err(IcnError::Consensus("No validators available".into()));
-        }
-
-        let total_reputation: f64 = validators.iter().map(|m| m.reputation).sum();
-        let mut rng = rand::thread_rng();
-        let random_point = rng.gen::<f64>() * total_reputation;
-
-        let mut cumulative_reputation = 0.0;
-        for validator in &validators {
-            cumulative_reputation += validator.reputation;
-            if cumulative_reputation > random_point {
-                return Ok(validator);
-            }
-        }
-
-        // This should never happen, but we'll return the last validator if it does
-        Ok(validators.last().unwrap())
-    }
-
-    /// Starts the PoC consensus mechanism.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
     pub fn start(&self) -> IcnResult<()> {
         info!("PoC Consensus mechanism started");
         Ok(())
     }
 
-    /// Stops the PoC consensus mechanism.
-    ///
-    /// # Errors
-    ///
-    /// Returns `IcnResult` if the operation fails.
     pub fn stop(&self) -> IcnResult<()> {
         info!("PoC Consensus mechanism stopped");
         Ok(())
     }
-}
 
-/// Trait defining the methods required for a consensus algorithm.
-pub trait ConsensusAlgorithm {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool>;
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool>;
-}
-
-impl ConsensusAlgorithm for PoCConsensus {
-    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        self.validate_block(block)
+    pub fn add_validator(&mut self, id: String, initial_reputation: f64) -> IcnResult<()> {
+        if initial_reputation < 0.0 || initial_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid initial reputation".into()));
+        }
+        self.validators.insert(id, Validator { reputation: initial_reputation });
+        Ok(())
     }
 
-    fn reach_consensus(&self, block: &Block, votes: &[(&str, bool)]) -> IcnResult<bool> {
-        self.reach_consensus(block, votes)
+    pub fn remove_validator(&mut self, id: &str) -> IcnResult<()> {
+        self.validators.remove(id);
+        Ok(())
+    }
+
+    pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
+        // Implement block processing logic
+        self.pending_blocks.push(block);
+        self.try_reach_consensus()
+    }
+
+    fn try_reach_consensus(&mut self) -> IcnResult<()> {
+        let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
+        let quorum_reputation = total_reputation * self.quorum;
+
+        for block in &self.pending_blocks {
+            let mut votes_for = 0.0;
+            let mut total_votes = 0.0;
+
+            for (validator_id, validator) in &self.validators {
+                // In a real implementation, you would collect actual votes from validators
+                // Here, we're simulating voting based on the block's validity
+                if self.validate_block(block)? {
+                    votes_for += validator.reputation;
+                }
+                total_votes += validator.reputation;
+
+                if total_votes >= quorum_reputation {
+                    if votes_for / total_votes >= self.threshold {
+                        // Consensus reached, add the block to the blockchain
+                        self.add_block_to_chain(block.clone())?;
+                        self.pending_blocks.retain(|b| b.hash != block.hash);
+                        return Ok(());
+                    } else {
+                        // Block rejected
+                        self.pending_blocks.retain(|b| b.hash != block.hash);
+                        return Err(IcnError::Consensus("Block rejected by consensus".into()));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        // Implement block validation logic
+        // This is a simplified version. In a real implementation, you would perform more checks
+        if block.index == 0 {
+            return Ok(true); // Genesis block is always valid
+        }
+
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        let previous_block = blockchain.last().ok_or_else(|| IcnError::Consensus("No previous block found".into()))?;
+
+        if block.previous_hash != previous_block.hash {
+            return Ok(false);
+        }
+
+        if block.hash != block.calculate_hash() {
+            return Ok(false);
+        }
+
+        // Validate all transactions in the block
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        // Implement transaction validation logic
+        // This is a simplified version. In a real implementation, you would perform more checks
+        if transaction.amount <= 0.0 {
+            return Ok(false);
+        }
+
+        // Check if the sender has sufficient balance
+        // In a real implementation, you would check the actual balance
+        Ok(true)
+    }
+
+    fn add_block_to_chain(&mut self, block: Block) -> IcnResult<()> {
+        let mut blockchain = self.blockchain.write().map_err(|_| IcnError::Consensus("Failed to write to blockchain".into()))?;
+        blockchain.push(block);
+        Ok(())
+    }
+
+    pub fn get_blockchain(&self) -> IcnResult<Vec<Block>> {
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        Ok(blockchain.clone())
+    }
+
+    pub fn update_validator_reputation(&mut self, id: &str, new_reputation: f64) -> IcnResult<()> {
+        if new_reputation < 0.0 || new_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid reputation value".into()));
+        }
+
+        if let Some(validator) = self.validators.get_mut(id) {
+            validator.reputation = new_reputation;
+            Ok(())
+        } else {
+            Err(IcnError::Consensus("Validator not found".into()))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::CurrencyType;
+    use chrono::Utc;
 
-    #[test]
-    fn test_add_and_remove_member() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        assert!(consensus.add_member("member1".to_string(), true).is_ok());
-        assert!(consensus.add_member("member2".to_string(), false).is_ok());
-        assert!(consensus.remove_member("member1").is_ok());
-        assert!(consensus.remove_member("member3").is_err());
+    fn create_test_block(index: u64, previous_hash: &str) -> Block {
+        Block {
+            index,
+            timestamp: Utc::now().timestamp(),
+            transactions: vec![],
+            previous_hash: previous_hash.to_string(),
+            hash: format!("test_hash_{}", index),
+        }
     }
 
     #[test]
-    fn test_update_reputation() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("member1".to_string(), true).unwrap();
-        assert!(consensus.update_reputation("member1", 0.5).is_ok());
-        assert_eq!(consensus.members.get("member1").unwrap().reputation, 1.5);
-        assert!(consensus.update_reputation("member1", -2.0).is_ok());
-        assert_eq!(consensus.members.get("member1").unwrap().reputation, 0.0);
-        assert!(consensus.update_reputation("member2", 0.5).is_err());
+    fn test_poc_consensus_creation() {
+        let consensus = PoCConsensus::new(0.66, 0.51);
+        assert!(consensus.is_ok());
     }
 
     #[test]
-    fn test_reach_consensus() {
+    fn test_add_and_remove_validator() {
         let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("member1".to_string(), true).unwrap();
-        consensus.add_member("member2".to_string(), true).unwrap();
-        consensus.add_member("member3".to_string(), true).unwrap();
-
-        let block = Block::new(1, vec![], "previous_hash".to_string());
-        let votes = vec![("member1", true), ("member2", true), ("member3", false)];
-
-        assert!(consensus.reach_consensus(&block, &votes).is_ok());
+        assert!(consensus.add_validator("validator1".to_string(), 0.8).is_ok());
+        assert!(consensus.add_validator("validator2".to_string(), 0.7).is_ok());
+        assert!(consensus.remove_validator("validator1").is_ok());
+        assert_eq!(consensus.validators.len(), 1);
     }
 
     #[test]
-    fn test_select_proposer() {
+    fn test_process_new_block() {
         let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_member("member1".to_string(), true).unwrap();
-        consensus.add_member("member2".to_string(), true).unwrap();
-        consensus.add_member("member3".to_string(), true).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
 
-        let proposer = consensus.select_proposer();
-        assert!(proposer.is_ok());
+        let genesis_block = create_test_block(0, "0");
+        consensus.add_block_to_chain(genesis_block).unwrap();
+
+        let new_block = create_test_block(1, "test_hash_0");
+        assert!(consensus.process_new_block(new_block).is_ok());
+
+        let blockchain = consensus.get_blockchain().unwrap();
+        assert_eq!(blockchain.len(), 2);
+    }
+
+    #[test]
+    fn test_update_validator_reputation() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
+        assert_eq!(consensus.validators["validator1"].reputation, 0.9);
     }
 }

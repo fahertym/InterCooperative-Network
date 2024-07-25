@@ -1,194 +1,161 @@
+// File: crates/icn_identity/src/lib.rs
+
 use icn_common::{IcnResult, IcnError};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use log::{info, warn, error};
 use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DecentralizedIdentity {
     pub id: String,
-    #[serde(with = "public_key_serde")]
     pub public_key: PublicKey,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub reputation: f64,
     pub attributes: HashMap<String, String>,
-    pub status: IdentityStatus,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum IdentityStatus {
-    Active,
-    Suspended,
-    Revoked,
-}
-
-mod public_key_serde {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(public_key: &PublicKey, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bytes = public_key.to_bytes();
-        bytes.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<PublicKey, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes = Vec::<u8>::deserialize(deserializer)?;
-        PublicKey::from_bytes(&bytes).map_err(serde::de::Error::custom)
-    }
-}
-
-impl DecentralizedIdentity {
-    pub fn new(attributes: HashMap<String, String>) -> IcnResult<(Self, Keypair)> {
-        let mut csprng = OsRng {};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-        let public_key = keypair.public;
-        let id = format!("did:icn:{}", hex::encode(public_key.to_bytes()));
-        let now = Utc::now();
-
-        Ok((
-            Self {
-                id,
-                public_key,
-                created_at: now,
-                updated_at: now,
-                reputation: 1.0,
-                attributes,
-                status: IdentityStatus::Active,
-            },
-            keypair,
-        ))
-    }
-
-    pub fn verify_signature(&self, message: &[u8], signature: &Signature) -> bool {
-        self.public_key.verify(message, signature).is_ok()
-    }
+    pub reputation: f64,
 }
 
 pub struct IdentityManager {
-    identities: HashMap<String, DecentralizedIdentity>,
+    identities: Arc<RwLock<HashMap<String, DecentralizedIdentity>>>,
 }
 
 impl IdentityManager {
     pub fn new() -> Self {
         IdentityManager {
-            identities: HashMap::new(),
+            identities: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let (identity, _) = DecentralizedIdentity::new(attributes)?;
-        self.identities.insert(identity.id.clone(), identity.clone());
-        Ok(identity)
+    pub fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<(DecentralizedIdentity, Keypair)> {
+        let mut csprng = OsRng{};
+        let keypair = Keypair::generate(&mut csprng);
+        let public_key = keypair.public;
+
+        let id = format!("did:icn:{}", hex::encode(public_key.as_bytes()));
+
+        let identity = DecentralizedIdentity {
+            id: id.clone(),
+            public_key,
+            attributes,
+            reputation: 1.0, // Initial reputation
+        };
+
+        let mut identities = self.identities.write().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        identities.insert(id.clone(), identity.clone());
+
+        info!("Created new identity: {}", id);
+        Ok((identity, keypair))
     }
 
-    pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
-        self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))
+    pub fn get_identity(&self, id: &str) -> IcnResult<DecentralizedIdentity> {
+        let identities = self.identities.read().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        identities.get(id)
+            .cloned()
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))
     }
 
-    pub fn update_identity(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
+    pub fn update_attributes(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        let mut identities = self.identities.write().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        let identity = identities.get_mut(id).ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
         identity.attributes.extend(attributes);
-        identity.updated_at = Utc::now();
         Ok(())
     }
 
-    pub fn suspend_identity(&mut self, id: &str) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.status = IdentityStatus::Suspended;
-        identity.updated_at = Utc::now();
-        Ok(())
-    }
-
-    pub fn revoke_identity(&mut self, id: &str) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.status = IdentityStatus::Revoked;
-        identity.updated_at = Utc::now();
-        Ok(())
-    }
-
-    pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        identity.reputation += change;
+    pub fn update_reputation(&self, id: &str, reputation_change: f64) -> IcnResult<()> {
+        let mut identities = self.identities.write().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        let identity = identities.get_mut(id).ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        identity.reputation += reputation_change;
+        identity.reputation = identity.reputation.max(0.0).min(100.0); // Clamp reputation between 0 and 100
         Ok(())
     }
 
     pub fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
-        let identity = self.identities.get(id).ok_or(IcnError::Identity("Identity not found".to_string()))?;
-        Ok(identity.verify_signature(message, signature))
+        let identities = self.identities.read().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        let identity = identities.get(id).ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        Ok(identity.public_key.verify(message, signature).is_ok())
+    }
+
+    pub fn list_identities(&self) -> IcnResult<Vec<DecentralizedIdentity>> {
+        let identities = self.identities.read().map_err(|_| IcnError::Identity("Failed to lock identities".into()))?;
+        Ok(identities.values().cloned().collect())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::Signer;
 
     #[test]
-    fn test_identity_creation_and_verification() {
-        let mut manager = IdentityManager::new();
-        
+    fn test_create_and_get_identity() {
+        let identity_manager = IdentityManager::new();
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        
-        let identity = manager.create_identity(attributes).unwrap();
-        
-        assert!(manager.get_identity(&identity.id).is_ok());
-        
-        let message = b"Hello, World!";
-        let mut csprng = OsRng {};
-        let keypair = Keypair::generate(&mut csprng);
-        let signature = keypair.sign(message);
-        
-        // This should fail because we're using a different keypair
-        assert!(!manager.verify_signature(&identity.id, message, &signature).unwrap());
-        
-        // Create a valid signature
-        let (_, keypair) = DecentralizedIdentity::new(HashMap::new()).unwrap();
-        let valid_signature = keypair.sign(message);
-        
-        // This should succeed
-        assert!(manager.verify_signature(&identity.id, message, &valid_signature).unwrap());
+        attributes.insert("email".to_string(), "alice@example.com".to_string());
+
+        let (identity, _keypair) = identity_manager.create_identity(attributes).unwrap();
+        let retrieved_identity = identity_manager.get_identity(&identity.id).unwrap();
+
+        assert_eq!(identity.id, retrieved_identity.id);
+        assert_eq!(identity.attributes, retrieved_identity.attributes);
+        assert_eq!(identity.reputation, retrieved_identity.reputation);
     }
 
     #[test]
-    fn test_identity_management() {
-        let mut manager = IdentityManager::new();
-        
-        // Create an identity
+    fn test_update_attributes() {
+        let identity_manager = IdentityManager::new();
         let mut attributes = HashMap::new();
-        attributes.insert("name".to_string(), "Alice".to_string());
-        let identity = manager.create_identity(attributes).unwrap();
-        
-        // Update identity
+        attributes.insert("name".to_string(), "Bob".to_string());
+
+        let (identity, _keypair) = identity_manager.create_identity(attributes).unwrap();
+
         let mut new_attributes = HashMap::new();
-        new_attributes.insert("email".to_string(), "alice@example.com".to_string());
-        assert!(manager.update_identity(&identity.id, new_attributes).is_ok());
-        
-        // Check updated identity
-        let updated_identity = manager.get_identity(&identity.id).unwrap();
-        assert_eq!(updated_identity.attributes.get("email"), Some(&"alice@example.com".to_string()));
-        
-        // Update reputation
-        assert!(manager.update_reputation(&identity.id, 0.5).is_ok());
-        let updated_identity = manager.get_identity(&identity.id).unwrap();
+        new_attributes.insert("age".to_string(), "30".to_string());
+
+        identity_manager.update_attributes(&identity.id, new_attributes).unwrap();
+
+        let updated_identity = identity_manager.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.attributes.get("name"), Some(&"Bob".to_string()));
+        assert_eq!(updated_identity.attributes.get("age"), Some(&"30".to_string()));
+    }
+
+    #[test]
+    fn test_update_reputation() {
+        let identity_manager = IdentityManager::new();
+        let (identity, _keypair) = identity_manager.create_identity(HashMap::new()).unwrap();
+
+        identity_manager.update_reputation(&identity.id, 0.5).unwrap();
+        let updated_identity = identity_manager.get_identity(&identity.id).unwrap();
         assert_eq!(updated_identity.reputation, 1.5);
-        
-        // Suspend identity
-        assert!(manager.suspend_identity(&identity.id).is_ok());
-        let suspended_identity = manager.get_identity(&identity.id).unwrap();
-        assert_eq!(suspended_identity.status, IdentityStatus::Suspended);
-        
-        // Revoke identity
-        assert!(manager.revoke_identity(&identity.id).is_ok());
-        let revoked_identity = manager.get_identity(&identity.id).unwrap();
-        assert_eq!(revoked_identity.status, IdentityStatus::Revoked);
+
+        // Test clamping
+        identity_manager.update_reputation(&identity.id, 1000.0).unwrap();
+        let clamped_identity = identity_manager.get_identity(&identity.id).unwrap();
+        assert_eq!(clamped_identity.reputation, 100.0);
+    }
+
+    #[test]
+    fn test_verify_signature() {
+        let identity_manager = IdentityManager::new();
+        let (identity, keypair) = identity_manager.create_identity(HashMap::new()).unwrap();
+
+        let message = b"Hello, world!";
+        let signature = keypair.sign(message);
+
+        assert!(identity_manager.verify_signature(&identity.id, message, &signature).unwrap());
+
+        // Test with wrong message
+        let wrong_message = b"Wrong message";
+        assert!(!identity_manager.verify_signature(&identity.id, wrong_message, &signature).unwrap());
+    }
+
+    #[test]
+    fn test_list_identities() {
+        let identity_manager = IdentityManager::new();
+        identity_manager.create_identity(HashMap::new()).unwrap();
+        identity_manager.create_identity(HashMap::new()).unwrap();
+
+        let identities = identity_manager.list_identities().unwrap();
+        assert_eq!(identities.len(), 2);
     }
 }

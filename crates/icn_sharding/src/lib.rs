@@ -1,288 +1,259 @@
-// File: crates/icn_vm/src/coop_vm.rs
+// File: crates/icn_sharding/src/lib.rs
 
+use icn_common::{IcnResult, IcnError, Transaction, Block, CurrencyType};
 use std::collections::HashMap;
-use icn_common::{IcnResult, IcnError};
+use std::sync::{Arc, RwLock};
+use log::{info, warn, error};
+use sha2::{Sha256, Digest};
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    Bool(bool),
-    String(String),
-    List(Vec<Value>),
-    Map(HashMap<String, Value>),
+pub struct ShardingManager {
+    shard_count: u64,
+    address_to_shard: Arc<RwLock<HashMap<String, u64>>>,
+    shard_data: Arc<RwLock<Vec<ShardData>>>,
+}
+
+struct ShardData {
+    transactions: Vec<Transaction>,
+    balances: HashMap<String, HashMap<CurrencyType, f64>>,
 }
 
 #[derive(Clone, Debug)]
-pub enum Opcode {
-    Push(Value),
-    Pop,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Eq,
-    Neq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-    And,
-    Or,
-    Not,
-    Store(String),
-    Load(String),
-    Call(String),
-    Return,
-    JumpIf(usize),
-    Jump(usize),
-    CreateList,
-    AppendList,
-    GetListItem,
-    SetListItem,
-    CreateMap,
-    SetMapItem,
-    GetMapItem,
-    Vote(String),
-    AllocateResource(String),
-    UpdateReputation(String),
-    CreateProposal,
-    GetProposalStatus,
-    Emit(String),
+pub struct CrossShardTransaction {
+    pub transaction: Transaction,
+    pub from_shard: u64,
+    pub to_shard: u64,
+    pub status: CrossShardTransactionStatus,
 }
 
-pub struct CoopVM {
-    stack: Vec<Value>,
-    memory: HashMap<String, Value>,
-    program: Vec<Opcode>,
-    pc: usize,
-    call_stack: Vec<usize>,
-    functions: HashMap<String, usize>,
+#[derive(Clone, Debug, PartialEq)]
+pub enum CrossShardTransactionStatus {
+    Initiated,
+    LockAcquired,
+    Committed,
+    Failed(String),
 }
 
-impl CoopVM {
-    pub fn new(program: Vec<Opcode>) -> Self {
-        CoopVM {
-            stack: Vec::new(),
-            memory: HashMap::new(),
-            program,
-            pc: 0,
-            call_stack: Vec::new(),
-            functions: HashMap::new(),
+impl ShardingManager {
+    pub fn new(shard_count: u64) -> Self {
+        let mut shard_data = Vec::new();
+        for _ in 0..shard_count {
+            shard_data.push(ShardData {
+                transactions: Vec::new(),
+                balances: HashMap::new(),
+            });
+        }
+
+        ShardingManager {
+            shard_count,
+            address_to_shard: Arc::new(RwLock::new(HashMap::new())),
+            shard_data: Arc::new(RwLock::new(shard_data)),
         }
     }
 
-    pub fn run(&mut self) -> IcnResult<()> {
-        while self.pc < self.program.len() {
-            self.execute_instruction()?;
-            self.pc += 1;
+    pub fn get_shard_for_address(&self, address: &str) -> u64 {
+        let address_to_shard = self.address_to_shard.read().unwrap();
+        *address_to_shard.get(address).unwrap_or(&(self.hash_address(address) % self.shard_count))
+    }
+
+    pub fn add_address_to_shard(&self, address: String, shard_id: u64) -> IcnResult<()> {
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
         }
+        let mut address_to_shard = self.address_to_shard.write().unwrap();
+        address_to_shard.insert(address, shard_id);
         Ok(())
     }
 
-    fn execute_instruction(&mut self) -> IcnResult<()> {
-        let instruction = self.program[self.pc].clone();
-        match instruction {
-            Opcode::Push(value) => self.stack.push(value),
-            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? ; }
-            Opcode::Add => self.binary_op(|a, b| a + b)?,
-            Opcode::Sub => self.binary_op(|a, b| a - b)?,
-            Opcode::Mul => self.binary_op(|a, b| a * b)?,
-            Opcode::Div => self.binary_op(|a, b| a / b)?,
-            Opcode::Mod => self.binary_op(|a, b| a % b)?,
-            Opcode::Eq => self.compare_op(|a, b| a == b)?,
-            Opcode::Neq => self.compare_op(|a, b| a != b)?,
-            Opcode::Lt => self.compare_op(|a, b| a < b)?,
-            Opcode::Lte => self.compare_op(|a, b| a <= b)?,
-            Opcode::Gt => self.compare_op(|a, b| a > b)?,
-            Opcode::Gte => self.compare_op(|a, b| a >= b)?,
-            Opcode::And => self.logic_op(|a, b| a && b)?,
-            Opcode::Or => self.logic_op(|a, b| a || b)?,
-            Opcode::Not => {
-                let a = self.pop_bool()?;
-                self.stack.push(Value::Bool(!a));
-            }
-            Opcode::Store(name) => {
-                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                self.memory.insert(name, value);
-            }
-            Opcode::Load(name) => {
-                let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
-                self.stack.push(value);
-            }
-            Opcode::Call(func_name) => {
-                let func_pc = self.functions.get(&func_name).ok_or(IcnError::VM("Function not found".into()))?;
-                self.call_stack.push(self.pc);
-                self.pc = *func_pc;
-            }
-            Opcode::Return => {
-                self.pc = self.call_stack.pop().ok_or(IcnError::VM("Return without call".into()))?;
-            }
-            Opcode::JumpIf(target) => {
-                let condition = self.pop_bool()?;
-                if condition {
-                    self.pc = target;
-                }
-            }
-            Opcode::Jump(target) => {
-                self.pc = target;
-            }
-            Opcode::CreateList => self.stack.push(Value::List(Vec::new())),
-            Opcode::AppendList => {
-                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    list.push(value);
-                } else {
-                    return Err(IcnError::VM("Expected list on top of stack".into()));
-                }
-            }
-            Opcode::GetListItem => {
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.pop() {
-                    let item = list.get(index as usize).ok_or(IcnError::VM("List index out of bounds".into()))?.clone();
-                    self.stack.push(item);
-                } else {
-                    return Err(IcnError::VM("Expected list on top of stack".into()));
-                }
-            }
-            Opcode::SetListItem => {
-                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                let index = self.pop_int()?;
-                if let Some(Value::List(list)) = self.stack.last_mut() {
-                    if (index as usize) < list.len() {
-                        list[index as usize] = value;
-                    } else {
-                        return Err(IcnError::VM("List index out of bounds".into()));
-                    }
-                } else {
-                    return Err(IcnError::VM("Expected list on top of stack".into()));
-                }
-            }
-            Opcode::CreateMap => self.stack.push(Value::Map(HashMap::new())),
-            Opcode::SetMapItem => {
-                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                let key = self.pop_string()?;
-                if let Some(Value::Map(map)) = self.stack.last_mut() {
-                    map.insert(key, value);
-                } else {
-                    return Err(IcnError::VM("Expected map on top of stack".into()));
-                }
-            }
-            Opcode::GetMapItem => {
-                let key = self.pop_string()?;
-                if let Some(Value::Map(map)) = self.stack.pop() {
-                    let value = map.get(&key).ok_or(IcnError::VM("Key not found in map".into()))?.clone();
-                    self.stack.push(value);
-                } else {
-                    return Err(IcnError::VM("Expected map on top of stack".into()));
-                }
-            }
-            Opcode::Vote(proposal_id) => {
-                let vote = self.pop_bool()?;
-                // In a real implementation, this would interact with the governance system
-                println!("Voting {} on proposal {}", if vote { "Yes" } else { "No" }, proposal_id);
-            }
-            Opcode::AllocateResource(resource_id) => {
-                let amount = self.pop_int()?;
-                // In a real implementation, this would interact with a resource management system
-                println!("Allocating {} units of resource {}", amount, resource_id);
-            }
-            Opcode::UpdateReputation(address) => {
-                let change = self.pop_int()?;
-                // In a real implementation, this would interact with the reputation system
-                println!("Updating reputation of {} by {}", address, change);
-            }
-            Opcode::CreateProposal => {
-                let description = self.pop_string()?;
-                // In a real implementation, this would interact with the governance system
-                println!("Creating proposal: {}", description);
-                self.stack.push(Value::String("new_proposal_id".to_string()));
-            }
-            Opcode::GetProposalStatus => {
-                let proposal_id = self.pop_string()?;
-                // In a real implementation, this would interact with the governance system
-                println!("Getting status of proposal: {}", proposal_id);
-                self.stack.push(Value::String("Active".to_string()));
-            }
-            Opcode::Emit(event_name) => {
-                let event_data = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                // In a real implementation, this would emit an event to the blockchain
-                println!("Emitting event {}: {:?}", event_name, event_data);
-            }
+    pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
+        let from_shard = self.get_shard_for_address(&transaction.from);
+        let to_shard = self.get_shard_for_address(&transaction.to);
+
+        if from_shard == to_shard {
+            self.process_intra_shard_transaction(from_shard, transaction)
+        } else {
+            self.process_cross_shard_transaction(from_shard, to_shard, transaction)
         }
+    }
+
+    fn process_intra_shard_transaction(&self, shard_id: u64, transaction: Transaction) -> IcnResult<()> {
+        let mut shard_data = self.shard_data.write().unwrap();
+        let shard = &mut shard_data[shard_id as usize];
+
+        // Verify balance
+        let from_balance = shard.balances
+            .entry(transaction.from.clone())
+            .or_insert_with(HashMap::new)
+            .entry(transaction.currency_type.clone())
+            .or_insert(0.0);
+
+        if *from_balance < transaction.amount {
+            return Err(IcnError::Sharding("Insufficient balance".into()));
+        }
+
+        // Update balances
+        *from_balance -= transaction.amount;
+        *shard.balances
+            .entry(transaction.to.clone())
+            .or_insert_with(HashMap::new)
+            .entry(transaction.currency_type.clone())
+            .or_insert(0.0) += transaction.amount;
+
+        // Add transaction to shard
+        shard.transactions.push(transaction);
+
         Ok(())
     }
 
-    fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
-    where
-        F: Fn(f64, f64) -> f64,
-    {
-        let b = self.pop_number()?;
-        let a = self.pop_number()?;
-        self.stack.push(Value::Float(op(a, b)));
+    fn process_cross_shard_transaction(&self, from_shard: u64, to_shard: u64, transaction: Transaction) -> IcnResult<()> {
+        let cross_shard_tx = CrossShardTransaction {
+            transaction: transaction.clone(),
+            from_shard,
+            to_shard,
+            status: CrossShardTransactionStatus::Initiated,
+        };
+
+        // Lock funds in the source shard
+        self.lock_funds(from_shard, &transaction.from, transaction.amount, &transaction.currency_type)?;
+
+        // Update cross-shard transaction status
+        let mut cross_shard_tx = cross_shard_tx;
+        cross_shard_tx.status = CrossShardTransactionStatus::LockAcquired;
+
+        // Transfer funds to the destination shard
+        self.transfer_between_shards(from_shard, to_shard, &transaction)?;
+
+        // Update cross-shard transaction status
+        cross_shard_tx.status = CrossShardTransactionStatus::Committed;
+
         Ok(())
     }
 
-    fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
-    where
-        F: Fn(&Value, &Value) -> bool,
-    {
-        let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-        let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-        self.stack.push(Value::Bool(op(&a, &b)));
+    fn lock_funds(&self, shard_id: u64, address: &str, amount: f64, currency_type: &CurrencyType) -> IcnResult<()> {
+        let mut shard_data = self.shard_data.write().unwrap();
+        let shard = &mut shard_data[shard_id as usize];
+
+        let balance = shard.balances
+            .entry(address.to_string())
+            .or_insert_with(HashMap::new)
+            .entry(currency_type.clone())
+            .or_insert(0.0);
+
+        if *balance < amount {
+            return Err(IcnError::Sharding("Insufficient balance to lock".into()));
+        }
+
+        *balance -= amount;
         Ok(())
     }
 
-    fn logic_op<F>(&mut self, op: F) -> IcnResult<()>
-    where
-        F: Fn(bool, bool) -> bool,
-    {
-        let b = self.pop_bool()?;
-        let a = self.pop_bool()?;
-        self.stack.push(Value::Bool(op(a, b)));
+    fn transfer_between_shards(&self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
+        let mut shard_data = self.shard_data.write().unwrap();
+
+        // Add funds to the destination shard
+        let to_shard_data = &mut shard_data[to_shard as usize];
+        *to_shard_data.balances
+            .entry(transaction.to.clone())
+            .or_insert_with(HashMap::new)
+            .entry(transaction.currency_type.clone())
+            .or_insert(0.0) += transaction.amount;
+
+        // Add transaction to both shards
+        shard_data[from_shard as usize].transactions.push(transaction.clone());
+        shard_data[to_shard as usize].transactions.push(transaction.clone());
+
         Ok(())
     }
 
-    fn pop_number(&mut self) -> IcnResult<f64> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Int(i) => Ok(i as f64),
-            Value::Float(f) => Ok(f),
-            _ => Err(IcnError::VM("Expected number".into())),
+    fn hash_address(&self, address: &str) -> u64 {
+        let mut hasher = Sha256::new();
+        hasher.update(address.as_bytes());
+        let result = hasher.finalize();
+        let hash_bytes: [u8; 8] = result[..8].try_into().unwrap();
+        u64::from_le_bytes(hash_bytes)
+    }
+
+    pub fn get_shard_balance(&self, shard_id: u64, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        let shard_data = self.shard_data.read().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
         }
+
+        let shard = &shard_data[shard_id as usize];
+        Ok(*shard.balances
+            .get(address)
+            .and_then(|balances| balances.get(currency_type))
+            .unwrap_or(&0.0))
     }
 
-    fn pop_int(&mut self) -> IcnResult<i64> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Int(i) => Ok(i),
-            _ => Err(IcnError::VM("Expected integer".into())),
+    pub fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        let mut total_balance = 0.0;
+        for shard_id in 0..self.shard_count {
+            total_balance += self.get_shard_balance(shard_id, address, currency_type)?;
         }
+        Ok(total_balance)
     }
 
-    fn pop_bool(&mut self) -> IcnResult<bool> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::Bool(b) => Ok(b),
-            _ => Err(IcnError::VM("Expected boolean".into())),
+    pub fn create_shard_block(&self, shard_id: u64) -> IcnResult<Block> {
+        let mut shard_data = self.shard_data.write().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
         }
+
+        let shard = &mut shard_data[shard_id as usize];
+        let transactions = std::mem::take(&mut shard.transactions);
+
+        // In a real implementation, you would create a proper block with appropriate fields
+        let block = Block {
+            index: 0, // This should be properly set in a real implementation
+            timestamp: chrono::Utc::now().timestamp(),
+            transactions,
+            previous_hash: "0".to_string(), // This should be properly set in a real implementation
+            hash: "0".to_string(), // This should be calculated based on the block contents
+        };
+
+        Ok(block)
     }
 
-    fn pop_string(&mut self) -> IcnResult<String> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-            Value::String(s) => Ok(s),
-            _ => Err(IcnError::VM("Expected string".into())),
+    pub fn apply_block_to_shard(&self, shard_id: u64, block: &Block) -> IcnResult<()> {
+        let mut shard_data = self.shard_data.write().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
         }
+
+        let shard = &mut shard_data[shard_id as usize];
+
+        for transaction in &block.transactions {
+            let from_balance = shard.balances
+                .entry(transaction.from.clone())
+                .or_insert_with(HashMap::new)
+                .entry(transaction.currency_type.clone())
+                .or_insert(0.0);
+
+            *from_balance -= transaction.amount;
+
+            let to_balance = shard.balances
+                .entry(transaction.to.clone())
+                .or_insert_with(HashMap::new)
+                .entry(transaction.currency_type.clone())
+                .or_insert(0.0);
+
+            *to_balance += transaction.amount;
+        }
+
+        Ok(())
     }
 
-    pub fn register_function(&mut self, name: String, pc: usize) {
-        self.functions.insert(name, pc);
+    pub fn get_shard_count(&self) -> u64 {
+        self.shard_count
     }
 
-    pub fn get_stack(&self) -> &Vec<Value> {
-        &self.stack
-    }
+    pub fn get_shard_transactions(&self, shard_id: u64) -> IcnResult<Vec<Transaction>> {
+        let shard_data = self.shard_data.read().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
+        }
 
-    pub fn get_memory(&self) -> &HashMap<String, Value> {
-        &self.memory
+        Ok(shard_data[shard_id as usize].transactions.clone())
     }
 }
 
@@ -291,150 +262,184 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_basic_operations() {
-        let program = vec![
-            Opcode::Push(Value::Int(5)),
-            Opcode::Push(Value::Int(3)),
-            Opcode::Add,
-            Opcode::Push(Value::Int(2)),
-            Opcode::Mul,
-        ];
+    fn test_shard_assignment() {
+        let manager = ShardingManager::new(4);
+        let address = "0x1234567890123456789012345678901234567890".to_string();
+        let shard_id = manager.get_shard_for_address(&address);
+        assert!(shard_id < 4);
 
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
-
-        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
+        manager.add_address_to_shard(address.clone(), 2).unwrap();
+        assert_eq!(manager.get_shard_for_address(&address), 2);
     }
 
     #[test]
-    fn test_control_flow() {
-        let program = vec![
-            Opcode::Push(Value::Int(10)),
-            Opcode::Push(Value::Int(5)),
-            Opcode::Lt,
-            Opcode::JumpIf(6),
-            Opcode::Push(Value::String("Less".to_string())),
-            Opcode::Jump(7),
-            Opcode::Push(Value::String("Greater or Equal".to_string())),
-        ];
+    fn test_intra_shard_transaction() {
+        let manager = ShardingManager::new(4);
+        let from_address = "0x1111111111111111111111111111111111111111".to_string();
+        let to_address = "0x2222222222222222222222222222222222222222".to_string();
+        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
+        manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
+        // Initialize balance
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(from_address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&from_address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
 
-        assert_eq!(vm.stack, vec![Value::String("Greater or Equal".to_string())]);
+        let transaction = Transaction {
+            from: from_address.clone(),
+            to: to_address.clone(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        assert!(manager.process_transaction(transaction).is_ok());
+
+        assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_shard_balance(1, &to_address, &CurrencyType::BasicNeeds).unwrap(), 50.0);
     }
 
     #[test]
-    fn test_function_call() {
-        let program = vec![
-            Opcode::Push(Value::Int(5)),
-            Opcode::Call("square".to_string()),
-            Opcode::Push(Value::Int(3)),
-            Opcode::Add,
-            Opcode::Return,
-            // square function
-            Opcode::Mul,
-            Opcode::Return,
-        ];
+    fn test_cross_shard_transaction() {
+        let manager = ShardingManager::new(4);
+        let from_address = "0x3333333333333333333333333333333333333333".to_string();
+        let to_address = "0x4444444444444444444444444444444444444444".to_string();
+        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
+        manager.add_address_to_shard(to_address.clone(), 2).unwrap();
 
-        let mut vm = CoopVM::new(program);
-        vm.register_function("square".to_string(), 5);
-        vm.run().unwrap();
+        // Initialize balance
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(from_address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&from_address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
 
-        assert_eq!(vm.stack, vec![Value::Float(28.0)]);
-    }
+        let transaction = Transaction {
+            from: from_address.clone(),
+            to: to_address.clone(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
 
-    // File: crates/icn_vm/src/coop_vm.rs
+        assert!(manager.process_transaction(transaction).is_ok());
 
-    #[test]
-    fn test_list_operations() {
-        let program = vec![
-            Opcode::CreateList,
-            Opcode::Push(Value::Int(1)),
-            Opcode::AppendList,
-            Opcode::Push(Value::Int(2)),
-            Opcode::AppendList,
-            Opcode::Push(Value::Int(3)),
-            Opcode::AppendList,
-            Opcode::Push(Value::Int(1)),
-            Opcode::GetListItem,
-            Opcode::Push(Value::Int(10)),
-            Opcode::Push(Value::Int(0)),
-            Opcode::SetListItem,
-        ];
-
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
-
-        assert_eq!(vm.stack, vec![
-            Value::List(vec![Value::Int(10), Value::Int(2), Value::Int(3)]),
-            Value::Int(2)
-        ]);
+        assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_shard_balance(2, &to_address, &CurrencyType::BasicNeeds).unwrap(), 50.0);
     }
 
     #[test]
-    fn test_map_operations() {
-        let program = vec![
-            Opcode::CreateMap,
-            Opcode::Push(Value::String("key1".to_string())),
-            Opcode::Push(Value::Int(42)),
-            Opcode::SetMapItem,
-            Opcode::Push(Value::String("key2".to_string())),
-            Opcode::Push(Value::String("value".to_string())),
-            Opcode::SetMapItem,
-            Opcode::Push(Value::String("key1".to_string())),
-            Opcode::GetMapItem,
-        ];
+    fn test_create_and_apply_shard_block() {
+        let manager = ShardingManager::new(4);
+        let address1 = "0x5555555555555555555555555555555555555555".to_string();
+        let address2 = "0x6666666666666666666666666666666666666666".to_string();
+        manager.add_address_to_shard(address1.clone(), 1).unwrap();
+        manager.add_address_to_shard(address2.clone(), 1).unwrap();
 
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
+        // Initialize balance
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(address1.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
 
-        let mut expected_map = HashMap::new();
-        expected_map.insert("key1".to_string(), Value::Int(42));
-        expected_map.insert("key2".to_string(), Value::String("value".to_string()));
+        // Create a transaction
+        let transaction = Transaction {
+            from: address1.clone(),
+            to: address2.clone(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
 
-        assert_eq!(vm.stack, vec![
-            Value::Map(expected_map),
-            Value::Int(42)
-        ]);
+        // Process the transaction
+        assert!(manager.process_transaction(transaction).is_ok());
+
+        // Create a shard block
+        let block = manager.create_shard_block(1).unwrap();
+        assert_eq!(block.transactions.len(), 1);
+
+        // Apply the block to the shard
+        assert!(manager.apply_block_to_shard(1, &block).is_ok());
+
+        // Verify balances
+        assert_eq!(manager.get_shard_balance(1, &address1, &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_shard_balance(1, &address2, &CurrencyType::BasicNeeds).unwrap(), 50.0);
+
+        // Verify that the transactions have been cleared from the shard
+        let shard_transactions = manager.get_shard_transactions(1).unwrap();
+        assert_eq!(shard_transactions.len(), 0);
     }
 
     #[test]
-    fn test_cooperative_operations() {
-        let program = vec![
-            Opcode::Push(Value::String("Proposal 1".to_string())),
-            Opcode::CreateProposal,
-            Opcode::Push(Value::Bool(true)),
-            Opcode::Vote("proposal_1".to_string()),
-            Opcode::Push(Value::Int(100)),
-            Opcode::AllocateResource("computing_power".to_string()),
-            Opcode::Push(Value::Int(5)),
-            Opcode::UpdateReputation("user1".to_string()),
-            Opcode::Push(Value::String("proposal_1".to_string())),
-            Opcode::GetProposalStatus,
-        ];
+    fn test_get_total_balance() {
+        let manager = ShardingManager::new(4);
+        let address = "0x7777777777777777777777777777777777777777".to_string();
 
-        let mut vm = CoopVM::new(program);
-        vm.run().unwrap();
+        // Add balances to different shards
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[0].balances.insert(address.clone(), HashMap::new());
+            shard_data[0].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+            shard_data[1].balances.insert(address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 150.0);
+            shard_data[2].balances.insert(address.clone(), HashMap::new());
+            shard_data[2].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 200.0);
+        }
 
-        assert_eq!(vm.stack, vec![
-            Value::String("new_proposal_id".to_string()),
-            Value::String("Active".to_string())
-        ]);
+        let total_balance = manager.get_total_balance(&address, &CurrencyType::BasicNeeds).unwrap();
+        assert_eq!(total_balance, 450.0);
     }
 
     #[test]
-    fn test_error_handling() {
-        let program = vec![
-            Opcode::Push(Value::Int(5)),
-            Opcode::Push(Value::String("not a number".to_string())),
-            Opcode::Add,
-        ];
+    fn test_insufficient_balance() {
+        let manager = ShardingManager::new(4);
+        let from_address = "0x8888888888888888888888888888888888888888".to_string();
+        let to_address = "0x9999999999999999999999999999999999999999".to_string();
+        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
+        manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        let mut vm = CoopVM::new(program);
-        let result = vm.run();
+        // Initialize balance
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(from_address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&from_address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
 
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().to_string(), "VM error: Expected number");
+        let transaction = Transaction {
+            from: from_address.clone(),
+            to: to_address.clone(),
+            amount: 150.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        assert!(manager.process_transaction(transaction).is_err());
+
+        // Verify balances remain unchanged
+        assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert_eq!(manager.get_shard_balance(1, &to_address, &CurrencyType::BasicNeeds).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_invalid_shard_id() {
+        let manager = ShardingManager::new(4);
+        let address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+
+        assert!(manager.get_shard_balance(4, &address, &CurrencyType::BasicNeeds).is_err());
+        assert!(manager.create_shard_block(4).is_err());
+        assert!(manager.apply_block_to_shard(4, &Block {
+            index: 0,
+            timestamp: 0,
+            transactions: vec![],
+            previous_hash: "0".to_string(),
+            hash: "0".to_string(),
+        }).is_err());
     }
 }
