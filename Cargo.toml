@@ -19,7 +19,7 @@ members = [
     "crates/icn_market",
     "crates/icn_incentives",
     "crates/icn_language"
-]
+, "icn_demo", "crates/icn_demo"]
 
 resolver = "2"
 
