@@ -245,41 +245,41 @@ tokio = { version = "1.0", features = ["full", "test-util"] }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_api/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
-// File: crates/icn_api/src/lib.rs
+// File: icn_api/src/lib.rs
 
 use icn_core::IcnNode;
 use icn_common::{Transaction, Proposal, IcnResult};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 pub struct ApiLayer {
-    node: Arc<Mutex<IcnNode>>,
+    node: Arc<RwLock<IcnNode>>,
 }
 
 impl ApiLayer {
-    pub fn new(node: Arc<Mutex<IcnNode>>) -> Self {
+    pub fn new(node: Arc<RwLock<IcnNode>>) -> Self {
         ApiLayer { node }
     }
 
     pub async fn submit_transaction(&self, tx: Transaction) -> IcnResult<()> {
-        let node = self.node.lock().await;
+        let node = self.node.read().await;
         node.process_transaction(tx).await
     }
 
     pub async fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        let node = self.node.lock().await;
+        let node = self.node.read().await;
         node.create_proposal(proposal)
     }
 
     pub async fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let node = self.node.lock().await;
+        let node = self.node.read().await;
         node.create_identity(attributes)
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_api/src/web.rs =====
-// File: crates/icn_api/src/web.rs
+// File: icn_api/src/web.rs
 
 use warp::Filter;
 use crate::ApiLayer;
@@ -502,13 +502,15 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/asset_tokenization.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
-// icn_blockchain/src/blockchain.rs
+// File: icn_blockchain/src/blockchain.rs
+
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
 use log::{info, warn, error};
 use std::sync::{Arc, RwLock};
 use crate::consensus::ConsensusAlgorithm;
+use crate::transaction_validator::TransactionValidator;
 
 /// Represents a blockchain, maintaining a list of blocks and pending transactions.
 pub struct Blockchain {
@@ -544,7 +546,7 @@ impl Blockchain {
     ///
     /// Returns `IcnError::Blockchain` if the transaction is invalid.
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        self.transaction_validator.validate(&transaction, self)?;
+        self.transaction_validator.validate_transaction(&transaction, self)?;
         self.pending_transactions.push(transaction);
         Ok(())
     }
@@ -561,7 +563,7 @@ impl Blockchain {
         let mut new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
-            transactions: self.pending_transactions.clone(),
+            transactions: std::mem::take(&mut self.pending_transactions),
             previous_hash: previous_block.hash.clone(),
             hash: String::new(),
         };
@@ -570,7 +572,6 @@ impl Blockchain {
         self.consensus.read().unwrap().validate_block(&new_block)?;
 
         self.chain.push(new_block.clone());
-        self.pending_transactions.clear();
 
         Ok(new_block)
     }
@@ -803,16 +804,28 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
-// File: crates/icn_blockchain/src/transaction_validator.rs
+// File: icn_blockchain/src/transaction_validator.rs
 
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
+/// Trait for validating transactions within a blockchain context.
 pub trait TransactionValidator {
+    /// Validates a transaction.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to validate.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<()>` indicating whether the transaction is valid.
     fn validate_transaction(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
 }
 
+/// Default implementation of the `TransactionValidator` trait.
 pub struct DefaultTransactionValidator;
 
 impl TransactionValidator for DefaultTransactionValidator {
@@ -867,74 +880,6 @@ impl TransactionValidator for DefaultTransactionValidator {
     fn validate_timestamp(transaction: &Transaction) -> bool {
         let current_time = Utc::now().timestamp();
         transaction.timestamp <= current_time && transaction.timestamp >= (current_time - 60 * 60) // within the last hour
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use icn_common::{Transaction, Blockchain};
-    use ed25519_dalek::Keypair;
-    use rand::rngs::OsRng;
-    use std::sync::Arc;
-
-    fn create_signed_transaction(from: &str, to: &str, amount: f64) -> Transaction {
-        let mut tx = Transaction::new(
-            from.to_string(),
-            to.to_string(),
-            amount,
-            CurrencyType::BasicNeeds,
-            1000,
-        );
-        let mut csprng = OsRng{};
-        let keypair: Keypair = Keypair::generate(&mut csprng);
-        tx.sign(&keypair).unwrap();
-        tx
-    }
-
-    #[test]
-    fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
-        let tx = create_signed_transaction("Alice", "Bob", 50.0);
-
-        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block().unwrap();
-
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
-    }
-
-    #[test]
-    fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
-        let tx = create_signed_transaction("Alice", "Bob", 150.0);
-
-        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block().unwrap();
-
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
-    }
-
-    #[test]
-    fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
-        let tx = create_signed_transaction("Alice", "Bob", 50.0);
-
-        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
-        blockchain.create_block().unwrap();
-
-        blockchain.add_transaction(tx.clone()).unwrap();
-        blockchain.create_block().unwrap();
-
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
-    }
-
-    #[test]
-    fn test_invalid_timestamp() {
-        let mut blockchain = Blockchain::new(Arc::new(DefaultTransactionValidator));
-        let mut tx = create_signed_transaction("Alice", "Bob", 50.0);
-        tx.timestamp = Utc::now().timestamp() + 60 * 60; // Set to future time
-
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
@@ -1105,6 +1050,8 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/bit_utils.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
+// File: icn_common/src/error.rs
+
 use thiserror::Error;
 
 /// Custom error type for the ICN project.

@@ -1,10 +1,12 @@
-// icn_blockchain/src/blockchain.rs
+// File: icn_blockchain/src/blockchain.rs
+
 use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use std::collections::HashMap;
 use chrono::Utc;
 use log::{info, warn, error};
 use std::sync::{Arc, RwLock};
 use crate::consensus::ConsensusAlgorithm;
+use crate::transaction_validator::TransactionValidator;
 
 /// Represents a blockchain, maintaining a list of blocks and pending transactions.
 pub struct Blockchain {
@@ -40,7 +42,7 @@ impl Blockchain {
     ///
     /// Returns `IcnError::Blockchain` if the transaction is invalid.
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        self.transaction_validator.validate(&transaction, self)?;
+        self.transaction_validator.validate_transaction(&transaction, self)?;
         self.pending_transactions.push(transaction);
         Ok(())
     }
@@ -57,7 +59,7 @@ impl Blockchain {
         let mut new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
-            transactions: self.pending_transactions.clone(),
+            transactions: std::mem::take(&mut self.pending_transactions),
             previous_hash: previous_block.hash.clone(),
             hash: String::new(),
         };
@@ -66,7 +68,6 @@ impl Blockchain {
         self.consensus.read().unwrap().validate_block(&new_block)?;
 
         self.chain.push(new_block.clone());
-        self.pending_transactions.clear();
 
         Ok(new_block)
     }

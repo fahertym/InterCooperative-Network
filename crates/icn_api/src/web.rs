@@ -1,4 +1,4 @@
-// File: crates/icn_api/src/web.rs
+// File: icn_api/src/web.rs
 
 use warp::Filter;
 use crate::ApiLayer;
