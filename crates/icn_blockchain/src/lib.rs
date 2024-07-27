@@ -1,83 +1,63 @@
-// File: crates/icn_blockchain/src/lib.rs
-
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
-use std::collections::HashMap;
+use icn_common::{Block, Transaction, IcnResult, IcnError};
 use chrono::Utc;
-use log::{info, warn, error};
-use std::sync::{Arc, RwLock};
+use sha2::{Sha256, Digest};
 
 pub struct Blockchain {
-    chain: Vec<Block>,
+    pub chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
-    transaction_validator: Arc<dyn TransactionValidator>,
-    total_transactions: u64,
-}
-
-pub trait TransactionValidator: Send + Sync {
-    fn validate(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
 }
 
 impl Blockchain {
-    pub fn new(transaction_validator: Arc<dyn TransactionValidator>) -> IcnResult<Self> {
-        Ok(Blockchain {
-            chain: vec![Block::genesis()],
+    pub fn new() -> Self {
+        let genesis_block = Block {
+            index: 0,
+            timestamp: Utc::now().timestamp(),
+            transactions: Vec::new(),
+            previous_hash: String::from("0"),
+            hash: String::from("genesis_hash"),
+        };
+
+        Blockchain {
+            chain: vec![genesis_block],
             pending_transactions: Vec::new(),
-            transaction_validator,
-            total_transactions: 0,
-        })
-    }
-
-    pub fn start(&self) -> IcnResult<()> {
-        info!("Blockchain started");
-        Ok(())
-    }
-
-    pub fn stop(&self) -> IcnResult<()> {
-        info!("Blockchain stopped");
-        Ok(())
+        }
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        self.transaction_validator.validate(&transaction, self)?;
         self.pending_transactions.push(transaction);
-        self.total_transactions += 1;
         Ok(())
     }
 
     pub fn create_block(&mut self) -> IcnResult<Block> {
         let previous_block = self.chain.last()
-            .ok_or_else(|| IcnError::Blockchain("No previous block found".to_string()))?;
+            .ok_or_else(|| IcnError::Blockchain("Empty blockchain".into()))?;
 
         let mut new_block = Block {
             index: self.chain.len() as u64,
             timestamp: Utc::now().timestamp(),
-            transactions: self.pending_transactions.clone(),
+            transactions: std::mem::take(&mut self.pending_transactions),
             previous_hash: previous_block.hash.clone(),
             hash: String::new(),
         };
 
-        new_block.hash = new_block.calculate_hash();
-
+        new_block.hash = self.calculate_hash(&new_block);
         self.chain.push(new_block.clone());
-        self.pending_transactions.clear();
-
         Ok(new_block)
     }
 
-    pub fn get_total_transactions(&self) -> u64 {
-        self.total_transactions
-    }
-
-    pub fn get_latest_block(&self) -> Option<&Block> {
-        self.chain.last()
-    }
-
-    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
-        self.chain.get(index as usize)
-    }
-
-    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
-        self.chain.iter().find(|block| block.hash == hash)
+    fn calculate_hash(&self, block: &Block) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(block.index.to_string());
+        hasher.update(&block.timestamp.to_string());
+        for transaction in &block.transactions {
+            hasher.update(&transaction.from);
+            hasher.update(&transaction.to);
+            hasher.update(&transaction.amount.to_string());
+            hasher.update(&transaction.currency_type.to_string());
+            hasher.update(&transaction.timestamp.to_string());
+        }
+        hasher.update(&block.previous_hash);
+        format!("{:x}", hasher.finalize())
     }
 
     pub fn validate_chain(&self) -> bool {
@@ -85,11 +65,11 @@ impl Blockchain {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
 
-            if current_block.hash != current_block.calculate_hash() {
+            if current_block.previous_hash != previous_block.hash {
                 return false;
             }
 
-            if current_block.previous_hash != previous_block.hash {
+            if current_block.hash != self.calculate_hash(current_block) {
                 return false;
             }
         }
@@ -97,89 +77,87 @@ impl Blockchain {
     }
 }
 
-impl Block {
-    pub fn genesis() -> Self {
-        let mut genesis_block = Block {
-            index: 0,
-            timestamp: Utc::now().timestamp(),
-            transactions: Vec::new(),
-            previous_hash: String::from("0"),
-            hash: String::new(),
-        };
-        genesis_block.hash = genesis_block.calculate_hash();
-        genesis_block
-    }
-
-    pub fn calculate_hash(&self) -> String {
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(self.index.to_string().as_bytes());
-        hasher.update(self.timestamp.to_string().as_bytes());
-        for transaction in &self.transactions {
-            hasher.update(transaction.hash().as_bytes());
-        }
-        hasher.update(self.previous_hash.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    struct MockTransactionValidator;
-
-    impl TransactionValidator for MockTransactionValidator {
-        fn validate(&self, _transaction: &Transaction, _blockchain: &Blockchain) -> IcnResult<()> {
-            Ok(())
-        }
-    }
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_blockchain_creation() {
-        let validator = Arc::new(MockTransactionValidator);
-        let blockchain = Blockchain::new(validator).unwrap();
+        let blockchain = Blockchain::new();
         assert_eq!(blockchain.chain.len(), 1);
         assert_eq!(blockchain.chain[0].index, 0);
     }
 
     #[test]
     fn test_add_block() {
-        let validator = Arc::new(MockTransactionValidator);
-        let mut blockchain = Blockchain::new(validator).unwrap();
+        let mut blockchain = Blockchain::new();
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
-            amount: 100.0,
+            amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
             signature: None,
         };
+
         blockchain.add_transaction(transaction).unwrap();
         let new_block = blockchain.create_block().unwrap();
+
         assert_eq!(blockchain.chain.len(), 2);
         assert_eq!(new_block.index, 1);
         assert_eq!(new_block.transactions.len(), 1);
+        assert_eq!(blockchain.pending_transactions.len(), 0);
     }
 
     #[test]
     fn test_blockchain_validity() {
-        let validator = Arc::new(MockTransactionValidator);
-        let mut blockchain = Blockchain::new(validator).unwrap();
-        let transaction = Transaction {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
-            amount: 100.0,
+            amount: 30.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
             signature: None,
         };
-        blockchain.add_transaction(transaction).unwrap();
+        let transaction2 = Transaction {
+            from: "Bob".to_string(),
+            to: "Charlie".to_string(),
+            amount: 20.0,
+            currency_type: CurrencyType::Education,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.add_transaction(transaction1).unwrap();
         blockchain.create_block().unwrap();
+        blockchain.add_transaction(transaction2).unwrap();
+        blockchain.create_block().unwrap();
+
         assert!(blockchain.validate_chain());
 
-        // Tamper with a block
-        blockchain.chain[1].transactions[0].amount = 200.0;
+        // Tamper with a block to test invalid chain
+        blockchain.chain[1].transactions[0].amount = 100.0;
         assert!(!blockchain.validate_chain());
+    }
+
+    #[test]
+    fn test_calculate_hash() {
+        let mut blockchain = Blockchain::new();
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.add_transaction(transaction).unwrap();
+        let new_block = blockchain.create_block().unwrap();
+
+        let calculated_hash = blockchain.calculate_hash(&new_block);
+        assert_eq!(new_block.hash, calculated_hash);
     }
 }

@@ -1,286 +1,179 @@
-// File: crates/icn_governance/src/lib.rs
-
-use icn_common::{IcnResult, IcnError, Proposal, ProposalStatus, ProposalType, ProposalCategory};
+use icn_common::{Proposal, ProposalStatus, IcnResult, IcnError};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use chrono::{DateTime, Utc};
-use log::{info, warn, error};
+use chrono::Utc;
+
+pub struct Vote {
+    voter: String,
+    in_favor: bool,
+}
 
 pub struct GovernanceSystem {
-    proposals: Arc<RwLock<HashMap<String, Proposal>>>,
-    votes: Arc<RwLock<HashMap<String, HashMap<String, bool>>>>,
-    blockchain: Arc<RwLock<dyn BlockchainInterface>>,
-    consensus: Arc<RwLock<dyn ConsensusInterface>>,
-}
-
-pub trait BlockchainInterface: Send + Sync {
-    fn add_proposal(&mut self, proposal: Proposal) -> IcnResult<()>;
-    fn update_proposal_status(&mut self, proposal_id: &str, status: ProposalStatus) -> IcnResult<()>;
-}
-
-pub trait ConsensusInterface: Send + Sync {
-    fn validate_proposal(&self, proposal: &Proposal) -> IcnResult<bool>;
-    fn execute_proposal(&mut self, proposal: &Proposal) -> IcnResult<()>;
+    proposals: HashMap<String, Proposal>,
+    votes: HashMap<String, Vec<Vote>>,
 }
 
 impl GovernanceSystem {
-    pub fn new(blockchain: Arc<RwLock<dyn BlockchainInterface>>, consensus: Arc<RwLock<dyn ConsensusInterface>>) -> Self {
+    pub fn new() -> Self {
         GovernanceSystem {
-            proposals: Arc::new(RwLock::new(HashMap::new())),
-            votes: Arc::new(RwLock::new(HashMap::new())),
-            blockchain,
-            consensus,
+            proposals: HashMap::new(),
+            votes: HashMap::new(),
         }
     }
 
-    pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Failed to lock proposals".into()))?;
-        
-        // Validate the proposal
-        self.consensus.read().map_err(|_| IcnError::Governance("Failed to lock consensus".into()))?
-            .validate_proposal(&proposal)?;
-        
-        // Add the proposal to the blockchain
-        self.blockchain.write().map_err(|_| IcnError::Governance("Failed to lock blockchain".into()))?
-            .add_proposal(proposal.clone())?;
-        
-        proposals.insert(proposal.id.clone(), proposal);
-        Ok(proposal.id)
+    pub fn create_proposal(&mut self, proposal: Proposal) -> IcnResult<String> {
+        if self.proposals.contains_key(&proposal.id) {
+            return Err(IcnError::Governance("Proposal ID already exists".into()));
+        }
+        let proposal_id = proposal.id.clone();
+        self.proposals.insert(proposal_id.clone(), proposal);
+        self.votes.insert(proposal_id.clone(), Vec::new());
+        Ok(proposal_id)
     }
 
-    pub fn vote_on_proposal(&self, proposal_id: &str, voter: &str, vote: bool) -> IcnResult<()> {
-        let mut votes = self.votes.write().map_err(|_| IcnError::Governance("Failed to lock votes".into()))?;
-        
-        let proposal_votes = votes.entry(proposal_id.to_string()).or_insert_with(HashMap::new);
-        proposal_votes.insert(voter.to_string(), vote);
-        
-        Ok(())
-    }
-
-    pub fn get_proposal_status(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
-        let proposals = self.proposals.read().map_err(|_| IcnError::Governance("Failed to lock proposals".into()))?;
-        
-        proposals.get(proposal_id)
-            .map(|proposal| proposal.status.clone())
+    pub fn get_proposal(&self, proposal_id: &str) -> IcnResult<&Proposal> {
+        self.proposals.get(proposal_id)
             .ok_or_else(|| IcnError::Governance("Proposal not found".into()))
     }
 
-    pub fn update_proposal_status(&self, proposal_id: &str) -> IcnResult<()> {
-        let mut proposals = self.proposals.write().map_err(|_| IcnError::Governance("Failed to lock proposals".into()))?;
-        let votes = self.votes.read().map_err(|_| IcnError::Governance("Failed to lock votes".into()))?;
-        
-        let proposal = proposals.get_mut(proposal_id).ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
-        
+    pub fn vote_on_proposal(&mut self, proposal_id: &str, voter: String, in_favor: bool) -> IcnResult<()> {
+        let proposal = self.proposals.get_mut(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
+
         if proposal.status != ProposalStatus::Active {
-            return Ok(());
+            return Err(IcnError::Governance("Proposal is not active".into()));
         }
-        
+
+        if Utc::now() > proposal.voting_ends_at {
+            return Err(IcnError::Governance("Voting period has ended".into()));
+        }
+
+        let votes = self.votes.get_mut(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Votes not found for proposal".into()))?;
+
+        if votes.iter().any(|v| v.voter == voter) {
+            return Err(IcnError::Governance("Voter has already voted on this proposal".into()));
+        }
+
+        votes.push(Vote { voter, in_favor });
+        Ok(())
+    }
+
+    pub fn finalize_proposal(&mut self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        let proposal = self.proposals.get_mut(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
+
+        if proposal.status != ProposalStatus::Active {
+            return Err(IcnError::Governance("Proposal is not active".into()));
+        }
+
         if Utc::now() < proposal.voting_ends_at {
-            return Ok(());
+            return Err(IcnError::Governance("Voting period has not ended yet".into()));
         }
-        
-        let proposal_votes = votes.get(proposal_id).unwrap_or(&HashMap::new());
-        let total_votes = proposal_votes.len() as f64;
-        let positive_votes = proposal_votes.values().filter(|&&v| v).count() as f64;
-        
-        let new_status = if total_votes == 0.0 {
-            ProposalStatus::Rejected
-        } else if positive_votes / total_votes >= proposal.required_quorum {
-            ProposalStatus::Passed
+
+        let votes = self.votes.get(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Votes not found for proposal".into()))?;
+
+        let total_votes = votes.len() as f64;
+        let votes_in_favor = votes.iter().filter(|v| v.in_favor).count() as f64;
+
+        if total_votes == 0.0 || total_votes / proposal.required_quorum < 1.0 {
+            proposal.status = ProposalStatus::Rejected;
+        } else if votes_in_favor / total_votes > 0.5 {
+            proposal.status = ProposalStatus::Passed;
         } else {
-            ProposalStatus::Rejected
-        };
-        
-        proposal.status = new_status.clone();
-        
-        // Update the proposal status on the blockchain
-        self.blockchain.write().map_err(|_| IcnError::Governance("Failed to lock blockchain".into()))?
-            .update_proposal_status(proposal_id, new_status)?;
-        
-        Ok(())
-    }
-
-    pub fn execute_proposal(&self, proposal_id: &str) -> IcnResult<()> {
-        let proposals = self.proposals.read().map_err(|_| IcnError::Governance("Failed to lock proposals".into()))?;
-        
-        let proposal = proposals.get(proposal_id).ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
-        
-        if proposal.status != ProposalStatus::Passed {
-            return Err(IcnError::Governance("Cannot execute proposal that has not passed".into()));
+            proposal.status = ProposalStatus::Rejected;
         }
-        
-        self.consensus.write().map_err(|_| IcnError::Governance("Failed to lock consensus".into()))?
-            .execute_proposal(proposal)?;
-        
-        Ok(())
+
+        Ok(proposal.status.clone())
     }
 
-    pub fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        let proposals = self.proposals.read().map_err(|_| IcnError::Governance("Failed to lock proposals".into()))?;
-        
-        Ok(proposals.values()
+    pub fn list_active_proposals(&self) -> Vec<&Proposal> {
+        self.proposals.values()
             .filter(|p| p.status == ProposalStatus::Active)
-            .cloned()
-            .collect())
+            .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use icn_common::{ProposalType, ProposalCategory};
+    use chrono::Duration;
 
-    struct MockBlockchain {
-        proposals: Mutex<Vec<Proposal>>,
-    }
-
-    impl BlockchainInterface for MockBlockchain {
-        fn add_proposal(&mut self, proposal: Proposal) -> IcnResult<()> {
-            self.proposals.lock().unwrap().push(proposal);
-            Ok(())
-        }
-
-        fn update_proposal_status(&mut self, proposal_id: &str, status: ProposalStatus) -> IcnResult<()> {
-            let mut proposals = self.proposals.lock().unwrap();
-            if let Some(proposal) = proposals.iter_mut().find(|p| p.id == proposal_id) {
-                proposal.status = status;
-                Ok(())
-            } else {
-                Err(IcnError::Governance("Proposal not found".into()))
-            }
-        }
-    }
-
-    struct MockConsensus;
-
-    impl ConsensusInterface for MockConsensus {
-        fn validate_proposal(&self, _proposal: &Proposal) -> IcnResult<bool> {
-            Ok(true)
-        }
-
-        fn execute_proposal(&mut self, _proposal: &Proposal) -> IcnResult<()> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_create_and_vote_on_proposal() {
-        let blockchain = Arc::new(RwLock::new(MockBlockchain { proposals: Mutex::new(Vec::new()) }));
-        let consensus = Arc::new(RwLock::new(MockConsensus));
-        let governance = GovernanceSystem::new(blockchain.clone(), consensus);
-
-        let proposal = Proposal {
-            id: "test_proposal".to_string(),
+    fn create_test_proposal(id: &str) -> Proposal {
+        Proposal {
+            id: id.to_string(),
             title: "Test Proposal".to_string(),
             description: "This is a test proposal".to_string(),
             proposer: "Alice".to_string(),
             created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
             proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
+            category: ProposalCategory::Technical,
             required_quorum: 0.5,
             execution_timestamp: None,
-        };
+        }
+    }
 
-        // Create proposal
-        let proposal_id = governance.create_proposal(proposal).unwrap();
-        assert_eq!(proposal_id, "test_proposal");
+    #[test]
+    fn test_create_proposal() {
+        let mut gov_system = GovernanceSystem::new();
+        let proposal = create_test_proposal("prop1");
+        let proposal_id = gov_system.create_proposal(proposal).unwrap();
+        assert_eq!(proposal_id, "prop1");
+        assert!(gov_system.get_proposal("prop1").is_ok());
+    }
 
-        // Vote on proposal
-        assert!(governance.vote_on_proposal(&proposal_id, "Bob", true).is_ok());
-        assert!(governance.vote_on_proposal(&proposal_id, "Charlie", false).is_ok());
-        assert!(governance.vote_on_proposal(&proposal_id, "David", true).is_ok());
+    #[test]
+    fn test_vote_on_proposal() {
+        let mut gov_system = GovernanceSystem::new();
+        let proposal = create_test_proposal("prop1");
+        gov_system.create_proposal(proposal).unwrap();
 
-        // Check proposal status
-        assert_eq!(governance.get_proposal_status(&proposal_id).unwrap(), ProposalStatus::Active);
+        assert!(gov_system.vote_on_proposal("prop1", "Alice".to_string(), true).is_ok());
+        assert!(gov_system.vote_on_proposal("prop1", "Bob".to_string(), false).is_ok());
 
-        // Update proposal status (simulating time passage)
-        governance.update_proposal_status(&proposal_id).unwrap();
+        // Test duplicate vote
+        assert!(gov_system.vote_on_proposal("prop1", "Alice".to_string(), false).is_err());
 
-        // Check updated status
-        assert_eq!(governance.get_proposal_status(&proposal_id).unwrap(), ProposalStatus::Passed);
+        // Test vote on non-existent proposal
+        assert!(gov_system.vote_on_proposal("prop2", "Charlie".to_string(), true).is_err());
+    }
 
-        // Execute proposal
-        assert!(governance.execute_proposal(&proposal_id).is_ok());
+    #[test]
+    fn test_finalize_proposal() {
+        let mut gov_system = GovernanceSystem::new();
+        let mut proposal = create_test_proposal("prop1");
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1); // Set voting period to have ended
+        gov_system.create_proposal(proposal).unwrap();
+
+        gov_system.vote_on_proposal("prop1", "Alice".to_string(), true).unwrap();
+        gov_system.vote_on_proposal("prop1", "Bob".to_string(), true).unwrap();
+        gov_system.vote_on_proposal("prop1", "Charlie".to_string(), false).unwrap();
+
+        let result = gov_system.finalize_proposal("prop1").unwrap();
+        assert_eq!(result, ProposalStatus::Passed);
+
+        // Test finalizing an already finalized proposal
+        assert!(gov_system.finalize_proposal("prop1").is_err());
     }
 
     #[test]
     fn test_list_active_proposals() {
-        let blockchain = Arc::new(RwLock::new(MockBlockchain { proposals: Mutex::new(Vec::new()) }));
-        let consensus = Arc::new(RwLock::new(MockConsensus));
-        let governance = GovernanceSystem::new(blockchain.clone(), consensus);
+        let mut gov_system = GovernanceSystem::new();
+        let proposal1 = create_test_proposal("prop1");
+        let proposal2 = create_test_proposal("prop2");
+        let mut proposal3 = create_test_proposal("prop3");
+        proposal3.status = ProposalStatus::Passed;
 
-        let proposal1 = Proposal {
-            id: "proposal1".to_string(),
-            title: "Active Proposal".to_string(),
-            description: "This is an active proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.5,
-            execution_timestamp: None,
-        };
+        gov_system.create_proposal(proposal1).unwrap();
+        gov_system.create_proposal(proposal2).unwrap();
+        gov_system.create_proposal(proposal3).unwrap();
 
-        let proposal2 = Proposal {
-            id: "proposal2".to_string(),
-            title: "Passed Proposal".to_string(),
-            description: "This is a passed proposal".to_string(),
-            proposer: "Bob".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() - chrono::Duration::days(1),
-            status: ProposalStatus::Passed,
-            proposal_type: ProposalType::EconomicAdjustment,
-            category: ProposalCategory::Technical,
-            required_quorum: 0.6,
-            execution_timestamp: None,
-        };
-
-        governance.create_proposal(proposal1.clone()).unwrap();
-        governance.create_proposal(proposal2).unwrap();
-
-        let active_proposals = governance.list_active_proposals().unwrap();
-        assert_eq!(active_proposals.len(), 1);
-        assert_eq!(active_proposals[0].id, "proposal1");
-    }
-
-    #[test]
-    fn test_proposal_rejection() {
-        let blockchain = Arc::new(RwLock::new(MockBlockchain { proposals: Mutex::new(Vec::new()) }));
-        let consensus = Arc::new(RwLock::new(MockConsensus));
-        let governance = GovernanceSystem::new(blockchain.clone(), consensus);
-
-        let proposal = Proposal {
-            id: "reject_proposal".to_string(),
-            title: "Proposal to be Rejected".to_string(),
-            description: "This proposal should be rejected".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.7,
-            execution_timestamp: None,
-        };
-
-        let proposal_id = governance.create_proposal(proposal).unwrap();
-
-        // Vote on proposal (not enough votes to pass)
-        governance.vote_on_proposal(&proposal_id, "Bob", true).unwrap();
-        governance.vote_on_proposal(&proposal_id, "Charlie", false).unwrap();
-        governance.vote_on_proposal(&proposal_id, "David", false).unwrap();
-
-        // Update proposal status (simulating time passage)
-        governance.update_proposal_status(&proposal_id).unwrap();
-
-        // Check updated status
-        assert_eq!(governance.get_proposal_status(&proposal_id).unwrap(), ProposalStatus::Rejected);
-
-        // Attempt to execute rejected proposal (should fail)
-        assert!(governance.execute_proposal(&proposal_id).is_err());
+        let active_proposals = gov_system.list_active_proposals();
+        assert_eq!(active_proposals.len(), 2);
+        assert!(active_proposals.iter().any(|p| p.id == "prop1"));
+        assert!(active_proposals.iter().any(|p| p.id == "prop2"));
     }
 }

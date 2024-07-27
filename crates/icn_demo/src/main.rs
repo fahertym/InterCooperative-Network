@@ -1,79 +1,96 @@
-use icn_dao::{DaoFactory, DaoType, DaoTrait};
-use chrono::Duration;
+use icn_core::IcnNode;
+use icn_common::{Transaction, Proposal, CurrencyType, ProposalType, ProposalCategory, ProposalStatus};
+use chrono::{Utc, Duration};
+use std::collections::HashMap;
 
-fn main() {
-    println!("InterCooperative Network Demo");
-    println!("==============================");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting InterCooperative Network Demo");
 
-    // Create a Cooperative
-    let mut coop = DaoFactory::create_dao(
-        DaoType::Cooperative,
-        "Green Energy Coop".to_string(),
-        0.5,
-        0.6
-    );
-    println!("Created a Cooperative: {}", coop.get_dao().name);
+    let node = IcnNode::new()?;
 
-    // Add members to the Cooperative
-    coop.add_member("alice".to_string(), "Alice".to_string()).unwrap();
-    coop.add_member("bob".to_string(), "Bob".to_string()).unwrap();
-    println!("Added members Alice and Bob to the Cooperative");
+    // Create identities
+    println!("\nCreating identities...");
+    let alice_identity = node.create_identity(HashMap::new())?;
+    let bob_identity = node.create_identity(HashMap::new())?;
+    println!("Created identities for Alice and Bob");
 
-    // Create a proposal in the Cooperative
-    let coop_proposal_id = coop.create_proposal(
-        "Invest in Solar Panels".to_string(),
-        "Proposal to invest in solar panel installation for our members".to_string(),
-        "alice".to_string(),
-        Duration::days(7)
-    ).unwrap();
-    println!("Created a proposal in the Cooperative: {}", coop_proposal_id);
+    // Initialize currency system
+    println!("\nInitializing currency system...");
+    node.process_transaction(Transaction {
+        from: "genesis".to_string(),
+        to: alice_identity.id.clone(),
+        amount: 1000.0,
+        currency_type: CurrencyType::BasicNeeds,
+        timestamp: Utc::now().timestamp(),
+        signature: None,
+    })?;
+    println!("Initialized Alice's account with 1000 BasicNeeds");
 
-    // Vote on the Cooperative proposal
-    coop.vote(&coop_proposal_id, "alice", true).unwrap();
-    coop.vote(&coop_proposal_id, "bob", true).unwrap();
-    println!("Members voted on the Cooperative proposal");
+    // Check balances
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    println!("Alice's balance: {} BasicNeeds", alice_balance);
+    println!("Bob's balance: {} BasicNeeds", bob_balance);
 
-    // Finalize and execute the Cooperative proposal
-    let coop_status = coop.finalize_proposal(&coop_proposal_id).unwrap();
-    println!("Cooperative proposal status: {:?}", coop_status);
-    coop.execute_proposal(&coop_proposal_id).unwrap();
-    println!("Executed the Cooperative proposal");
+    // Process a transaction
+    println!("\nProcessing transaction...");
+    node.process_transaction(Transaction {
+        from: alice_identity.id.clone(),
+        to: bob_identity.id.clone(),
+        amount: 100.0,
+        currency_type: CurrencyType::BasicNeeds,
+        timestamp: Utc::now().timestamp(),
+        signature: None,
+    })?;
+    println!("Processed transaction from Alice to Bob");
 
-    println!("\n");
+    // Check updated balances
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    println!("Alice's updated balance: {} BasicNeeds", alice_balance);
+    println!("Bob's updated balance: {} BasicNeeds", bob_balance);
 
-    // Create a Community
-    let mut community = DaoFactory::create_dao(
-        DaoType::Community,
-        "Sustainable Living Community".to_string(),
-        0.5,
-        0.6
-    );
-    println!("Created a Community: {}", community.get_dao().name);
+    // Create a proposal
+    println!("\nCreating a proposal...");
+    let proposal = Proposal {
+        id: "proposal1".to_string(),
+        title: "Increase node count".to_string(),
+        description: "Proposal to increase the number of nodes in the network".to_string(),
+        proposer: alice_identity.id.clone(),
+        created_at: Utc::now(),
+        voting_ends_at: Utc::now() + Duration::days(7),
+        status: ProposalStatus::Active,
+        proposal_type: ProposalType::Constitutional,
+        category: ProposalCategory::Technical,
+        required_quorum: 0.51,
+        execution_timestamp: None,
+    };
+    let proposal_id = node.create_proposal(proposal)?;
+    println!("Created proposal: {}", proposal_id);
 
-    // Add members to the Community
-    community.add_member("carol".to_string(), "Carol".to_string()).unwrap();
-    community.add_member("dave".to_string(), "Dave".to_string()).unwrap();
-    println!("Added members Carol and Dave to the Community");
+    // Vote on the proposal
+    println!("\nVoting on the proposal...");
+    node.vote_on_proposal(&proposal_id, alice_identity.id.clone(), true)?;
+    node.vote_on_proposal(&proposal_id, bob_identity.id.clone(), false)?;
+    println!("Alice voted in favor, Bob voted against");
 
-    // Create a proposal in the Community
-    let community_proposal_id = community.create_proposal(
-        "Community Garden".to_string(),
-        "Proposal to create a community garden in the local park".to_string(),
-        "carol".to_string(),
-        Duration::days(7)
-    ).unwrap();
-    println!("Created a proposal in the Community: {}", community_proposal_id);
+    // Finalize the proposal
+    println!("\nFinalizing the proposal...");
+    let proposal_status = node.finalize_proposal(&proposal_id)?;
+    println!("Proposal status after finalization: {:?}", proposal_status);
 
-    // Vote on the Community proposal
-    community.vote(&community_proposal_id, "carol", true).unwrap();
-    community.vote(&community_proposal_id, "dave", true).unwrap();
-    println!("Members voted on the Community proposal");
+    // Create a new block
+    println!("\nCreating a new block...");
+    let new_block = node.create_block()?;
+    println!("Created new block: {:?}", new_block);
 
-    // Finalize and execute the Community proposal
-    let community_status = community.finalize_proposal(&community_proposal_id).unwrap();
-    println!("Community proposal status: {:?}", community_status);
-    community.execute_proposal(&community_proposal_id).unwrap();
-    println!("Executed the Community proposal");
+    // Display final state
+    println!("\nFinal state:");
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    println!("Alice's final balance: {} BasicNeeds", alice_balance);
+    println!("Bob's final balance: {} BasicNeeds", bob_balance);
 
     println!("\nDemo completed successfully!");
+    Ok(())
 }
