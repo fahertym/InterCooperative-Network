@@ -1,15 +1,17 @@
 // File: icn_language/src/lib.rs
 
-use icn_vm::{Opcode, Value};
+// Remove unused imports
 use nom::{
     IResult,
     branch::alt,
     bytes::complete::{tag, take_while1},
-    character::complete::{alpha1, alphanumeric1, char, multispace0, multispace1},
+    character::complete::{char, multispace0},
     combinator::{map, recognize, opt},
     multi::{many0, separated_list0},
     sequence::{delimited, pair, preceded, terminated, tuple},
 };
+use icn_vm::{Opcode, Value};
+
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -387,6 +389,7 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
 
     bytecode
 }
+
 
 #[cfg(test)]
 mod tests {

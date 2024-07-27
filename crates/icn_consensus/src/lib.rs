@@ -1,21 +1,21 @@
-// File: crates/icn_consensus/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
-use log::{info, warn, error};
+use log::info;
 use std::sync::{Arc, RwLock};
+
+#[derive(Clone, PartialEq)]
+pub struct BlockWrapper(pub Block);
 
 pub struct PoCConsensus {
     threshold: f64,
     quorum: f64,
     validators: HashMap<String, Validator>,
-    pending_blocks: Vec<Block>,
+    pending_blocks: Vec<BlockWrapper>,
     blockchain: Arc<RwLock<Vec<Block>>>,
 }
 
 struct Validator {
     reputation: f64,
-    // Add more validator-related information as needed
 }
 
 impl PoCConsensus {
@@ -57,7 +57,7 @@ impl PoCConsensus {
     }
 
     pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
-        self.pending_blocks.push(block);
+        self.pending_blocks.push(BlockWrapper(block));
         self.try_reach_consensus()
     }
 
@@ -67,25 +67,25 @@ impl PoCConsensus {
 
         let mut blocks_to_retain = Vec::new();
 
-        for block in &self.pending_blocks {
+        for block_wrapper in &self.pending_blocks {
             let mut votes_for = 0.0;
             let mut total_votes = 0.0;
 
             for validator in self.validators.values() {
-                if self.validate_block(block)? {
+                if self.validate_block(&block_wrapper.0)? {
                     votes_for += validator.reputation;
                 }
                 total_votes += validator.reputation;
 
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
-                        self.add_block_to_chain(block.clone())?;
+                        self.add_block_to_chain(block_wrapper.0.clone())?;
                     } else {
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
             }
-            blocks_to_retain.push(block.clone());
+            blocks_to_retain.push(block_wrapper.clone());
         }
 
         self.pending_blocks.retain(|b| blocks_to_retain.contains(b));

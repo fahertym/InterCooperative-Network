@@ -1,5 +1,3 @@
-# File: /home/matt/InterCooperative-Network/crates/icn_language/Cargo.toml
-
 [package]
 name = "icn_language"
 version = "0.1.0"
@@ -7,11 +5,11 @@ edition = "2021"
 
 [dependencies]
 nom = "7.1.0"
-serde = { workspace = true }
-thiserror = { workspace = true }
-log = { workspace = true }
-icn_common = { path = "../icn_common" }  # Add icn_common dependency
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+log = "0.4"
+icn_common = { path = "../icn_common" }
 icn_vm = { path = "../icn_vm" }
 
 [dev-dependencies]
-env_logger = { workspace = true }
+env_logger = "0.10"

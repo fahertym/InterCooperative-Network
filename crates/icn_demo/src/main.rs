@@ -1,100 +1,97 @@
-// File: /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs
+// crates/icn_demo/src/main.rs
 
-use icn_core::IcnNode;
-use icn_common::{Transaction, Proposal, CurrencyType, ProposalType, ProposalCategory, ProposalStatus};
-use chrono::{Utc, Duration};
-use std::collections::HashMap;
+use icn_common::{Transaction, Proposal, CurrencyType, ProposalStatus, ProposalType, ProposalCategory};
+use icn_blockchain::Blockchain;
+use icn_consensus::PoCConsensus;
+use icn_governance::GovernanceSystem;
+use icn_currency::CurrencySystem;
+use chrono::{Duration, Utc};
 use uuid::Uuid;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     println!("Starting InterCooperative Network Demo");
 
-    let node = IcnNode::new().await?;
+    // Initialize blockchain
+    let mut blockchain = Blockchain::new();
 
-    // Create identities
-    println!("\nCreating identities...");
-    let alice_identity = node.create_identity(HashMap::new()).await?;
-    let bob_identity = node.create_identity(HashMap::new()).await?;
-    println!("Created identities for Alice and Bob");
+    // Initialize consensus mechanism
+    let mut consensus = PoCConsensus::new(0.66, 0.51).expect("Failed to create consensus mechanism");
+
+    // Initialize governance system
+    let mut governance = GovernanceSystem::new();
 
     // Initialize currency system
-    println!("\nInitializing currency system...");
-    node.currency_system.write().await.mint(&alice_identity.id, &CurrencyType::BasicNeeds, 1000.0)?;
-    println!("Initialized Alice's account with 1000 BasicNeeds");
+    let mut currency_system = CurrencySystem::new();
+    currency_system.add_currency(CurrencyType::BasicNeeds, 1000000.0, 0.01);
 
-    // Check balances
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
-    println!("Alice's balance: {} BasicNeeds", alice_balance);
-    println!("Bob's balance: {} BasicNeeds", bob_balance);
+    // Simulate network activity
+    simulate_transactions(&mut blockchain);
+    simulate_proposal(&mut governance);
+    simulate_block_creation(&mut blockchain, &mut consensus);
 
-    // Process a transaction
-    println!("\nProcessing transaction...");
-    let transaction = Transaction {
-        from: alice_identity.id.clone(),
-        to: bob_identity.id.clone(),
+    println!("Demo completed successfully!");
+}
+
+fn simulate_transactions(blockchain: &mut Blockchain) {
+    println!("Simulating transactions...");
+
+    let transaction1 = Transaction {
+        from: "Alice".to_string(),
+        to: "Bob".to_string(),
         amount: 100.0,
         currency_type: CurrencyType::BasicNeeds,
         timestamp: Utc::now().timestamp(),
         signature: None,
     };
-    node.process_transaction(transaction).await?;
-    println!("Processed transaction from Alice to Bob");
 
-    // Check updated balances
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
-    println!("Alice's updated balance: {} BasicNeeds", alice_balance);
-    println!("Bob's updated balance: {} BasicNeeds", bob_balance);
+    let transaction2 = Transaction {
+        from: "Bob".to_string(),
+        to: "Charlie".to_string(),
+        amount: 50.0,
+        currency_type: CurrencyType::BasicNeeds,
+        timestamp: Utc::now().timestamp(),
+        signature: None,
+    };
 
-    // Create a proposal
-    println!("\nCreating a proposal...");
+    blockchain.add_transaction(transaction1).expect("Failed to add transaction 1");
+    blockchain.add_transaction(transaction2).expect("Failed to add transaction 2");
+
+    println!("Transactions added to the blockchain");
+}
+
+fn simulate_proposal(governance: &mut GovernanceSystem) {
+    println!("Simulating proposal creation and voting...");
+
     let proposal = Proposal {
         id: Uuid::new_v4().to_string(),
         title: "Increase node count".to_string(),
         description: "Proposal to increase the number of nodes in the network".to_string(),
-        proposer: alice_identity.id.clone(),
+        proposer: "Alice".to_string(),
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
         status: ProposalStatus::Active,
-        proposal_type: ProposalType::Constitutional,
+        proposal_type: ProposalType::NetworkUpgrade,
         category: ProposalCategory::Technical,
         required_quorum: 0.51,
         execution_timestamp: None,
     };
-    let proposal_id = node.create_proposal(proposal).await?;
-    println!("Created proposal: {}", proposal_id);
 
-    // Vote on the proposal
-    println!("\nVoting on the proposal...");
-    node.vote_on_proposal(&proposal_id, alice_identity.id.clone(), true).await?;
-    node.vote_on_proposal(&proposal_id, bob_identity.id.clone(), false).await?;
-    println!("Alice voted in favor, Bob voted against");
+    let proposal_id = governance.create_proposal(proposal).expect("Failed to create proposal");
+    governance.vote_on_proposal(&proposal_id, "Alice".to_string(), true).expect("Failed to vote on proposal");
+    governance.vote_on_proposal(&proposal_id, "Bob".to_string(), true).expect("Failed to vote on proposal");
+    governance.vote_on_proposal(&proposal_id, "Charlie".to_string(), false).expect("Failed to vote on proposal");
 
-    // Finalize the proposal
-    println!("\nFinalizing the proposal...");
-    let proposal_status = node.finalize_proposal(&proposal_id).await?;
-    println!("Proposal status after finalization: {:?}", proposal_status);
+    // For demonstration purposes, we'll finalize the proposal immediately
+    // In a real system, this would happen after the voting period ends
+    let result = governance.finalize_proposal(&proposal_id).expect("Failed to finalize proposal");
+    println!("Proposal finalized with result: {:?}", result);
+}
 
-    // Create a new block
-    println!("\nCreating a new block...");
-    let new_block = node.create_block().await?;
-    println!("Created new block: {:?}", new_block);
+fn simulate_block_creation(blockchain: &mut Blockchain, consensus: &mut PoCConsensus) {
+    println!("Simulating block creation...");
 
-    // Display final state
-    println!("\nFinal state:");
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
-    println!("Alice's final balance: {} BasicNeeds", alice_balance);
-    println!("Bob's final balance: {} BasicNeeds", bob_balance);
+    let new_block = blockchain.create_block().expect("Failed to create block");
+    consensus.process_new_block(new_block.clone()).expect("Failed to process new block");
 
-    let blockchain_height = node.get_blockchain_height().await;
-    println!("Blockchain height: {}", blockchain_height);
-
-    let is_valid = node.validate_blockchain().await;
-    println!("Is blockchain valid: {}", is_valid);
-
-    println!("\nDemo completed successfully!");
-    Ok(())
+    println!("New block created and processed: {:?}", new_block);
 }

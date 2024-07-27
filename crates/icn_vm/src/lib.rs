@@ -1,5 +1,3 @@
-// File: crates/icn_vm/src/lib.rs
-
 use icn_common::{IcnError, IcnResult};
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -94,7 +92,7 @@ impl CoopVM {
         match instruction {
             Opcode::Push(value) => self.stack.push(value),
             Opcode::Pop => {
-                self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
             }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
@@ -122,11 +120,11 @@ impl CoopVM {
                 self.stack.push(Value::Bool(!a));
             }
             Opcode::Store(name) => {
-                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                let value = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
                 self.memory.insert(name, value);
             }
             Opcode::Load(name) => {
-                let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
+                let value = self.memory.get(&name).ok_or_else(|| IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
             }
             Opcode::JumpIf(target) => {
@@ -140,66 +138,18 @@ impl CoopVM {
             }
             Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
             Opcode::Return => return Ok(()),
-            Opcode::NetNodeConnect => {
-                // Implement the logic for NetNodeConnect
-                // This is a placeholder implementation
-                println!("Executing NetNodeConnect");
-            }
-            Opcode::ChainBlockCreate => {
-                // Implement the logic for ChainBlockCreate
-                // This is a placeholder implementation
-                println!("Executing ChainBlockCreate");
-            }
-            Opcode::EconCurrencyMint => {
-                // Implement the logic for EconCurrencyMint
-                // This is a placeholder implementation
-                println!("Executing EconCurrencyMint");
-            }
-            Opcode::GovProposalSubmit => {
-                // Implement the logic for GovProposalSubmit
-                // This is a placeholder implementation
-                println!("Executing GovProposalSubmit");
-            }
-            Opcode::CoopMemberAdd => {
-                // Implement the logic for CoopMemberAdd
-                // This is a placeholder implementation
-                println!("Executing CoopMemberAdd");
-            }
-            Opcode::CommEventOrganize => {
-                // Implement the logic for CommEventOrganize
-                // This is a placeholder implementation
-                println!("Executing CommEventOrganize");
-            }
-            Opcode::VoteOnProposal => {
-                // Implement the logic for VoteOnProposal
-                // This is a placeholder implementation
-                println!("Executing VoteOnProposal");
-            }
-            Opcode::AllocateResource => {
-                // Implement the logic for AllocateResource
-                // This is a placeholder implementation
-                println!("Executing AllocateResource");
-            }
-            Opcode::UpdateReputation => {
-                // Implement the logic for UpdateReputation
-                // This is a placeholder implementation
-                println!("Executing UpdateReputation");
-            }
-            Opcode::CreateProposal => {
-                // Implement the logic for CreateProposal
-                // This is a placeholder implementation
-                println!("Executing CreateProposal");
-            }
-            Opcode::GetProposalStatus => {
-                // Implement the logic for GetProposalStatus
-                // This is a placeholder implementation
-                println!("Executing GetProposalStatus");
-            }
-            Opcode::EmitEvent => {
-                // Implement the logic for EmitEvent
-                // This is a placeholder implementation
-                println!("Executing EmitEvent");
-            }
+            Opcode::NetNodeConnect => println!("Executing NetNodeConnect"),
+            Opcode::ChainBlockCreate => println!("Executing ChainBlockCreate"),
+            Opcode::EconCurrencyMint => println!("Executing EconCurrencyMint"),
+            Opcode::GovProposalSubmit => println!("Executing GovProposalSubmit"),
+            Opcode::CoopMemberAdd => println!("Executing CoopMemberAdd"),
+            Opcode::CommEventOrganize => println!("Executing CommEventOrganize"),
+            Opcode::VoteOnProposal => println!("Executing VoteOnProposal"),
+            Opcode::AllocateResource => println!("Executing AllocateResource"),
+            Opcode::UpdateReputation => println!("Executing UpdateReputation"),
+            Opcode::CreateProposal => println!("Executing CreateProposal"),
+            Opcode::GetProposalStatus => println!("Executing GetProposalStatus"),
+            Opcode::EmitEvent => println!("Executing EmitEvent"),
         }
         Ok(())
     }
@@ -218,14 +168,14 @@ impl CoopVM {
     where
         F: Fn(&Value, &Value) -> bool,
     {
-        let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-        let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        let b = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
+        let a = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
         self.stack.push(Value::Bool(op(&a, &b)));
         Ok(())
     }
 
     fn pop_float(&mut self) -> IcnResult<f64> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+        match self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))? {
             Value::Float(f) => Ok(f),
             Value::Int(i) => Ok(i as f64),
             _ => Err(IcnError::VM("Expected float value".into())),
@@ -233,7 +183,7 @@ impl CoopVM {
     }
 
     fn pop_bool(&mut self) -> IcnResult<bool> {
-        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+        match self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))? {
             Value::Bool(b) => Ok(b),
             _ => Err(IcnError::VM("Expected boolean value".into())),
         }
