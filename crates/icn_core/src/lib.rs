@@ -1,4 +1,4 @@
-// File: /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;

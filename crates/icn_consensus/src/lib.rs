@@ -1,3 +1,5 @@
+// File: crates/icn_consensus/src/lib.rs
+
 use icn_common::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
 use log::info;
@@ -65,7 +67,7 @@ impl PoCConsensus {
         let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
         let quorum_reputation = total_reputation * self.quorum;
 
-        let mut blocks_to_retain = Vec::new();
+        let mut blocks_to_add = Vec::new();
 
         for block_wrapper in &self.pending_blocks {
             let mut votes_for = 0.0;
@@ -79,21 +81,24 @@ impl PoCConsensus {
 
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
-                        self.add_block_to_chain(block_wrapper.0.clone())?;
+                        blocks_to_add.push(block_wrapper.0.clone());
                     } else {
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
             }
-            blocks_to_retain.push(block_wrapper.clone());
         }
 
-        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
+        for block in &blocks_to_add {
+            self.add_block_to_chain(block.clone())?;
+        }
+
+        self.pending_blocks.retain(|b| !blocks_to_add.contains(&b.0));
 
         Ok(())
     }
 
-    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> { // Made public
         if block.index == 0 {
             return Ok(true); // Genesis block is always valid
         }

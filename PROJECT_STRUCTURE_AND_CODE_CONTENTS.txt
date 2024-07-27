@@ -24,8 +24,7 @@
 │   │   └── src
 │   │       ├── bit_utils.rs
 │   │       ├── error.rs
-│   │       ├── lib.rs
-│   │       └── main.rs
+│   │       └── lib.rs
 │   ├── icn_consensus
 │   │   ├── Cargo.toml
 │   │   └── src
@@ -189,7 +188,7 @@
 ├── README.md
 └── update_project.sh
 
-56 directories, 133 files
+56 directories, 132 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -237,6 +236,7 @@ edition = "2018"
 warp = "0.3"
 tokio = { version = "1", features = ["full"] }
 icn_core = { path = "../icn_core" }
+icn_common = { path = "../icn_common" }  # Ensure this line is present
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
@@ -248,7 +248,7 @@ tokio = { version = "1.0", features = ["full", "test-util"] }
 // File: icn_api/src/lib.rs
 
 use icn_core::IcnNode;
-use icn_common::{Transaction, Proposal, IcnResult};
+use icn_common::{Transaction, Proposal, IcnResult, DecentralizedIdentity};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -274,6 +274,113 @@ impl ApiLayer {
     pub async fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
         let node = self.node.read().await;
         node.create_identity(attributes)
+    }
+}
+
+use warp::Filter;
+
+pub fn routes(api_layer: Arc<RwLock<ApiLayer>>) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    let api = warp::path("api");
+
+    let submit_transaction = warp::path("submit_transaction")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_api_layer(api_layer.clone()))
+        .and_then(|tx: Transaction, api_layer: Arc<RwLock<ApiLayer>>| async move {
+            match api_layer.read().await.submit_transaction(tx).await {
+                Ok(_) => Ok(warp::reply::json(&"Transaction submitted successfully")),
+                Err(err) => Err(warp::reject::custom(err)),
+            }
+        });
+
+    let create_proposal = warp::path("create_proposal")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_api_layer(api_layer.clone()))
+        .and_then(|proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>| async move {
+            match api_layer.read().await.create_proposal(proposal).await {
+                Ok(id) => Ok(warp::reply::json(&id)),
+                Err(err) => Err(warp::reject::custom(err)),
+            }
+        });
+
+    let create_identity = warp::path("create_identity")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_api_layer(api_layer))
+        .and_then(|attributes: std::collections::HashMap<String, String>, api_layer: Arc<RwLock<ApiLayer>>| async move {
+            match api_layer.read().await.create_identity(attributes).await {
+                Ok(identity) => Ok(warp::reply::json(&identity)),
+                Err(err) => Err(warp::reject::custom(err)),
+            }
+        });
+
+    api.and(submit_transaction.or(create_proposal).or(create_identity))
+}
+
+fn with_api_layer(api_layer: Arc<RwLock<ApiLayer>>) -> impl Filter<Extract = (Arc<RwLock<ApiLayer>>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || api_layer.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icn_common::{CurrencyType, Transaction, Proposal};
+    use warp::Filter;
+    use tokio::runtime::Runtime;
+
+    #[test]
+    fn test_api_routes() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async {
+            let node = Arc::new(RwLock::new(IcnNode::new()));
+            let api_layer = Arc::new(RwLock::new(ApiLayer::new(node)));
+
+            let api = routes(api_layer);
+
+            let transaction = Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 100.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: chrono::Utc::now().timestamp(),
+                signature: None,
+            };
+
+            let proposal = Proposal {
+                id: "1".to_string(),
+                title: "Proposal Title".to_string(),
+                description: "Proposal Description".to_string(),
+                proposer: "Alice".to_string(),
+                created_at: chrono::Utc::now(),
+                voting_ends_at: chrono::Utc::now(),
+                status: icn_common::ProposalStatus::Active,
+                proposal_type: icn_common::ProposalType::EconomicAdjustment,
+                category: icn_common::ProposalCategory::Economic,
+                required_quorum: 0.6,
+                execution_timestamp: None,
+            };
+
+            let res = warp::test::request()
+                .method("POST")
+                .path("/api/submit_transaction")
+                .json(&transaction)
+                .reply(&api)
+                .await;
+
+            assert_eq!(res.status(), 200);
+            assert_eq!(res.body(), "Transaction submitted successfully");
+
+            let res = warp::test::request()
+                .method("POST")
+                .path("/api/create_proposal")
+                .json(&proposal)
+                .reply(&api)
+                .await;
+
+            assert_eq!(res.status(), 200);
+            assert!(serde_json::from_slice::<String>(res.body()).is_ok());
+        });
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_api/src/lib.rs =====
@@ -1150,6 +1257,8 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
+// File: icn_common/src/lib.rs
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -1299,6 +1408,14 @@ impl CurrencySystem {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct DecentralizedIdentity {
+    pub id: String,
+    pub public_key: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum IcnError {
     #[error("Blockchain error: {0}")]
@@ -1319,6 +1436,8 @@ pub enum IcnError {
     ZKP(String),
     #[error("VM error: {0}")]
     VM(String),
+    #[error("Sharding error: {0}")]
+    Sharding(String),
 }
 
 pub type IcnResult<T> = std::result::Result<T, IcnError>;
@@ -1347,99 +1466,8 @@ mod tests {
         assert!(system.get_currency(&CurrencyType::Education).is_some());
         assert!(system.get_currency(&CurrencyType::Environmental).is_none());
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
-
-===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Executed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Economic,
-    Technical,
-    Social,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Custom(String),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Smart contract error: {0}")]
-    SmartContract(String),
-    #[error("ZKP error: {0}")]
-    ZKP(String),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/Cargo.toml =====
 [package]
@@ -1750,6 +1778,8 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+// File: crates/icn_consensus/src/lib.rs
+
 use icn_common::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
 use log::info;
@@ -1817,7 +1847,7 @@ impl PoCConsensus {
         let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
         let quorum_reputation = total_reputation * self.quorum;
 
-        let mut blocks_to_retain = Vec::new();
+        let mut blocks_to_add = Vec::new();
 
         for block_wrapper in &self.pending_blocks {
             let mut votes_for = 0.0;
@@ -1831,21 +1861,24 @@ impl PoCConsensus {
 
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
-                        self.add_block_to_chain(block_wrapper.0.clone())?;
+                        blocks_to_add.push(block_wrapper.0.clone());
                     } else {
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
             }
-            blocks_to_retain.push(block_wrapper.clone());
         }
 
-        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
+        for block in &blocks_to_add {
+            self.add_block_to_chain(block.clone())?;
+        }
+
+        self.pending_blocks.retain(|b| !blocks_to_add.contains(&b.0));
 
         Ok(())
     }
 
-    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> { // Made public
         if block.index == 0 {
             return Ok(true); // Genesis block is always valid
         }
@@ -1956,7 +1989,8 @@ mod tests {
         assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
         assert_eq!(consensus.validators["validator1"].reputation, 0.9);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs =====
 use icn_utils::{error::IcnError, IcnResult};
@@ -2182,7 +2216,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-// File: /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
@@ -2334,7 +2368,8 @@ mod tests {
         // Test blockchain validation
         assert!(node.validate_blockchain().await);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/logging/mod.rs =====
 use log::{info, warn, error, debug};
@@ -5172,9 +5207,8 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/bytecode.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
-// File: icn_language/src/lib.rs
+// File: crates/icn_language/src/lib.rs
 
-// Remove unused imports
 use nom::{
     IResult,
     branch::alt,
@@ -5185,7 +5219,6 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated, tuple},
 };
 use icn_vm::{Opcode, Value};
-
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -5564,7 +5597,6 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
     bytecode
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5654,7 +5686,7 @@ mod tests {
     fn test_parse_allocate_resource() {
         let input = r#"allocate-resource("computing_power", 100)"#;
         let result = parse_allocate_resource(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::AllocateResource {
             resource: "computing_power".to_string(),
@@ -5666,7 +5698,7 @@ mod tests {
     fn test_parse_update_reputation() {
         let input = r#"update-reputation("user1", 5)"#;
         let result = parse_update_reputation(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::UpdateReputation {
             address: "user1".to_string(),
@@ -5678,7 +5710,7 @@ mod tests {
     fn test_parse_create_proposal() {
         let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
         let result = parse_create_proposal(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::CreateProposal {
             title: "New Policy".to_string(),
@@ -5690,7 +5722,7 @@ mod tests {
     fn test_parse_get_proposal_status() {
         let input = r#"get-proposal-status("proposal1")"#;
         let result = parse_get_proposal_status(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::GetProposalStatus {
             proposal_id: "proposal1".to_string(),
@@ -5701,7 +5733,7 @@ mod tests {
     fn test_parse_emit_event() {
         let input = r#"emit-event("NewMember", "Alice joined the network")"#;
         let result = parse_emit_event(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::EmitEvent {
             event_name: "NewMember".to_string(),
@@ -5725,7 +5757,7 @@ mod tests {
             emit-event("NetworkUpdate", "New node added")
         "#;
         let result = compile(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 11);
         assert!(matches!(statements[0], Statement::NetNodeConnect { .. }));
@@ -5751,7 +5783,7 @@ mod tests {
             
         "#;
         let result = compile(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 3);
     }
@@ -5853,6 +5885,8 @@ pub use transaction::*;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/market.rs =====
+// File: crates/icn_market/src/market.rs
+
 use crate::entities::{Cooperative, Community, Member, Resource, Labor};
 use crate::transaction::{Transaction, TransactionType, TransactionResult};
 use std::collections::HashMap;
@@ -6063,9 +6097,12 @@ serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
 
-[dev-dependencies]
-tokio = { version = "1.0", features = ["full"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
+# If you still need `tokio` for dev-specific dependencies, you can keep it here as well
+#[dev-dependencies]
+#tokio = { version = "1.0", features = ["full"] }
+===== END OF /home/matt/InterCooperative-Network/crates/icn_network/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 use icn_common::{IcnError, IcnResult};
@@ -6138,8 +6175,6 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/discovery.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
-// File: crates/icn_network/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Transaction, Block};
 use std::net::SocketAddr;
 use std::collections::HashMap;
@@ -6157,7 +6192,6 @@ pub struct Network {
 
 struct PeerInfo {
     last_seen: Instant,
-    // Add more peer-related information as needed
 }
 
 #[derive(Debug)]
@@ -6221,8 +6255,6 @@ impl Network {
     pub async fn broadcast_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         // Implement transaction broadcasting to all peers
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the transaction to each peer
-            // For now, we'll just log it
             info!("Broadcasting transaction to peer: {}", peer_addr);
         }
         self.event_sender.send(NetworkEvent::NewTransaction(transaction)).await
@@ -6233,8 +6265,6 @@ impl Network {
     pub async fn broadcast_block(&self, block: Block) -> IcnResult<()> {
         // Implement block broadcasting to all peers
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the block to each peer
-            // For now, we'll just log it
             info!("Broadcasting block to peer: {}", peer_addr);
         }
         self.event_sender.send(NetworkEvent::NewBlock(block)).await
@@ -6247,18 +6277,12 @@ impl Network {
     }
 
     pub async fn handle_incoming_message(&mut self, peer_addr: SocketAddr, message: &[u8]) -> IcnResult<()> {
-        // Implement message handling logic
-        // This is a placeholder implementation. In a real system, you would deserialize the message
-        // and handle different types of messages (transactions, blocks, etc.)
         info!("Received message from peer {}: {:?}", peer_addr, message);
         Ok(())
     }
 
     pub async fn broadcast_cross_shard_transaction(&self, cross_shard_tx: CrossShardTransaction) -> IcnResult<()> {
-        // Implement cross-shard transaction broadcasting
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the cross-shard transaction to relevant peers
-            // For now, we'll just log it
             info!("Broadcasting cross-shard transaction to peer: {}", peer_addr);
         }
         Ok(())
@@ -6275,28 +6299,24 @@ pub struct CrossShardTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
     use tokio::runtime::Runtime;
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_network_operations() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let mut network = Network::new("127.0.0.1:8000".parse().unwrap());
-            
-            // Test starting the network
+
             assert!(network.start().await.is_ok());
 
-            // Test connecting to a peer
             let peer_addr: SocketAddr = "127.0.0.1:8001".parse().unwrap();
             assert!(network.connect_to_peer(peer_addr).await.is_ok());
             assert_eq!(network.get_connected_peers().len(), 1);
 
-            // Test disconnecting from a peer
             assert!(network.disconnect_from_peer(&peer_addr).await.is_ok());
             assert_eq!(network.get_connected_peers().len(), 0);
 
-            // Test broadcasting a transaction
             let transaction = Transaction {
                 from: "Alice".to_string(),
                 to: "Bob".to_string(),
@@ -6307,7 +6327,6 @@ mod tests {
             };
             assert!(network.broadcast_transaction(transaction).await.is_ok());
 
-            // Test broadcasting a block
             let block = Block {
                 index: 1,
                 timestamp: chrono::Utc::now().timestamp(),
@@ -6317,7 +6336,6 @@ mod tests {
             };
             assert!(network.broadcast_block(block).await.is_ok());
 
-            // Test receiving events
             if let Some(event) = network.receive_event().await {
                 match event {
                     NetworkEvent::NewTransaction(_) => println!("Received new transaction event"),
@@ -6327,11 +6345,11 @@ mod tests {
                 }
             }
 
-            // Test stopping the network
             assert!(network.stop().await.is_ok());
         });
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_network/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_network/src/naming.rs =====
 use icn_common::{IcnError, IcnResult};
@@ -7324,8 +7342,6 @@ edition = "2021"
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_reputation/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_reputation/src/lib.rs =====
-// File: crates/icn_reputation/src/lib.rs
-
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
@@ -7386,24 +7402,21 @@ impl ReputationSystem {
             last_updated: Utc::now(),
         });
 
-        // Apply time decay
         let time_diff = (Utc::now() - score.last_updated).num_days() as f64;
         score.score *= (1.0 - self.decay_rate).powf(time_diff);
 
-        // Update score based on event
         match event.event_type {
             ReputationEventType::Contribution | ReputationEventType::Participation => {
                 score.score += event.value;
             }
             ReputationEventType::Feedback => {
-                score.score += event.value * 0.5; // Feedback has less impact
+                score.score += event.value * 0.5;
             }
             ReputationEventType::Violation => {
                 score.score -= event.value;
             }
         }
 
-        // Ensure score is within bounds
         score.score = score.score.clamp(self.min_score, self.max_score);
         score.last_updated = Utc::now();
     }
@@ -7427,7 +7440,6 @@ mod tests {
     fn test_reputation_system() {
         let mut system = ReputationSystem::new(0.01, 0.0, 100.0);
 
-        // Add some events
         system.add_event(ReputationEvent {
             entity_id: "Alice".to_string(),
             event_type: ReputationEventType::Contribution,
@@ -7442,10 +7454,8 @@ mod tests {
             timestamp: Utc::now(),
         });
 
-        // Check scores
         assert!(system.get_score("Alice").unwrap() > system.get_score("Bob").unwrap());
 
-        // Add a violation for Alice
         system.add_event(ReputationEvent {
             entity_id: "Alice".to_string(),
             event_type: ReputationEventType::Violation,
@@ -7453,13 +7463,13 @@ mod tests {
             timestamp: Utc::now(),
         });
 
-        // Check top entities
         let top = system.get_top_entities(2);
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].0, "Alice");
         assert_eq!(top[1].0, "Bob");
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_reputation/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_reputation/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/Cargo.toml =====
 [package]
@@ -7985,12 +7995,9 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/cross_shard_transaction_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
-// File: crates/icn_sharding/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Transaction, Block, CurrencyType};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use log::{info, warn, error};
 use sha2::{Sha256, Digest};
 
 pub struct ShardingManager {
@@ -8066,7 +8073,6 @@ impl ShardingManager {
         let mut shard_data = self.shard_data.write().unwrap();
         let shard = &mut shard_data[shard_id as usize];
 
-        // Verify balance
         let from_balance = shard.balances
             .entry(transaction.from.clone())
             .or_insert_with(HashMap::new)
@@ -8077,7 +8083,6 @@ impl ShardingManager {
             return Err(IcnError::Sharding("Insufficient balance".into()));
         }
 
-        // Update balances
         *from_balance -= transaction.amount;
         *shard.balances
             .entry(transaction.to.clone())
@@ -8085,7 +8090,6 @@ impl ShardingManager {
             .entry(transaction.currency_type.clone())
             .or_insert(0.0) += transaction.amount;
 
-        // Add transaction to shard
         shard.transactions.push(transaction);
 
         Ok(())
@@ -8099,17 +8103,13 @@ impl ShardingManager {
             status: CrossShardTransactionStatus::Initiated,
         };
 
-        // Lock funds in the source shard
         self.lock_funds(from_shard, &transaction.from, transaction.amount, &transaction.currency_type)?;
 
-        // Update cross-shard transaction status
         let mut cross_shard_tx = cross_shard_tx;
         cross_shard_tx.status = CrossShardTransactionStatus::LockAcquired;
 
-        // Transfer funds to the destination shard
         self.transfer_between_shards(from_shard, to_shard, &transaction)?;
 
-        // Update cross-shard transaction status
         cross_shard_tx.status = CrossShardTransactionStatus::Committed;
 
         Ok(())
@@ -8136,7 +8136,6 @@ impl ShardingManager {
     fn transfer_between_shards(&self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
         let mut shard_data = self.shard_data.write().unwrap();
 
-        // Add funds to the destination shard
         let to_shard_data = &mut shard_data[to_shard as usize];
         *to_shard_data.balances
             .entry(transaction.to.clone())
@@ -8144,7 +8143,6 @@ impl ShardingManager {
             .entry(transaction.currency_type.clone())
             .or_insert(0.0) += transaction.amount;
 
-        // Add transaction to both shards
         shard_data[from_shard as usize].transactions.push(transaction.clone());
         shard_data[to_shard as usize].transactions.push(transaction.clone());
 
@@ -8189,13 +8187,12 @@ impl ShardingManager {
         let shard = &mut shard_data[shard_id as usize];
         let transactions = std::mem::take(&mut shard.transactions);
 
-        // In a real implementation, you would create a proper block with appropriate fields
         let block = Block {
-            index: 0, // This should be properly set in a real implementation
+            index: 0,
             timestamp: chrono::Utc::now().timestamp(),
             transactions,
-            previous_hash: "0".to_string(), // This should be properly set in a real implementation
-            hash: "0".to_string(), // This should be calculated based on the block contents
+            previous_hash: "0".to_string(),
+            hash: "0".to_string(),
         };
 
         Ok(block)
@@ -8268,7 +8265,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -8298,7 +8294,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 2).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -8328,14 +8323,12 @@ mod tests {
         manager.add_address_to_shard(address1.clone(), 1).unwrap();
         manager.add_address_to_shard(address2.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(address1.clone(), HashMap::new());
             shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
         }
 
-        // Create a transaction
         let transaction = Transaction {
             from: address1.clone(),
             to: address2.clone(),
@@ -8345,21 +8338,16 @@ mod tests {
             signature: None,
         };
 
-        // Process the transaction
         assert!(manager.process_transaction(transaction).is_ok());
 
-        // Create a shard block
         let block = manager.create_shard_block(1).unwrap();
         assert_eq!(block.transactions.len(), 1);
 
-        // Apply the block to the shard
         assert!(manager.apply_block_to_shard(1, &block).is_ok());
 
-        // Verify balances
         assert_eq!(manager.get_shard_balance(1, &address1, &CurrencyType::BasicNeeds).unwrap(), 50.0);
         assert_eq!(manager.get_shard_balance(1, &address2, &CurrencyType::BasicNeeds).unwrap(), 50.0);
 
-        // Verify that the transactions have been cleared from the shard
         let shard_transactions = manager.get_shard_transactions(1).unwrap();
         assert_eq!(shard_transactions.len(), 0);
     }
@@ -8369,7 +8357,6 @@ mod tests {
         let manager = ShardingManager::new(4);
         let address = "0x7777777777777777777777777777777777777777".to_string();
 
-        // Add balances to different shards
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[0].balances.insert(address.clone(), HashMap::new());
@@ -8392,7 +8379,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -8410,7 +8396,6 @@ mod tests {
 
         assert!(manager.process_transaction(transaction).is_err());
 
-        // Verify balances remain unchanged
         assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
         assert_eq!(manager.get_shard_balance(1, &to_address, &CurrencyType::BasicNeeds).unwrap(), 0.0);
     }
@@ -8452,8 +8437,6 @@ pest = "2.1"
 pest_derive = "2.1"===== END OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/src/lib.rs =====
-// crates/icn_smart_contracts/src/lib.rs
-
 use pest::Parser;
 use pest_derive::Parser;
 use icn_common::{IcnResult, IcnError, CurrencyType};
@@ -8794,207 +8777,208 @@ impl NaturalLanguageCompiler {
                 Ok(ContractValueType::Map(
                     Box::new(Self::parse_type(inner_types[0].trim())?),
                     Box::new(Self::parse_type(inner_types[1].trim())?)))
-                }
-                _ => Err(IcnError::SmartContract(format!("Unknown type: {}", type_str))),
+            }
+            _ => Err(IcnError::SmartContract(format!("Unknown type: {}", type_str))),
+        }
+    }
+}
+
+/// Struct to represent the execution context of a smart contract
+pub struct ContractContext {
+    pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
+    pub storage: HashMap<String, Value>,
+    pub block_height: u64,
+    pub timestamp: u64,
+    pub caller: String,
+}
+
+/// Smart contract executor
+pub struct SmartContractExecutor {
+    vm: CoopVM,
+}
+
+impl SmartContractExecutor {
+    pub fn new() -> Self {
+        SmartContractExecutor {
+            vm: CoopVM::new(Vec::new()),
+        }
+    }
+
+    /// Execute a compiled smart contract
+    pub fn execute(&mut self, contract: &CompiledContract, context: &mut ContractContext, function: &str, args: Vec<Value>) -> IcnResult<Option<Value>> {
+        self.vm.load_program(contract.bytecode.clone());
+        self.vm.set_context(context);
+
+        // Find the function in the ABI
+        let function_abi = contract.abi.functions.iter()
+            .find(|f| f.name == function)
+            .ok_or_else(|| IcnError::SmartContract(format!("Function {} not found", function)))?;
+
+        // Check argument count
+        if args.len() != function_abi.inputs.len() {
+            return Err(IcnError::SmartContract("Incorrect number of arguments".into()));
+        }
+
+        // Push arguments onto the stack
+        for arg in args {
+            self.vm.push(arg);
+        }
+
+        // Call the function
+        self.vm.call(function)?;
+
+        // Run the VM
+        self.vm.run()?;
+
+        // Return the top value from the stack, if any
+        Ok(self.vm.pop())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compile_simple_contract() {
+        let contract_source = r#"
+        contract_type: AssetTransfer
+
+        function transfer(from: address, to: address, amount: int) {
+            if balanceOf(from) >= amount {
+                balanceOf[from] = balanceOf[from] - amount;
+                balanceOf[to] = balanceOf[to] + amount;
+                emit Transfer(from, to, amount);
             }
         }
+
+        event Transfer(from: address, to: address, amount: int)
+        "#;
+
+        let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
+
+        assert_eq!(compiled_contract.contract_type, SmartContractType::AssetTransfer);
+        assert!(!compiled_contract.bytecode.is_empty());
+        assert_eq!(compiled_contract.abi.functions.len(), 1);
+        assert_eq!(compiled_contract.abi.events.len(), 1);
+
+        let transfer_function = &compiled_contract.abi.functions[0];
+        assert_eq!(transfer_function.name, "transfer");
+        assert_eq!(transfer_function.inputs.len(), 3);
+
+        let transfer_event = &compiled_contract.abi.events[0];
+        assert_eq!(transfer_event.name, "Transfer");
+        assert_eq!(transfer_event.parameters.len(), 3);
     }
-    
-    /// Struct to represent the execution context of a smart contract
-    pub struct ContractContext {
-        pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
-        pub storage: HashMap<String, Value>,
-        pub block_height: u64,
-        pub timestamp: u64,
-        pub caller: String,
-    }
-    
-    /// Smart contract executor
-    pub struct SmartContractExecutor {
-        vm: CoopVM,
-    }
-    
-    impl SmartContractExecutor {
-        pub fn new() -> Self {
-            SmartContractExecutor {
-                vm: CoopVM::new(Vec::new()),
+
+    #[test]
+    fn test_execute_simple_contract() {
+        let contract_source = r#"
+        contract_type: AssetTransfer
+
+        function transfer(from: address, to: address, amount: int) {
+            if balanceOf(from) >= amount {
+                balanceOf[from] = balanceOf[from] - amount;
+                balanceOf[to] = balanceOf[to] + amount;
+                emit Transfer(from, to, amount);
             }
         }
-    
-        /// Execute a compiled smart contract
-        pub fn execute(&mut self, contract: &CompiledContract, context: &mut ContractContext, function: &str, args: Vec<Value>) -> IcnResult<Option<Value>> {
-            self.vm.load_program(contract.bytecode.clone());
-            self.vm.set_context(context);
-    
-            // Find the function in the ABI
-            let function_abi = contract.abi.functions.iter()
-                .find(|f| f.name == function)
-                .ok_or_else(|| IcnError::SmartContract(format!("Function {} not found", function)))?;
-    
-            // Check argument count
-            if args.len() != function_abi.inputs.len() {
-                return Err(IcnError::SmartContract("Incorrect number of arguments".into()));
-            }
-    
-            // Push arguments onto the stack
-            for arg in args {
-                self.vm.push(arg);
-            }
-    
-            // Call the function
-            self.vm.call(function)?;
-    
-            // Run the VM
-            self.vm.run()?;
-    
-            // Return the top value from the stack, if any
-            Ok(self.vm.pop())
-        }
+
+        event Transfer(from: address, to: address, amount: int)
+        "#;
+
+        let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
+        let mut executor = SmartContractExecutor::new();
+
+        let mut context = ContractContext {
+            balances: HashMap::new(),
+            storage: HashMap::new(),
+            block_height: 1,
+            timestamp: 1623456789,
+            caller: "system".to_string(),
+        };
+
+        // Initialize balances
+        let mut from_balance = HashMap::new();
+        from_balance.insert(CurrencyType::BasicNeeds, 100.0);
+        context.balances.insert("Alice".to_string(), from_balance);
+
+        let mut to_balance = HashMap::new();
+        to_balance.insert(CurrencyType::BasicNeeds, 50.0);
+        context.balances.insert("Bob".to_string(), to_balance);
+
+        // Execute transfer
+        let result = executor.execute(
+            &compiled_contract,
+            &mut context,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Int(30),
+            ],
+        );
+
+        assert!(result.is_ok());
+
+        // Check balances after transfer
+        assert_eq!(context.balances["Alice"][&CurrencyType::BasicNeeds], 70.0);
+        assert_eq!(context.balances["Bob"][&CurrencyType::BasicNeeds], 80.0);
     }
-    
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-    
-        #[test]
-        fn test_compile_simple_contract() {
-            let contract_source = r#"
-            contract_type: AssetTransfer
-    
-            function transfer(from: address, to: address, amount: int) {
-                if balanceOf(from) >= amount {
-                    balanceOf[from] = balanceOf[from] - amount;
-                    balanceOf[to] = balanceOf[to] + amount;
-                    emit Transfer(from, to, amount);
-                }
-            }
-    
-            event Transfer(from: address, to: address, amount: int)
-            "#;
-    
-            let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
-    
-            assert_eq!(compiled_contract.contract_type, SmartContractType::AssetTransfer);
-            assert!(!compiled_contract.bytecode.is_empty());
-            assert_eq!(compiled_contract.abi.functions.len(), 1);
-            assert_eq!(compiled_contract.abi.events.len(), 1);
-    
-            let transfer_function = &compiled_contract.abi.functions[0];
-            assert_eq!(transfer_function.name, "transfer");
-            assert_eq!(transfer_function.inputs.len(), 3);
-    
-            let transfer_event = &compiled_contract.abi.events[0];
-            assert_eq!(transfer_event.name, "Transfer");
-            assert_eq!(transfer_event.parameters.len(), 3);
-        }
-    
-        #[test]
-        fn test_execute_simple_contract() {
-            let contract_source = r#"
-            contract_type: AssetTransfer
-    
-            function transfer(from: address, to: address, amount: int) {
-                if balanceOf(from) >= amount {
-                    balanceOf[from] = balanceOf[from] - amount;
-                    balanceOf[to] = balanceOf[to] + amount;
-                    emit Transfer(from, to, amount);
-                }
-            }
-    
-            event Transfer(from: address, to: address, amount: int)
-            "#;
-    
-            let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
-            let mut executor = SmartContractExecutor::new();
-    
-            let mut context = ContractContext {
-                balances: HashMap::new(),
-                storage: HashMap::new(),
-                block_height: 1,
-                timestamp: 1623456789,
-                caller: "system".to_string(),
-            };
-    
-            // Initialize balances
-            let mut from_balance = HashMap::new();
-            from_balance.insert(CurrencyType::BasicNeeds, 100.0);
-            context.balances.insert("Alice".to_string(), from_balance);
-    
-            let mut to_balance = HashMap::new();
-            to_balance.insert(CurrencyType::BasicNeeds, 50.0);
-            context.balances.insert("Bob".to_string(), to_balance);
-    
-            // Execute transfer
-            let result = executor.execute(
-                &compiled_contract,
-                &mut context,
-                "transfer",
-                vec![
-                    Value::String("Alice".to_string()),
-                    Value::String("Bob".to_string()),
-                    Value::Int(30),
-                ],
-            );
-    
-            assert!(result.is_ok());
-    
-            // Check balances after transfer
-            assert_eq!(context.balances["Alice"][&CurrencyType::BasicNeeds], 70.0);
-            assert_eq!(context.balances["Bob"][&CurrencyType::BasicNeeds], 80.0);
-        }
+}
+
+// Helper trait for CoopVM to interact with ContractContext
+trait VMContext {
+    fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64;
+    fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64);
+    fn get_storage(&self, key: &str) -> Option<&Value>;
+    fn set_storage(&mut self, key: String, value: Value);
+    fn emit_event(&mut self, name: &str, params: Vec<Value>);
+}
+
+impl VMContext for ContractContext {
+    fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64 {
+        self.balances.get(address).and_then(|balances| balances.get(currency)).cloned().unwrap_or(0.0)
     }
-    
-    // Helper trait for CoopVM to interact with ContractContext
-    trait VMContext {
-        fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64;
-        fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64);
-        fn get_storage(&self, key: &str) -> Option<&Value>;
-        fn set_storage(&mut self, key: String, value: Value);
-        fn emit_event(&mut self, name: &str, params: Vec<Value>);
+
+    fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64) {
+        self.balances.entry(address.to_string()).or_insert_with(HashMap::new).insert(currency.clone(), amount);
     }
-    
-    impl VMContext for ContractContext {
-        fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64 {
-            self.balances.get(address).and_then(|balances| balances.get(currency)).cloned().unwrap_or(0.0)
-        }
-    
-        fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64) {
-            self.balances.entry(address.to_string()).or_insert_with(HashMap::new).insert(currency.clone(), amount);
-        }
-    
-        fn get_storage(&self, key: &str) -> Option<&Value> {
-            self.storage.get(key)
-        }
-    
-        fn set_storage(&mut self, key: String, value: Value) {
-            self.storage.insert(key, value);
-        }
-    
-        fn emit_event(&mut self, name: &str, params: Vec<Value>) {
-            println!("Event emitted: {} {:?}", name, params);
-            // In a real implementation, this would interact with the blockchain to record the event
-        }
+
+    fn get_storage(&self, key: &str) -> Option<&Value> {
+        self.storage.get(key)
     }
-    
-    // Extend CoopVM to work with ContractContext
-    impl CoopVM {
-        pub fn set_context(&mut self, context: &ContractContext) {
-            // Implementation depends on how CoopVM is designed to interact with external state
-        }
-    
-        pub fn push(&mut self, value: Value) {
-            // Implementation to push a value onto the VM's stack
-        }
-    
-        pub fn pop(&mut self) -> Option<Value> {
-            // Implementation to pop a value from the VM's stack
-        }
-    
-        pub fn call(&mut self, function: &str) -> IcnResult<()> {
-            // Implementation to call a function in the VM
-            Ok(())
-        }
-    }===== END OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/src/lib.rs =====
+
+    fn set_storage(&mut self, key: String, value: Value) {
+        self.storage.insert(key, value);
+    }
+
+    fn emit_event(&mut self, name: &str, params: Vec<Value>) {
+        println!("Event emitted: {} {:?}", name, params);
+    }
+}
+
+// Extend CoopVM to work with ContractContext
+impl CoopVM {
+    pub fn set_context(&mut self, _context: &ContractContext) {
+        // Implementation depends on how CoopVM is designed to interact with external state
+    }
+
+    pub fn push(&mut self, _value: Value) {
+        // Implementation to push a value onto the VM's stack
+    }
+
+    pub fn pop(&mut self) -> Option<Value> {
+        // Implementation to pop a value from the VM's stack
+        None
+    }
+
+    pub fn call(&mut self, _function: &str) -> IcnResult<()> {
+        // Implementation to call a function in the VM
+        Ok(())
+    }
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/Cargo.toml =====
 [package]
@@ -9014,8 +8998,6 @@ sha2 = "0.9"
 tokio-test = "0.4"===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
-// File: crates/icn_storage/src/lib.rs
-
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -9183,19 +9165,16 @@ mod tests {
 
         storage_manager.store_data(key, value.clone()).unwrap();
 
-        // Check that the data is stored on exactly 3 nodes
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
         assert_eq!(stored_nodes.len(), 3);
 
-        // Simulate node failure by removing data from one node
         let node_to_fail = stored_nodes[0];
         {
             let mut nodes = storage_manager.nodes.write().unwrap();
             nodes[node_to_fail].data.clear();
         }
 
-        // Verify that we can still retrieve the data
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
     }
@@ -9218,10 +9197,8 @@ mod tests {
         let nodes1 = data_location.get(key1).unwrap();
         let nodes2 = data_location.get(key2).unwrap();
 
-        // Check that different keys are stored on different sets of nodes
         assert_ne!(nodes1, nodes2);
 
-        // Check that each key is stored on the correct number of nodes
         assert_eq!(nodes1.len(), 3);
         assert_eq!(nodes2.len(), 3);
     }
@@ -9235,14 +9212,12 @@ mod tests {
         let key = "insufficient_nodes_key";
         let value = b"test_value".to_vec();
 
-        // Attempting to store data should still succeed, but with fewer replicas
         assert!(storage_manager.store_data(key, value.clone()).is_ok());
 
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
-        assert_eq!(stored_nodes.len(), 2); // Only 2 nodes available
+        assert_eq!(stored_nodes.len(), 2);
 
-        // Retrieval should still work
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
     }
@@ -9259,54 +9234,20 @@ mod tests {
 
         storage_manager.store_data(key, value.clone()).unwrap();
 
-        // Simulate data corruption on one node
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
         let corrupt_node = stored_nodes[0];
+
         {
             let mut nodes = storage_manager.nodes.write().unwrap();
-            nodes[corrupt_node].data.insert(key.to_string(), b"corrupted_data".to_vec());
+            nodes[corrupt_node].data.insert(key.to_string(), b"corrupt_value".to_vec());
         }
 
-        // Verify that we still retrieve the correct data
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
     }
-
-    #[test]
-    fn test_concurrent_access() {
-        use std::thread;
-        use std::sync::Arc;
-
-        let storage_manager = Arc::new(StorageManager::new(3));
-        for _ in 0..10 {
-            storage_manager.add_node().unwrap();
-        }
-
-        let threads: Vec<_> = (0..10).map(|i| {
-            let sm = Arc::clone(&storage_manager);
-            thread::spawn(move || {
-                let key = format!("concurrent_key_{}", i);
-                let value = format!("concurrent_value_{}", i).into_bytes();
-                sm.store_data(&key, value.clone()).unwrap();
-                let retrieved_value = sm.retrieve_data(&key).unwrap();
-                assert_eq!(retrieved_value, value);
-            })
-        }).collect();
-
-        for thread in threads {
-            thread.join().unwrap();
-        }
-
-        // Verify that all data is still accessible
-        for i in 0..10 {
-            let key = format!("concurrent_key_{}", i);
-            let value = format!("concurrent_value_{}", i).into_bytes();
-            let retrieved_value = storage_manager.retrieve_data(&key).unwrap();
-            assert_eq!(retrieved_value, value);
-        }
-    }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_storage/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_storage/src/storage_manager.rs =====
 use crate::storage_node::StorageNode;

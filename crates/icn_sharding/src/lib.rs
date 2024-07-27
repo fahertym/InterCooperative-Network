@@ -1,9 +1,6 @@
-// File: crates/icn_sharding/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Transaction, Block, CurrencyType};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use log::{info, warn, error};
 use sha2::{Sha256, Digest};
 
 pub struct ShardingManager {
@@ -79,7 +76,6 @@ impl ShardingManager {
         let mut shard_data = self.shard_data.write().unwrap();
         let shard = &mut shard_data[shard_id as usize];
 
-        // Verify balance
         let from_balance = shard.balances
             .entry(transaction.from.clone())
             .or_insert_with(HashMap::new)
@@ -90,7 +86,6 @@ impl ShardingManager {
             return Err(IcnError::Sharding("Insufficient balance".into()));
         }
 
-        // Update balances
         *from_balance -= transaction.amount;
         *shard.balances
             .entry(transaction.to.clone())
@@ -98,7 +93,6 @@ impl ShardingManager {
             .entry(transaction.currency_type.clone())
             .or_insert(0.0) += transaction.amount;
 
-        // Add transaction to shard
         shard.transactions.push(transaction);
 
         Ok(())
@@ -112,17 +106,13 @@ impl ShardingManager {
             status: CrossShardTransactionStatus::Initiated,
         };
 
-        // Lock funds in the source shard
         self.lock_funds(from_shard, &transaction.from, transaction.amount, &transaction.currency_type)?;
 
-        // Update cross-shard transaction status
         let mut cross_shard_tx = cross_shard_tx;
         cross_shard_tx.status = CrossShardTransactionStatus::LockAcquired;
 
-        // Transfer funds to the destination shard
         self.transfer_between_shards(from_shard, to_shard, &transaction)?;
 
-        // Update cross-shard transaction status
         cross_shard_tx.status = CrossShardTransactionStatus::Committed;
 
         Ok(())
@@ -149,7 +139,6 @@ impl ShardingManager {
     fn transfer_between_shards(&self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
         let mut shard_data = self.shard_data.write().unwrap();
 
-        // Add funds to the destination shard
         let to_shard_data = &mut shard_data[to_shard as usize];
         *to_shard_data.balances
             .entry(transaction.to.clone())
@@ -157,7 +146,6 @@ impl ShardingManager {
             .entry(transaction.currency_type.clone())
             .or_insert(0.0) += transaction.amount;
 
-        // Add transaction to both shards
         shard_data[from_shard as usize].transactions.push(transaction.clone());
         shard_data[to_shard as usize].transactions.push(transaction.clone());
 
@@ -202,13 +190,12 @@ impl ShardingManager {
         let shard = &mut shard_data[shard_id as usize];
         let transactions = std::mem::take(&mut shard.transactions);
 
-        // In a real implementation, you would create a proper block with appropriate fields
         let block = Block {
-            index: 0, // This should be properly set in a real implementation
+            index: 0,
             timestamp: chrono::Utc::now().timestamp(),
             transactions,
-            previous_hash: "0".to_string(), // This should be properly set in a real implementation
-            hash: "0".to_string(), // This should be calculated based on the block contents
+            previous_hash: "0".to_string(),
+            hash: "0".to_string(),
         };
 
         Ok(block)
@@ -281,7 +268,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -311,7 +297,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 2).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -341,14 +326,12 @@ mod tests {
         manager.add_address_to_shard(address1.clone(), 1).unwrap();
         manager.add_address_to_shard(address2.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(address1.clone(), HashMap::new());
             shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
         }
 
-        // Create a transaction
         let transaction = Transaction {
             from: address1.clone(),
             to: address2.clone(),
@@ -358,21 +341,16 @@ mod tests {
             signature: None,
         };
 
-        // Process the transaction
         assert!(manager.process_transaction(transaction).is_ok());
 
-        // Create a shard block
         let block = manager.create_shard_block(1).unwrap();
         assert_eq!(block.transactions.len(), 1);
 
-        // Apply the block to the shard
         assert!(manager.apply_block_to_shard(1, &block).is_ok());
 
-        // Verify balances
         assert_eq!(manager.get_shard_balance(1, &address1, &CurrencyType::BasicNeeds).unwrap(), 50.0);
         assert_eq!(manager.get_shard_balance(1, &address2, &CurrencyType::BasicNeeds).unwrap(), 50.0);
 
-        // Verify that the transactions have been cleared from the shard
         let shard_transactions = manager.get_shard_transactions(1).unwrap();
         assert_eq!(shard_transactions.len(), 0);
     }
@@ -382,7 +360,6 @@ mod tests {
         let manager = ShardingManager::new(4);
         let address = "0x7777777777777777777777777777777777777777".to_string();
 
-        // Add balances to different shards
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[0].balances.insert(address.clone(), HashMap::new());
@@ -405,7 +382,6 @@ mod tests {
         manager.add_address_to_shard(from_address.clone(), 1).unwrap();
         manager.add_address_to_shard(to_address.clone(), 1).unwrap();
 
-        // Initialize balance
         {
             let mut shard_data = manager.shard_data.write().unwrap();
             shard_data[1].balances.insert(from_address.clone(), HashMap::new());
@@ -423,7 +399,6 @@ mod tests {
 
         assert!(manager.process_transaction(transaction).is_err());
 
-        // Verify balances remain unchanged
         assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
         assert_eq!(manager.get_shard_balance(1, &to_address, &CurrencyType::BasicNeeds).unwrap(), 0.0);
     }

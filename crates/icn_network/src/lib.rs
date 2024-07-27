@@ -1,5 +1,3 @@
-// File: crates/icn_network/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Transaction, Block};
 use std::net::SocketAddr;
 use std::collections::HashMap;
@@ -17,7 +15,6 @@ pub struct Network {
 
 struct PeerInfo {
     last_seen: Instant,
-    // Add more peer-related information as needed
 }
 
 #[derive(Debug)]
@@ -81,8 +78,6 @@ impl Network {
     pub async fn broadcast_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         // Implement transaction broadcasting to all peers
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the transaction to each peer
-            // For now, we'll just log it
             info!("Broadcasting transaction to peer: {}", peer_addr);
         }
         self.event_sender.send(NetworkEvent::NewTransaction(transaction)).await
@@ -93,8 +88,6 @@ impl Network {
     pub async fn broadcast_block(&self, block: Block) -> IcnResult<()> {
         // Implement block broadcasting to all peers
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the block to each peer
-            // For now, we'll just log it
             info!("Broadcasting block to peer: {}", peer_addr);
         }
         self.event_sender.send(NetworkEvent::NewBlock(block)).await
@@ -107,18 +100,12 @@ impl Network {
     }
 
     pub async fn handle_incoming_message(&mut self, peer_addr: SocketAddr, message: &[u8]) -> IcnResult<()> {
-        // Implement message handling logic
-        // This is a placeholder implementation. In a real system, you would deserialize the message
-        // and handle different types of messages (transactions, blocks, etc.)
         info!("Received message from peer {}: {:?}", peer_addr, message);
         Ok(())
     }
 
     pub async fn broadcast_cross_shard_transaction(&self, cross_shard_tx: CrossShardTransaction) -> IcnResult<()> {
-        // Implement cross-shard transaction broadcasting
         for peer_addr in self.peers.keys() {
-            // In a real implementation, you would send the cross-shard transaction to relevant peers
-            // For now, we'll just log it
             info!("Broadcasting cross-shard transaction to peer: {}", peer_addr);
         }
         Ok(())
@@ -135,28 +122,24 @@ pub struct CrossShardTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
     use tokio::runtime::Runtime;
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_network_operations() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
             let mut network = Network::new("127.0.0.1:8000".parse().unwrap());
-            
-            // Test starting the network
+
             assert!(network.start().await.is_ok());
 
-            // Test connecting to a peer
             let peer_addr: SocketAddr = "127.0.0.1:8001".parse().unwrap();
             assert!(network.connect_to_peer(peer_addr).await.is_ok());
             assert_eq!(network.get_connected_peers().len(), 1);
 
-            // Test disconnecting from a peer
             assert!(network.disconnect_from_peer(&peer_addr).await.is_ok());
             assert_eq!(network.get_connected_peers().len(), 0);
 
-            // Test broadcasting a transaction
             let transaction = Transaction {
                 from: "Alice".to_string(),
                 to: "Bob".to_string(),
@@ -167,7 +150,6 @@ mod tests {
             };
             assert!(network.broadcast_transaction(transaction).await.is_ok());
 
-            // Test broadcasting a block
             let block = Block {
                 index: 1,
                 timestamp: chrono::Utc::now().timestamp(),
@@ -177,7 +159,6 @@ mod tests {
             };
             assert!(network.broadcast_block(block).await.is_ok());
 
-            // Test receiving events
             if let Some(event) = network.receive_event().await {
                 match event {
                     NetworkEvent::NewTransaction(_) => println!("Received new transaction event"),
@@ -187,7 +168,6 @@ mod tests {
                 }
             }
 
-            // Test stopping the network
             assert!(network.stop().await.is_ok());
         });
     }

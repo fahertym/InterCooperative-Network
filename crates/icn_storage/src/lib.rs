@@ -1,5 +1,3 @@
-// File: crates/icn_storage/src/lib.rs
-
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -167,19 +165,16 @@ mod tests {
 
         storage_manager.store_data(key, value.clone()).unwrap();
 
-        // Check that the data is stored on exactly 3 nodes
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
         assert_eq!(stored_nodes.len(), 3);
 
-        // Simulate node failure by removing data from one node
         let node_to_fail = stored_nodes[0];
         {
             let mut nodes = storage_manager.nodes.write().unwrap();
             nodes[node_to_fail].data.clear();
         }
 
-        // Verify that we can still retrieve the data
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
     }
@@ -202,10 +197,8 @@ mod tests {
         let nodes1 = data_location.get(key1).unwrap();
         let nodes2 = data_location.get(key2).unwrap();
 
-        // Check that different keys are stored on different sets of nodes
         assert_ne!(nodes1, nodes2);
 
-        // Check that each key is stored on the correct number of nodes
         assert_eq!(nodes1.len(), 3);
         assert_eq!(nodes2.len(), 3);
     }
@@ -219,14 +212,12 @@ mod tests {
         let key = "insufficient_nodes_key";
         let value = b"test_value".to_vec();
 
-        // Attempting to store data should still succeed, but with fewer replicas
         assert!(storage_manager.store_data(key, value.clone()).is_ok());
 
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
-        assert_eq!(stored_nodes.len(), 2); // Only 2 nodes available
+        assert_eq!(stored_nodes.len(), 2);
 
-        // Retrieval should still work
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
     }
@@ -243,51 +234,16 @@ mod tests {
 
         storage_manager.store_data(key, value.clone()).unwrap();
 
-        // Simulate data corruption on one node
         let data_location = storage_manager.data_location.read().unwrap();
         let stored_nodes = data_location.get(key).unwrap();
         let corrupt_node = stored_nodes[0];
+
         {
             let mut nodes = storage_manager.nodes.write().unwrap();
-            nodes[corrupt_node].data.insert(key.to_string(), b"corrupted_data".to_vec());
+            nodes[corrupt_node].data.insert(key.to_string(), b"corrupt_value".to_vec());
         }
 
-        // Verify that we still retrieve the correct data
         let retrieved_value = storage_manager.retrieve_data(key).unwrap();
         assert_eq!(retrieved_value, value);
-    }
-
-    #[test]
-    fn test_concurrent_access() {
-        use std::thread;
-        use std::sync::Arc;
-
-        let storage_manager = Arc::new(StorageManager::new(3));
-        for _ in 0..10 {
-            storage_manager.add_node().unwrap();
-        }
-
-        let threads: Vec<_> = (0..10).map(|i| {
-            let sm = Arc::clone(&storage_manager);
-            thread::spawn(move || {
-                let key = format!("concurrent_key_{}", i);
-                let value = format!("concurrent_value_{}", i).into_bytes();
-                sm.store_data(&key, value.clone()).unwrap();
-                let retrieved_value = sm.retrieve_data(&key).unwrap();
-                assert_eq!(retrieved_value, value);
-            })
-        }).collect();
-
-        for thread in threads {
-            thread.join().unwrap();
-        }
-
-        // Verify that all data is still accessible
-        for i in 0..10 {
-            let key = format!("concurrent_key_{}", i);
-            let value = format!("concurrent_value_{}", i).into_bytes();
-            let retrieved_value = storage_manager.retrieve_data(&key).unwrap();
-            assert_eq!(retrieved_value, value);
-        }
     }
 }

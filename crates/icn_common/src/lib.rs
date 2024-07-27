@@ -1,3 +1,5 @@
+// File: icn_common/src/lib.rs
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -147,6 +149,14 @@ impl CurrencySystem {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct DecentralizedIdentity {
+    pub id: String,
+    pub public_key: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum IcnError {
     #[error("Blockchain error: {0}")]
@@ -167,6 +177,8 @@ pub enum IcnError {
     ZKP(String),
     #[error("VM error: {0}")]
     VM(String),
+    #[error("Sharding error: {0}")]
+    Sharding(String),
 }
 
 pub type IcnResult<T> = std::result::Result<T, IcnError>;

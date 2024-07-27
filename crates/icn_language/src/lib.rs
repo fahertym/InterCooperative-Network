@@ -1,6 +1,5 @@
-// File: icn_language/src/lib.rs
+// File: crates/icn_language/src/lib.rs
 
-// Remove unused imports
 use nom::{
     IResult,
     branch::alt,
@@ -11,7 +10,6 @@ use nom::{
     sequence::{delimited, pair, preceded, terminated, tuple},
 };
 use icn_vm::{Opcode, Value};
-
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
@@ -390,7 +388,6 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
     bytecode
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,7 +477,7 @@ mod tests {
     fn test_parse_allocate_resource() {
         let input = r#"allocate-resource("computing_power", 100)"#;
         let result = parse_allocate_resource(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::AllocateResource {
             resource: "computing_power".to_string(),
@@ -492,7 +489,7 @@ mod tests {
     fn test_parse_update_reputation() {
         let input = r#"update-reputation("user1", 5)"#;
         let result = parse_update_reputation(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::UpdateReputation {
             address: "user1".to_string(),
@@ -504,7 +501,7 @@ mod tests {
     fn test_parse_create_proposal() {
         let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
         let result = parse_create_proposal(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::CreateProposal {
             title: "New Policy".to_string(),
@@ -516,7 +513,7 @@ mod tests {
     fn test_parse_get_proposal_status() {
         let input = r#"get-proposal-status("proposal1")"#;
         let result = parse_get_proposal_status(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::GetProposalStatus {
             proposal_id: "proposal1".to_string(),
@@ -527,7 +524,7 @@ mod tests {
     fn test_parse_emit_event() {
         let input = r#"emit-event("NewMember", "Alice joined the network")"#;
         let result = parse_emit_event(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let (_, statement) = result.unwrap();
         assert_eq!(statement, Statement::EmitEvent {
             event_name: "NewMember".to_string(),
@@ -551,7 +548,7 @@ mod tests {
             emit-event("NetworkUpdate", "New node added")
         "#;
         let result = compile(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 11);
         assert!(matches!(statements[0], Statement::NetNodeConnect { .. }));
@@ -577,7 +574,7 @@ mod tests {
             
         "#;
         let result = compile(input);
-        assert!(result is_ok());
+        assert!(result.is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 3);
     }

@@ -1,5 +1,3 @@
-// crates/icn_smart_contracts/src/lib.rs
-
 use pest::Parser;
 use pest_derive::Parser;
 use icn_common::{IcnResult, IcnError, CurrencyType};
@@ -340,204 +338,204 @@ impl NaturalLanguageCompiler {
                 Ok(ContractValueType::Map(
                     Box::new(Self::parse_type(inner_types[0].trim())?),
                     Box::new(Self::parse_type(inner_types[1].trim())?)))
-                }
-                _ => Err(IcnError::SmartContract(format!("Unknown type: {}", type_str))),
+            }
+            _ => Err(IcnError::SmartContract(format!("Unknown type: {}", type_str))),
+        }
+    }
+}
+
+/// Struct to represent the execution context of a smart contract
+pub struct ContractContext {
+    pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
+    pub storage: HashMap<String, Value>,
+    pub block_height: u64,
+    pub timestamp: u64,
+    pub caller: String,
+}
+
+/// Smart contract executor
+pub struct SmartContractExecutor {
+    vm: CoopVM,
+}
+
+impl SmartContractExecutor {
+    pub fn new() -> Self {
+        SmartContractExecutor {
+            vm: CoopVM::new(Vec::new()),
+        }
+    }
+
+    /// Execute a compiled smart contract
+    pub fn execute(&mut self, contract: &CompiledContract, context: &mut ContractContext, function: &str, args: Vec<Value>) -> IcnResult<Option<Value>> {
+        self.vm.load_program(contract.bytecode.clone());
+        self.vm.set_context(context);
+
+        // Find the function in the ABI
+        let function_abi = contract.abi.functions.iter()
+            .find(|f| f.name == function)
+            .ok_or_else(|| IcnError::SmartContract(format!("Function {} not found", function)))?;
+
+        // Check argument count
+        if args.len() != function_abi.inputs.len() {
+            return Err(IcnError::SmartContract("Incorrect number of arguments".into()));
+        }
+
+        // Push arguments onto the stack
+        for arg in args {
+            self.vm.push(arg);
+        }
+
+        // Call the function
+        self.vm.call(function)?;
+
+        // Run the VM
+        self.vm.run()?;
+
+        // Return the top value from the stack, if any
+        Ok(self.vm.pop())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compile_simple_contract() {
+        let contract_source = r#"
+        contract_type: AssetTransfer
+
+        function transfer(from: address, to: address, amount: int) {
+            if balanceOf(from) >= amount {
+                balanceOf[from] = balanceOf[from] - amount;
+                balanceOf[to] = balanceOf[to] + amount;
+                emit Transfer(from, to, amount);
             }
         }
+
+        event Transfer(from: address, to: address, amount: int)
+        "#;
+
+        let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
+
+        assert_eq!(compiled_contract.contract_type, SmartContractType::AssetTransfer);
+        assert!(!compiled_contract.bytecode.is_empty());
+        assert_eq!(compiled_contract.abi.functions.len(), 1);
+        assert_eq!(compiled_contract.abi.events.len(), 1);
+
+        let transfer_function = &compiled_contract.abi.functions[0];
+        assert_eq!(transfer_function.name, "transfer");
+        assert_eq!(transfer_function.inputs.len(), 3);
+
+        let transfer_event = &compiled_contract.abi.events[0];
+        assert_eq!(transfer_event.name, "Transfer");
+        assert_eq!(transfer_event.parameters.len(), 3);
     }
-    
-    /// Struct to represent the execution context of a smart contract
-    pub struct ContractContext {
-        pub balances: HashMap<String, HashMap<CurrencyType, f64>>,
-        pub storage: HashMap<String, Value>,
-        pub block_height: u64,
-        pub timestamp: u64,
-        pub caller: String,
-    }
-    
-    /// Smart contract executor
-    pub struct SmartContractExecutor {
-        vm: CoopVM,
-    }
-    
-    impl SmartContractExecutor {
-        pub fn new() -> Self {
-            SmartContractExecutor {
-                vm: CoopVM::new(Vec::new()),
+
+    #[test]
+    fn test_execute_simple_contract() {
+        let contract_source = r#"
+        contract_type: AssetTransfer
+
+        function transfer(from: address, to: address, amount: int) {
+            if balanceOf(from) >= amount {
+                balanceOf[from] = balanceOf[from] - amount;
+                balanceOf[to] = balanceOf[to] + amount;
+                emit Transfer(from, to, amount);
             }
         }
-    
-        /// Execute a compiled smart contract
-        pub fn execute(&mut self, contract: &CompiledContract, context: &mut ContractContext, function: &str, args: Vec<Value>) -> IcnResult<Option<Value>> {
-            self.vm.load_program(contract.bytecode.clone());
-            self.vm.set_context(context);
-    
-            // Find the function in the ABI
-            let function_abi = contract.abi.functions.iter()
-                .find(|f| f.name == function)
-                .ok_or_else(|| IcnError::SmartContract(format!("Function {} not found", function)))?;
-    
-            // Check argument count
-            if args.len() != function_abi.inputs.len() {
-                return Err(IcnError::SmartContract("Incorrect number of arguments".into()));
-            }
-    
-            // Push arguments onto the stack
-            for arg in args {
-                self.vm.push(arg);
-            }
-    
-            // Call the function
-            self.vm.call(function)?;
-    
-            // Run the VM
-            self.vm.run()?;
-    
-            // Return the top value from the stack, if any
-            Ok(self.vm.pop())
-        }
+
+        event Transfer(from: address, to: address, amount: int)
+        "#;
+
+        let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
+        let mut executor = SmartContractExecutor::new();
+
+        let mut context = ContractContext {
+            balances: HashMap::new(),
+            storage: HashMap::new(),
+            block_height: 1,
+            timestamp: 1623456789,
+            caller: "system".to_string(),
+        };
+
+        // Initialize balances
+        let mut from_balance = HashMap::new();
+        from_balance.insert(CurrencyType::BasicNeeds, 100.0);
+        context.balances.insert("Alice".to_string(), from_balance);
+
+        let mut to_balance = HashMap::new();
+        to_balance.insert(CurrencyType::BasicNeeds, 50.0);
+        context.balances.insert("Bob".to_string(), to_balance);
+
+        // Execute transfer
+        let result = executor.execute(
+            &compiled_contract,
+            &mut context,
+            "transfer",
+            vec![
+                Value::String("Alice".to_string()),
+                Value::String("Bob".to_string()),
+                Value::Int(30),
+            ],
+        );
+
+        assert!(result.is_ok());
+
+        // Check balances after transfer
+        assert_eq!(context.balances["Alice"][&CurrencyType::BasicNeeds], 70.0);
+        assert_eq!(context.balances["Bob"][&CurrencyType::BasicNeeds], 80.0);
     }
-    
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-    
-        #[test]
-        fn test_compile_simple_contract() {
-            let contract_source = r#"
-            contract_type: AssetTransfer
-    
-            function transfer(from: address, to: address, amount: int) {
-                if balanceOf(from) >= amount {
-                    balanceOf[from] = balanceOf[from] - amount;
-                    balanceOf[to] = balanceOf[to] + amount;
-                    emit Transfer(from, to, amount);
-                }
-            }
-    
-            event Transfer(from: address, to: address, amount: int)
-            "#;
-    
-            let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
-    
-            assert_eq!(compiled_contract.contract_type, SmartContractType::AssetTransfer);
-            assert!(!compiled_contract.bytecode.is_empty());
-            assert_eq!(compiled_contract.abi.functions.len(), 1);
-            assert_eq!(compiled_contract.abi.events.len(), 1);
-    
-            let transfer_function = &compiled_contract.abi.functions[0];
-            assert_eq!(transfer_function.name, "transfer");
-            assert_eq!(transfer_function.inputs.len(), 3);
-    
-            let transfer_event = &compiled_contract.abi.events[0];
-            assert_eq!(transfer_event.name, "Transfer");
-            assert_eq!(transfer_event.parameters.len(), 3);
-        }
-    
-        #[test]
-        fn test_execute_simple_contract() {
-            let contract_source = r#"
-            contract_type: AssetTransfer
-    
-            function transfer(from: address, to: address, amount: int) {
-                if balanceOf(from) >= amount {
-                    balanceOf[from] = balanceOf[from] - amount;
-                    balanceOf[to] = balanceOf[to] + amount;
-                    emit Transfer(from, to, amount);
-                }
-            }
-    
-            event Transfer(from: address, to: address, amount: int)
-            "#;
-    
-            let compiled_contract = NaturalLanguageCompiler::compile(contract_source).unwrap();
-            let mut executor = SmartContractExecutor::new();
-    
-            let mut context = ContractContext {
-                balances: HashMap::new(),
-                storage: HashMap::new(),
-                block_height: 1,
-                timestamp: 1623456789,
-                caller: "system".to_string(),
-            };
-    
-            // Initialize balances
-            let mut from_balance = HashMap::new();
-            from_balance.insert(CurrencyType::BasicNeeds, 100.0);
-            context.balances.insert("Alice".to_string(), from_balance);
-    
-            let mut to_balance = HashMap::new();
-            to_balance.insert(CurrencyType::BasicNeeds, 50.0);
-            context.balances.insert("Bob".to_string(), to_balance);
-    
-            // Execute transfer
-            let result = executor.execute(
-                &compiled_contract,
-                &mut context,
-                "transfer",
-                vec![
-                    Value::String("Alice".to_string()),
-                    Value::String("Bob".to_string()),
-                    Value::Int(30),
-                ],
-            );
-    
-            assert!(result.is_ok());
-    
-            // Check balances after transfer
-            assert_eq!(context.balances["Alice"][&CurrencyType::BasicNeeds], 70.0);
-            assert_eq!(context.balances["Bob"][&CurrencyType::BasicNeeds], 80.0);
-        }
+}
+
+// Helper trait for CoopVM to interact with ContractContext
+trait VMContext {
+    fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64;
+    fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64);
+    fn get_storage(&self, key: &str) -> Option<&Value>;
+    fn set_storage(&mut self, key: String, value: Value);
+    fn emit_event(&mut self, name: &str, params: Vec<Value>);
+}
+
+impl VMContext for ContractContext {
+    fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64 {
+        self.balances.get(address).and_then(|balances| balances.get(currency)).cloned().unwrap_or(0.0)
     }
-    
-    // Helper trait for CoopVM to interact with ContractContext
-    trait VMContext {
-        fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64;
-        fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64);
-        fn get_storage(&self, key: &str) -> Option<&Value>;
-        fn set_storage(&mut self, key: String, value: Value);
-        fn emit_event(&mut self, name: &str, params: Vec<Value>);
+
+    fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64) {
+        self.balances.entry(address.to_string()).or_insert_with(HashMap::new).insert(currency.clone(), amount);
     }
-    
-    impl VMContext for ContractContext {
-        fn get_balance(&self, address: &str, currency: &CurrencyType) -> f64 {
-            self.balances.get(address).and_then(|balances| balances.get(currency)).cloned().unwrap_or(0.0)
-        }
-    
-        fn set_balance(&mut self, address: &str, currency: &CurrencyType, amount: f64) {
-            self.balances.entry(address.to_string()).or_insert_with(HashMap::new).insert(currency.clone(), amount);
-        }
-    
-        fn get_storage(&self, key: &str) -> Option<&Value> {
-            self.storage.get(key)
-        }
-    
-        fn set_storage(&mut self, key: String, value: Value) {
-            self.storage.insert(key, value);
-        }
-    
-        fn emit_event(&mut self, name: &str, params: Vec<Value>) {
-            println!("Event emitted: {} {:?}", name, params);
-            // In a real implementation, this would interact with the blockchain to record the event
-        }
+
+    fn get_storage(&self, key: &str) -> Option<&Value> {
+        self.storage.get(key)
     }
-    
-    // Extend CoopVM to work with ContractContext
-    impl CoopVM {
-        pub fn set_context(&mut self, context: &ContractContext) {
-            // Implementation depends on how CoopVM is designed to interact with external state
-        }
-    
-        pub fn push(&mut self, value: Value) {
-            // Implementation to push a value onto the VM's stack
-        }
-    
-        pub fn pop(&mut self) -> Option<Value> {
-            // Implementation to pop a value from the VM's stack
-        }
-    
-        pub fn call(&mut self, function: &str) -> IcnResult<()> {
-            // Implementation to call a function in the VM
-            Ok(())
-        }
+
+    fn set_storage(&mut self, key: String, value: Value) {
+        self.storage.insert(key, value);
     }
+
+    fn emit_event(&mut self, name: &str, params: Vec<Value>) {
+        println!("Event emitted: {} {:?}", name, params);
+    }
+}
+
+// Extend CoopVM to work with ContractContext
+impl CoopVM {
+    pub fn set_context(&mut self, _context: &ContractContext) {
+        // Implementation depends on how CoopVM is designed to interact with external state
+    }
+
+    pub fn push(&mut self, _value: Value) {
+        // Implementation to push a value onto the VM's stack
+    }
+
+    pub fn pop(&mut self) -> Option<Value> {
+        // Implementation to pop a value from the VM's stack
+        None
+    }
+
+    pub fn call(&mut self, _function: &str) -> IcnResult<()> {
+        // Implementation to call a function in the VM
+        Ok(())
+    }
+}

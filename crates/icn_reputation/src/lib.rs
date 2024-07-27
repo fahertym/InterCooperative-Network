@@ -1,5 +1,3 @@
-// File: crates/icn_reputation/src/lib.rs
-
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
@@ -60,24 +58,21 @@ impl ReputationSystem {
             last_updated: Utc::now(),
         });
 
-        // Apply time decay
         let time_diff = (Utc::now() - score.last_updated).num_days() as f64;
         score.score *= (1.0 - self.decay_rate).powf(time_diff);
 
-        // Update score based on event
         match event.event_type {
             ReputationEventType::Contribution | ReputationEventType::Participation => {
                 score.score += event.value;
             }
             ReputationEventType::Feedback => {
-                score.score += event.value * 0.5; // Feedback has less impact
+                score.score += event.value * 0.5;
             }
             ReputationEventType::Violation => {
                 score.score -= event.value;
             }
         }
 
-        // Ensure score is within bounds
         score.score = score.score.clamp(self.min_score, self.max_score);
         score.last_updated = Utc::now();
     }
@@ -101,7 +96,6 @@ mod tests {
     fn test_reputation_system() {
         let mut system = ReputationSystem::new(0.01, 0.0, 100.0);
 
-        // Add some events
         system.add_event(ReputationEvent {
             entity_id: "Alice".to_string(),
             event_type: ReputationEventType::Contribution,
@@ -116,10 +110,8 @@ mod tests {
             timestamp: Utc::now(),
         });
 
-        // Check scores
         assert!(system.get_score("Alice").unwrap() > system.get_score("Bob").unwrap());
 
-        // Add a violation for Alice
         system.add_event(ReputationEvent {
             entity_id: "Alice".to_string(),
             event_type: ReputationEventType::Violation,
@@ -127,7 +119,6 @@ mod tests {
             timestamp: Utc::now(),
         });
 
-        // Check top entities
         let top = system.get_top_entities(2);
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].0, "Alice");
