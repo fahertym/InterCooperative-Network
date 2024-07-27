@@ -1,164 +1,207 @@
-// File: crates/icn_common/src/lib.rs
+// File: crates/icn_consensus/src/lib.rs
 
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
+use icn_common::{IcnResult, IcnError, Block, Transaction};
+use std::collections::HashMap;
+use log::{info, warn, error};
+use std::sync::{Arc, RwLock};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
+pub struct PoCConsensus {
+    threshold: f64,
+    quorum: f64,
+    validators: HashMap<String, Validator>,
+    pending_blocks: Vec<Block>,
+    blockchain: Arc<RwLock<Vec<Block>>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
+struct Validator {
+    reputation: f64,
+    // Add more validator-related information as needed
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Executed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Economic,
-    Technical,
-    Social,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Custom(String),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Smart contract error: {0}")]
-    SmartContract(String),
-    #[error("ZKP error: {0}")]
-    ZKP(String),
-    #[error("VM error: {0}")]
-    VM(String),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
-
-// Utility functions
-
-pub fn calculate_hash(data: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
-}
-
-// Traits
-
-pub trait Hashable {
-    fn hash(&self) -> String;
-}
-
-impl Hashable for Block {
-    fn hash(&self) -> String {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.index.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        for tx in &self.transactions {
-            data.extend_from_slice(tx.hash().as_bytes());
+impl PoCConsensus {
+    pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
+        if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
+            return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
         }
-        data.extend_from_slice(self.previous_hash.as_bytes());
-        calculate_hash(&data)
-    }
-}
 
-impl Hashable for Transaction {
-    fn hash(&self) -> String {
-        let mut data = Vec::new();
-        data.extend_from_slice(self.from.as_bytes());
-        data.extend_from_slice(self.to.as_bytes());
-        data.extend_from_slice(&self.amount.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        calculate_hash(&data)
+        Ok(PoCConsensus {
+            threshold,
+            quorum,
+            validators: HashMap::new(),
+            pending_blocks: Vec::new(),
+            blockchain: Arc::new(RwLock::new(Vec::new())),
+        })
+    }
+
+    pub fn start(&self) -> IcnResult<()> {
+        info!("PoC Consensus mechanism started");
+        Ok(())
+    }
+
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("PoC Consensus mechanism stopped");
+        Ok(())
+    }
+
+    pub fn add_validator(&mut self, id: String, initial_reputation: f64) -> IcnResult<()> {
+        if initial_reputation < 0.0 || initial_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid initial reputation".into()));
+        }
+        self.validators.insert(id, Validator { reputation: initial_reputation });
+        Ok(())
+    }
+
+    pub fn remove_validator(&mut self, id: &str) -> IcnResult<()> {
+        self.validators.remove(id);
+        Ok(())
+    }
+
+    pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
+        self.pending_blocks.push(block);
+        self.try_reach_consensus()
+    }
+
+    fn try_reach_consensus(&mut self) -> IcnResult<()> {
+        let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
+        let quorum_reputation = total_reputation * self.quorum;
+
+        let mut blocks_to_retain = Vec::new();
+
+        for block in &self.pending_blocks {
+            let mut votes_for = 0.0;
+            let mut total_votes = 0.0;
+
+            for validator in self.validators.values() {
+                if self.validate_block(block)? {
+                    votes_for += validator.reputation;
+                }
+                total_votes += validator.reputation;
+
+                if total_votes >= quorum_reputation {
+                    if votes_for / total_votes >= self.threshold {
+                        self.add_block_to_chain(block.clone())?;
+                    } else {
+                        return Err(IcnError::Consensus("Block rejected by consensus".into()));
+                    }
+                }
+            }
+            blocks_to_retain.push(block.clone());
+        }
+
+        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
+
+        Ok(())
+    }
+
+    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        if block.index == 0 {
+            return Ok(true); // Genesis block is always valid
+        }
+
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        let previous_block = blockchain.last().ok_or_else(|| IcnError::Consensus("No previous block found".into()))?;
+
+        if block.previous_hash != previous_block.hash {
+            return Ok(false);
+        }
+
+        if block.hash != block.calculate_hash() {
+            return Ok(false);
+        }
+
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        if transaction.amount <= 0.0 {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn add_block_to_chain(&mut self, block: Block) -> IcnResult<()> {
+        let mut blockchain = self.blockchain.write().map_err(|_| IcnError::Consensus("Failed to write to blockchain".into()))?;
+        blockchain.push(block);
+        Ok(())
+    }
+
+    pub fn get_blockchain(&self) -> IcnResult<Vec<Block>> {
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        Ok(blockchain.clone())
+    }
+
+    pub fn update_validator_reputation(&mut self, id: &str, new_reputation: f64) -> IcnResult<()> {
+        if new_reputation < 0.0 || new_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid reputation value".into()));
+        }
+
+        if let Some(validator) = self.validators.get_mut(id) {
+            validator.reputation = new_reputation;
+            Ok(())
+        } else {
+            Err(IcnError::Consensus("Validator not found".into()))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
-    #[test]
-    fn test_transaction_hash() {
-        let tx = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 1234567890,
-            signature: None,
-        };
-        let hash = tx.hash();
-        assert!(!hash.is_empty());
+    fn create_test_block(index: u64, previous_hash: &str) -> Block {
+        Block {
+            index,
+            timestamp: Utc::now().timestamp(),
+            transactions: vec![],
+            previous_hash: previous_hash.to_string(),
+            hash: format!("test_hash_{}", index),
+        }
     }
 
     #[test]
-    fn test_block_hash() {
-        let block = Block {
-            index: 1,
-            timestamp: 1234567890,
-            transactions: vec![],
-            previous_hash: "previous_hash".to_string(),
-            hash: String::new(),
-        };
-        let hash = block.hash();
-        assert!(!hash.is_empty());
+    fn test_poc_consensus_creation() {
+        let consensus = PoCConsensus::new(0.66, 0.51);
+        assert!(consensus.is_ok());
+    }
+
+    #[test]
+    fn test_add_and_remove_validator() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        assert!(consensus.add_validator("validator1".to_string(), 0.8).is_ok());
+        assert!(consensus.add_validator("validator2".to_string(), 0.7).is_ok());
+        assert!(consensus.remove_validator("validator1").is_ok());
+        assert_eq!(consensus.validators.len(), 1);
+    }
+
+    #[test]
+    fn test_process_new_block() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
+
+        let genesis_block = create_test_block(0, "0");
+        consensus.add_block_to_chain(genesis_block).unwrap();
+
+        let new_block = create_test_block(1, "test_hash_0");
+        assert!(consensus.process_new_block(new_block).is_ok());
+
+        let blockchain = consensus.get_blockchain().unwrap();
+        assert_eq!(blockchain.len(), 2);
+    }
+
+    #[test]
+    fn test_update_validator_reputation() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
+        assert_eq!(consensus.validators["validator1"].reputation, 0.9);
     }
 }

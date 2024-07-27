@@ -1,8 +1,8 @@
 // File: crates/icn_vm/src/lib.rs
 
-use icn_common::{IcnResult, IcnError};
-use std::collections::HashMap;
+use icn_common::{IcnError, IcnResult};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -50,6 +50,18 @@ pub enum Opcode {
     Jump(usize),
     Call(String),
     Return,
+    NetNodeConnect,
+    ChainBlockCreate,
+    EconCurrencyMint,
+    GovProposalSubmit,
+    CoopMemberAdd,
+    CommEventOrganize,
+    VoteOnProposal,
+    AllocateResource,
+    UpdateReputation,
+    CreateProposal,
+    GetProposalStatus,
+    EmitEvent,
 }
 
 pub struct CoopVM {
@@ -81,7 +93,9 @@ impl CoopVM {
         let instruction = self.program[self.pc].clone();
         match instruction {
             Opcode::Push(value) => self.stack.push(value),
-            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?; },
+            Opcode::Pop => {
+                self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+            }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
             Opcode::Mul => self.binary_op(|a, b| a * b)?,
@@ -97,35 +111,95 @@ impl CoopVM {
                 let b = self.pop_bool()?;
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(a && b));
-            },
+            }
             Opcode::Or => {
                 let b = self.pop_bool()?;
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(a || b));
-            },
+            }
             Opcode::Not => {
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(!a));
-            },
+            }
             Opcode::Store(name) => {
                 let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
                 self.memory.insert(name, value);
-            },
+            }
             Opcode::Load(name) => {
                 let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
-            },
+            }
             Opcode::JumpIf(target) => {
                 let condition = self.pop_bool()?;
                 if condition {
                     self.pc = target - 1; // -1 because pc will be incremented after this
                 }
-            },
+            }
             Opcode::Jump(target) => {
                 self.pc = target - 1; // -1 because pc will be incremented after this
-            },
+            }
             Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
             Opcode::Return => return Ok(()),
+            Opcode::NetNodeConnect => {
+                // Implement the logic for NetNodeConnect
+                // This is a placeholder implementation
+                println!("Executing NetNodeConnect");
+            }
+            Opcode::ChainBlockCreate => {
+                // Implement the logic for ChainBlockCreate
+                // This is a placeholder implementation
+                println!("Executing ChainBlockCreate");
+            }
+            Opcode::EconCurrencyMint => {
+                // Implement the logic for EconCurrencyMint
+                // This is a placeholder implementation
+                println!("Executing EconCurrencyMint");
+            }
+            Opcode::GovProposalSubmit => {
+                // Implement the logic for GovProposalSubmit
+                // This is a placeholder implementation
+                println!("Executing GovProposalSubmit");
+            }
+            Opcode::CoopMemberAdd => {
+                // Implement the logic for CoopMemberAdd
+                // This is a placeholder implementation
+                println!("Executing CoopMemberAdd");
+            }
+            Opcode::CommEventOrganize => {
+                // Implement the logic for CommEventOrganize
+                // This is a placeholder implementation
+                println!("Executing CommEventOrganize");
+            }
+            Opcode::VoteOnProposal => {
+                // Implement the logic for VoteOnProposal
+                // This is a placeholder implementation
+                println!("Executing VoteOnProposal");
+            }
+            Opcode::AllocateResource => {
+                // Implement the logic for AllocateResource
+                // This is a placeholder implementation
+                println!("Executing AllocateResource");
+            }
+            Opcode::UpdateReputation => {
+                // Implement the logic for UpdateReputation
+                // This is a placeholder implementation
+                println!("Executing UpdateReputation");
+            }
+            Opcode::CreateProposal => {
+                // Implement the logic for CreateProposal
+                // This is a placeholder implementation
+                println!("Executing CreateProposal");
+            }
+            Opcode::GetProposalStatus => {
+                // Implement the logic for GetProposalStatus
+                // This is a placeholder implementation
+                println!("Executing GetProposalStatus");
+            }
+            Opcode::EmitEvent => {
+                // Implement the logic for EmitEvent
+                // This is a placeholder implementation
+                println!("Executing EmitEvent");
+            }
         }
         Ok(())
     }

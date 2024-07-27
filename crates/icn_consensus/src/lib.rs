@@ -57,7 +57,6 @@ impl PoCConsensus {
     }
 
     pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
-        // Implement block processing logic
         self.pending_blocks.push(block);
         self.try_reach_consensus()
     }
@@ -66,13 +65,13 @@ impl PoCConsensus {
         let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
         let quorum_reputation = total_reputation * self.quorum;
 
+        let mut blocks_to_retain = Vec::new();
+
         for block in &self.pending_blocks {
             let mut votes_for = 0.0;
             let mut total_votes = 0.0;
 
-            for (validator_id, validator) in &self.validators {
-                // In a real implementation, you would collect actual votes from validators
-                // Here, we're simulating voting based on the block's validity
+            for validator in self.validators.values() {
                 if self.validate_block(block)? {
                     votes_for += validator.reputation;
                 }
@@ -80,25 +79,21 @@ impl PoCConsensus {
 
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
-                        // Consensus reached, add the block to the blockchain
                         self.add_block_to_chain(block.clone())?;
-                        self.pending_blocks.retain(|b| b.hash != block.hash);
-                        return Ok(());
                     } else {
-                        // Block rejected
-                        self.pending_blocks.retain(|b| b.hash != block.hash);
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
             }
+            blocks_to_retain.push(block.clone());
         }
+
+        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
 
         Ok(())
     }
 
     fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        // Implement block validation logic
-        // This is a simplified version. In a real implementation, you would perform more checks
         if block.index == 0 {
             return Ok(true); // Genesis block is always valid
         }
@@ -114,7 +109,6 @@ impl PoCConsensus {
             return Ok(false);
         }
 
-        // Validate all transactions in the block
         for transaction in &block.transactions {
             if !self.validate_transaction(transaction)? {
                 return Ok(false);
@@ -125,14 +119,10 @@ impl PoCConsensus {
     }
 
     fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        // Implement transaction validation logic
-        // This is a simplified version. In a real implementation, you would perform more checks
         if transaction.amount <= 0.0 {
             return Ok(false);
         }
 
-        // Check if the sender has sufficient balance
-        // In a real implementation, you would check the actual balance
         Ok(true)
     }
 

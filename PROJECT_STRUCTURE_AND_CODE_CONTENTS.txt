@@ -1111,170 +1111,214 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
-// File: crates/icn_common/src/lib.rs
+// File: crates/icn_consensus/src/lib.rs
 
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
+use icn_common::{IcnResult, IcnError, Block, Transaction};
+use std::collections::HashMap;
+use log::{info, warn, error};
+use std::sync::{Arc, RwLock};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Transaction {
-    pub from: String,
-    pub to: String,
-    pub amount: f64,
-    pub currency_type: CurrencyType,
-    pub timestamp: i64,
-    pub signature: Option<Vec<u8>>,
+pub struct PoCConsensus {
+    threshold: f64,
+    quorum: f64,
+    validators: HashMap<String, Validator>,
+    pending_blocks: Vec<Block>,
+    blockchain: Arc<RwLock<Vec<Block>>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub index: u64,
-    pub timestamp: i64,
-    pub transactions: Vec<Transaction>,
-    pub previous_hash: String,
-    pub hash: String,
+struct Validator {
+    reputation: f64,
+    // Add more validator-related information as needed
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Proposal {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub proposer: String,
-    pub created_at: DateTime<Utc>,
-    pub voting_ends_at: DateTime<Utc>,
-    pub status: ProposalStatus,
-    pub proposal_type: ProposalType,
-    pub category: ProposalCategory,
-    pub required_quorum: f64,
-    pub execution_timestamp: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalStatus {
-    Active,
-    Passed,
-    Rejected,
-    Executed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalType {
-    Constitutional,
-    EconomicAdjustment,
-    NetworkUpgrade,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Economic,
-    Technical,
-    Social,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum CurrencyType {
-    BasicNeeds,
-    Education,
-    Environmental,
-    Community,
-    Custom(String),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Smart contract error: {0}")]
-    SmartContract(String),
-    #[error("ZKP error: {0}")]
-    ZKP(String),
-    #[error("VM error: {0}")]
-    VM(String),
-}
-
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
-
-// Utility functions
-
-pub fn calculate_hash(data: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
-}
-
-// Traits
-
-pub trait Hashable {
-    fn hash(&self) -> String;
-}
-
-impl Hashable for Block {
-    fn hash(&self) -> String {
-        let mut data = Vec::new();
-        data.extend_from_slice(&self.index.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        for tx in &self.transactions {
-            data.extend_from_slice(tx.hash().as_bytes());
+impl PoCConsensus {
+    pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
+        if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
+            return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
         }
-        data.extend_from_slice(self.previous_hash.as_bytes());
-        calculate_hash(&data)
-    }
-}
 
-impl Hashable for Transaction {
-    fn hash(&self) -> String {
-        let mut data = Vec::new();
-        data.extend_from_slice(self.from.as_bytes());
-        data.extend_from_slice(self.to.as_bytes());
-        data.extend_from_slice(&self.amount.to_le_bytes());
-        data.extend_from_slice(&self.timestamp.to_le_bytes());
-        calculate_hash(&data)
+        Ok(PoCConsensus {
+            threshold,
+            quorum,
+            validators: HashMap::new(),
+            pending_blocks: Vec::new(),
+            blockchain: Arc::new(RwLock::new(Vec::new())),
+        })
+    }
+
+    pub fn start(&self) -> IcnResult<()> {
+        info!("PoC Consensus mechanism started");
+        Ok(())
+    }
+
+    pub fn stop(&self) -> IcnResult<()> {
+        info!("PoC Consensus mechanism stopped");
+        Ok(())
+    }
+
+    pub fn add_validator(&mut self, id: String, initial_reputation: f64) -> IcnResult<()> {
+        if initial_reputation < 0.0 || initial_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid initial reputation".into()));
+        }
+        self.validators.insert(id, Validator { reputation: initial_reputation });
+        Ok(())
+    }
+
+    pub fn remove_validator(&mut self, id: &str) -> IcnResult<()> {
+        self.validators.remove(id);
+        Ok(())
+    }
+
+    pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
+        self.pending_blocks.push(block);
+        self.try_reach_consensus()
+    }
+
+    fn try_reach_consensus(&mut self) -> IcnResult<()> {
+        let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
+        let quorum_reputation = total_reputation * self.quorum;
+
+        let mut blocks_to_retain = Vec::new();
+
+        for block in &self.pending_blocks {
+            let mut votes_for = 0.0;
+            let mut total_votes = 0.0;
+
+            for validator in self.validators.values() {
+                if self.validate_block(block)? {
+                    votes_for += validator.reputation;
+                }
+                total_votes += validator.reputation;
+
+                if total_votes >= quorum_reputation {
+                    if votes_for / total_votes >= self.threshold {
+                        self.add_block_to_chain(block.clone())?;
+                    } else {
+                        return Err(IcnError::Consensus("Block rejected by consensus".into()));
+                    }
+                }
+            }
+            blocks_to_retain.push(block.clone());
+        }
+
+        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
+
+        Ok(())
+    }
+
+    fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        if block.index == 0 {
+            return Ok(true); // Genesis block is always valid
+        }
+
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        let previous_block = blockchain.last().ok_or_else(|| IcnError::Consensus("No previous block found".into()))?;
+
+        if block.previous_hash != previous_block.hash {
+            return Ok(false);
+        }
+
+        if block.hash != block.calculate_hash() {
+            return Ok(false);
+        }
+
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction)? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        if transaction.amount <= 0.0 {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    fn add_block_to_chain(&mut self, block: Block) -> IcnResult<()> {
+        let mut blockchain = self.blockchain.write().map_err(|_| IcnError::Consensus("Failed to write to blockchain".into()))?;
+        blockchain.push(block);
+        Ok(())
+    }
+
+    pub fn get_blockchain(&self) -> IcnResult<Vec<Block>> {
+        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        Ok(blockchain.clone())
+    }
+
+    pub fn update_validator_reputation(&mut self, id: &str, new_reputation: f64) -> IcnResult<()> {
+        if new_reputation < 0.0 || new_reputation > 1.0 {
+            return Err(IcnError::Consensus("Invalid reputation value".into()));
+        }
+
+        if let Some(validator) = self.validators.get_mut(id) {
+            validator.reputation = new_reputation;
+            Ok(())
+        } else {
+            Err(IcnError::Consensus("Validator not found".into()))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
-    #[test]
-    fn test_transaction_hash() {
-        let tx = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 1234567890,
-            signature: None,
-        };
-        let hash = tx.hash();
-        assert!(!hash.is_empty());
-    }
-
-    #[test]
-    fn test_block_hash() {
-        let block = Block {
-            index: 1,
-            timestamp: 1234567890,
+    fn create_test_block(index: u64, previous_hash: &str) -> Block {
+        Block {
+            index,
+            timestamp: Utc::now().timestamp(),
             transactions: vec![],
-            previous_hash: "previous_hash".to_string(),
-            hash: String::new(),
-        };
-        let hash = block.hash();
-        assert!(!hash.is_empty());
+            previous_hash: previous_hash.to_string(),
+            hash: format!("test_hash_{}", index),
+        }
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
+
+    #[test]
+    fn test_poc_consensus_creation() {
+        let consensus = PoCConsensus::new(0.66, 0.51);
+        assert!(consensus.is_ok());
+    }
+
+    #[test]
+    fn test_add_and_remove_validator() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        assert!(consensus.add_validator("validator1".to_string(), 0.8).is_ok());
+        assert!(consensus.add_validator("validator2".to_string(), 0.7).is_ok());
+        assert!(consensus.remove_validator("validator1").is_ok());
+        assert_eq!(consensus.validators.len(), 1);
+    }
+
+    #[test]
+    fn test_process_new_block() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
+
+        let genesis_block = create_test_block(0, "0");
+        consensus.add_block_to_chain(genesis_block).unwrap();
+
+        let new_block = create_test_block(1, "test_hash_0");
+        assert!(consensus.process_new_block(new_block).is_ok());
+
+        let blockchain = consensus.get_blockchain().unwrap();
+        assert_eq!(blockchain.len(), 2);
+    }
+
+    #[test]
+    fn test_update_validator_reputation() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
+        assert_eq!(consensus.validators["validator1"].reputation, 0.9);
+    }
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/main.rs =====
 use serde::{Serialize, Deserialize};
@@ -1737,7 +1781,6 @@ impl PoCConsensus {
     }
 
     pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
-        // Implement block processing logic
         self.pending_blocks.push(block);
         self.try_reach_consensus()
     }
@@ -1746,13 +1789,13 @@ impl PoCConsensus {
         let total_reputation: f64 = self.validators.values().map(|v| v.reputation).sum();
         let quorum_reputation = total_reputation * self.quorum;
 
+        let mut blocks_to_retain = Vec::new();
+
         for block in &self.pending_blocks {
             let mut votes_for = 0.0;
             let mut total_votes = 0.0;
 
-            for (validator_id, validator) in &self.validators {
-                // In a real implementation, you would collect actual votes from validators
-                // Here, we're simulating voting based on the block's validity
+            for validator in self.validators.values() {
                 if self.validate_block(block)? {
                     votes_for += validator.reputation;
                 }
@@ -1760,25 +1803,21 @@ impl PoCConsensus {
 
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
-                        // Consensus reached, add the block to the blockchain
                         self.add_block_to_chain(block.clone())?;
-                        self.pending_blocks.retain(|b| b.hash != block.hash);
-                        return Ok(());
                     } else {
-                        // Block rejected
-                        self.pending_blocks.retain(|b| b.hash != block.hash);
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
             }
+            blocks_to_retain.push(block.clone());
         }
+
+        self.pending_blocks.retain(|b| blocks_to_retain.contains(b));
 
         Ok(())
     }
 
     fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        // Implement block validation logic
-        // This is a simplified version. In a real implementation, you would perform more checks
         if block.index == 0 {
             return Ok(true); // Genesis block is always valid
         }
@@ -1794,7 +1833,6 @@ impl PoCConsensus {
             return Ok(false);
         }
 
-        // Validate all transactions in the block
         for transaction in &block.transactions {
             if !self.validate_transaction(transaction)? {
                 return Ok(false);
@@ -1805,14 +1843,10 @@ impl PoCConsensus {
     }
 
     fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
-        // Implement transaction validation logic
-        // This is a simplified version. In a real implementation, you would perform more checks
         if transaction.amount <= 0.0 {
             return Ok(false);
         }
 
-        // Check if the sender has sufficient balance
-        // In a real implementation, you would check the actual balance
         Ok(true)
     }
 
@@ -1894,7 +1928,8 @@ mod tests {
         assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
         assert_eq!(consensus.validators["validator1"].reputation, 0.9);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs =====
 use icn_utils::{error::IcnError, IcnResult};
@@ -4839,11 +4874,14 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/identity_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
-use icn_common::{IcnResult, IcnError};
+// File: crates/icn_identity/src/lib.rs
+
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 
+#[derive(Clone)]
 pub struct DecentralizedIdentity {
     pub id: String,
     pub public_key: PublicKey,
@@ -4862,7 +4900,7 @@ impl IdentityManager {
     }
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let mut csprng = OsRng{};
+        let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let public_key = keypair.public;
 
@@ -4880,14 +4918,17 @@ impl IdentityManager {
     }
 
     pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
-        self.identities.get(id)
+        self.identities
+            .get(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))
     }
 
     pub fn update_attributes(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id)
+        let identity = self
+            .identities
+            .get_mut(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
-        
+
         identity.attributes.extend(attributes);
         Ok(())
     }
@@ -4911,13 +4952,15 @@ impl DecentralizedIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
+    use rand::rngs::OsRng;
 
     #[test]
     fn test_create_identity() {
         let mut manager = IdentityManager::new();
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        
+
         let identity = manager.create_identity(attributes).unwrap();
         assert!(identity.id.starts_with("did:icn:"));
         assert_eq!(identity.attributes.get("name"), Some(&"Alice".to_string()));
@@ -4928,7 +4971,7 @@ mod tests {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let retrieved_identity = manager.get_identity(&identity.id).unwrap();
         assert_eq!(retrieved_identity.id, identity.id);
     }
@@ -4938,14 +4981,14 @@ mod tests {
         let mut manager = IdentityManager::new();
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        
+
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let mut new_attributes = HashMap::new();
         new_attributes.insert("age".to_string(), "30".to_string());
-        
+
         manager.update_attributes(&identity.id, new_attributes).unwrap();
-        
+
         let updated_identity = manager.get_identity(&identity.id).unwrap();
         assert_eq!(updated_identity.attributes.get("name"), Some(&"Alice".to_string()));
         assert_eq!(updated_identity.attributes.get("age"), Some(&"30".to_string()));
@@ -4955,17 +4998,17 @@ mod tests {
     fn test_verify_signature() {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
-        
-        let mut csprng = OsRng{};
+
+        let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
-        
+
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let message = b"Hello, world!";
         let signature = identity.sign(&keypair, message);
-        
+
         assert!(manager.verify_signature(&identity.id, message, &signature).unwrap());
-        
+
         // Test with incorrect message
         let wrong_message = b"Wrong message";
         assert!(!manager.verify_signature(&identity.id, wrong_message, &signature).unwrap());
@@ -4975,14 +5018,15 @@ mod tests {
     fn test_list_identities() {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
-        
+
         manager.create_identity(attributes.clone()).unwrap();
         manager.create_identity(attributes.clone()).unwrap();
-        
+
         let identities = manager.list_identities();
         assert_eq!(identities.len(), 2);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_incentives/Cargo.toml =====
 [package]
@@ -5023,6 +5067,7 @@ nom = "7.1.0"
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+icn_common = { path = "../icn_common" }  # Add icn_common dependency
 icn_vm = { path = "../icn_vm" }
 
 [dev-dependencies]
@@ -5106,7 +5151,9 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/bytecode.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
-use icn_common::{Opcode, Value};
+// File: icn_language/src/lib.rs
+
+use icn_vm::{Opcode, Value};
 use nom::{
     IResult,
     branch::alt,
@@ -5119,18 +5166,18 @@ use nom::{
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
-    Net_Node_Connect { node1: String, node2: String },
-    Chain_Block_Create { transactions: Vec<String> },
-    Econ_Currency_Mint { amount: f64, currency_type: String },
-    Gov_Proposal_Submit { description: String },
-    Coop_Member_Add { coop_id: String, member_id: String },
-    Comm_Event_Organize { event_details: String },
-    Vote_On_Proposal { proposal_id: String, vote: bool },
-    Allocate_Resource { resource: String, amount: i64 },
-    Update_Reputation { address: String, change: i64 },
-    Create_Proposal { title: String, description: String },
-    Get_Proposal_Status { proposal_id: String },
-    Emit_Event { event_name: String, event_data: String },
+    NetNodeConnect { node1: String, node2: String },
+    ChainBlockCreate { transactions: Vec<String> },
+    EconCurrencyMint { amount: f64, currency_type: String },
+    GovProposalSubmit { description: String },
+    CoopMemberAdd { coop_id: String, member_id: String },
+    CommEventOrganize { event_details: String },
+    VoteOnProposal { proposal_id: String, vote: bool },
+    AllocateResource { resource: String, amount: i64 },
+    UpdateReputation { address: String, change: i64 },
+    CreateProposal { title: String, description: String },
+    GetProposalStatus { proposal_id: String },
+    EmitEvent { event_name: String, event_data: String },
 }
 
 fn parse_string(input: &str) -> IResult<&str, String> {
@@ -5190,7 +5237,7 @@ fn parse_net_node_connect(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, node1, _, _, _, node2, _, _)| Statement::Net_Node_Connect { node1, node2 }
+        |(_, _, _, _, node1, _, _, _, node2, _, _)| Statement::NetNodeConnect { node1, node2 }
     )(input)
 }
 
@@ -5205,7 +5252,7 @@ fn parse_chain_block_create(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, transactions, _, _)| Statement::Chain_Block_Create { transactions }
+        |(_, _, _, _, transactions, _, _)| Statement::ChainBlockCreate { transactions }
     )(input)
 }
 
@@ -5224,7 +5271,7 @@ fn parse_econ_currency_mint(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, amount, _, _, _, currency_type, _, _)| Statement::Econ_Currency_Mint { amount, currency_type }
+        |(_, _, _, _, amount, _, _, _, currency_type, _, _)| Statement::EconCurrencyMint { amount, currency_type }
     )(input)
 }
 
@@ -5239,7 +5286,7 @@ fn parse_gov_proposal_submit(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, description, _, _)| Statement::Gov_Proposal_Submit { description }
+        |(_, _, _, _, description, _, _)| Statement::GovProposalSubmit { description }
     )(input)
 }
 
@@ -5258,7 +5305,7 @@ fn parse_coop_member_add(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, coop_id, _, _, _, member_id, _, _)| Statement::Coop_Member_Add { coop_id, member_id }
+        |(_, _, _, _, coop_id, _, _, _, member_id, _, _)| Statement::CoopMemberAdd { coop_id, member_id }
     )(input)
 }
 
@@ -5273,7 +5320,7 @@ fn parse_comm_event_organize(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, event_details, _, _)| Statement::Comm_Event_Organize { event_details }
+        |(_, _, _, _, event_details, _, _)| Statement::CommEventOrganize { event_details }
     )(input)
 }
 
@@ -5292,7 +5339,7 @@ fn parse_vote_on_proposal(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, proposal_id, _, _, _, vote, _, _)| Statement::Vote_On_Proposal { proposal_id, vote }
+        |(_, _, _, _, proposal_id, _, _, _, vote, _, _)| Statement::VoteOnProposal { proposal_id, vote }
     )(input)
 }
 
@@ -5311,7 +5358,7 @@ fn parse_allocate_resource(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, resource, _, _, _, amount, _, _)| Statement::Allocate_Resource { resource, amount }
+        |(_, _, _, _, resource, _, _, _, amount, _, _)| Statement::AllocateResource { resource, amount }
     )(input)
 }
 
@@ -5330,7 +5377,7 @@ fn parse_update_reputation(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, address, _, _, _, change, _, _)| Statement::Update_Reputation { address, change }
+        |(_, _, _, _, address, _, _, _, change, _, _)| Statement::UpdateReputation { address, change }
     )(input)
 }
 
@@ -5349,7 +5396,7 @@ fn parse_create_proposal(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, title, _, _, _, description, _, _)| Statement::Create_Proposal { title, description }
+        |(_, _, _, _, title, _, _, _, description, _, _)| Statement::CreateProposal { title, description }
     )(input)
 }
 
@@ -5364,7 +5411,7 @@ fn parse_get_proposal_status(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, proposal_id, _, _)| Statement::Get_Proposal_Status { proposal_id }
+        |(_, _, _, _, proposal_id, _, _)| Statement::GetProposalStatus { proposal_id }
     )(input)
 }
 
@@ -5383,7 +5430,7 @@ fn parse_emit_event(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, event_name, _, _, _, event_data, _, _)| Statement::Emit_Event { event_name, event_data }
+        |(_, _, _, _, event_name, _, _, _, event_data, _, _)| Statement::EmitEvent { event_name, event_data }
     )(input)
 }
 
@@ -5429,64 +5476,64 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
 
     for statement in statements {
         match statement {
-            Statement::Net_Node_Connect { node1, node2 } => {
+            Statement::NetNodeConnect { node1, node2 } => {
                 bytecode.push(Opcode::Push(Value::String(node1.clone())));
                 bytecode.push(Opcode::Push(Value::String(node2.clone())));
                 bytecode.push(Opcode::NetNodeConnect);
             },
-            Statement::Chain_Block_Create { transactions } => {
+            Statement::ChainBlockCreate { transactions } => {
                 for tx in transactions {
                     bytecode.push(Opcode::Push(Value::String(tx.clone())));
                 }
                 bytecode.push(Opcode::Push(Value::Int(transactions.len() as i64)));
                 bytecode.push(Opcode::ChainBlockCreate);
             },
-            Statement::Econ_Currency_Mint { amount, currency_type } => {
+            Statement::EconCurrencyMint { amount, currency_type } => {
                 bytecode.push(Opcode::Push(Value::Float(*amount)));
                 bytecode.push(Opcode::Push(Value::String(currency_type.clone())));
                 bytecode.push(Opcode::EconCurrencyMint);
             },
-            Statement::Gov_Proposal_Submit { description } => {
+            Statement::GovProposalSubmit { description } => {
                 bytecode.push(Opcode::Push(Value::String(description.clone())));
                 bytecode.push(Opcode::GovProposalSubmit);
             },
-            Statement::Coop_Member_Add { coop_id, member_id } => {
+            Statement::CoopMemberAdd { coop_id, member_id } => {
                 bytecode.push(Opcode::Push(Value::String(coop_id.clone())));
                 bytecode.push(Opcode::Push(Value::String(member_id.clone())));
                 bytecode.push(Opcode::CoopMemberAdd);
             },
-            Statement::Comm_Event_Organize { event_details } => {
+            Statement::CommEventOrganize { event_details } => {
                 bytecode.push(Opcode::Push(Value::String(event_details.clone())));
                 bytecode.push(Opcode::CommEventOrganize);
             },
-            Statement::Vote_On_Proposal { proposal_id, vote } => {
+            Statement::VoteOnProposal { proposal_id, vote } => {
                 bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
                 bytecode.push(Opcode::Push(Value::Bool(*vote)));
                 bytecode.push(Opcode::VoteOnProposal);
             },
-            Statement::Allocate_Resource { resource, amount } => {
+            Statement::AllocateResource { resource, amount } => {
                 bytecode.push(Opcode::Push(Value::String(resource.clone())));
                 bytecode.push(Opcode::Push(Value::Int(*amount)));
                 bytecode.push(Opcode::AllocateResource);
             },
-            Statement::Update_Reputation { address, change } => {
+            Statement::UpdateReputation { address, change } => {
                 bytecode.push(Opcode::Push(Value::String(address.clone())));
                 bytecode.push(Opcode::Push(Value::Int(*change)));
                 bytecode.push(Opcode::UpdateReputation);
             },
-            Statement::Create_Proposal { title, description } => {
+            Statement::CreateProposal { title, description } => {
                 bytecode.push(Opcode::Push(Value::String(title.clone())));
                 bytecode.push(Opcode::Push(Value::String(description.clone())));
                 bytecode.push(Opcode::CreateProposal);
             },
-            Statement::Get_Proposal_Status { proposal_id } => {
+            Statement::GetProposalStatus { proposal_id } => {
                 bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
                 bytecode.push(Opcode::GetProposalStatus);
             },
-            Statement::Emit_Event { event_name, event_data } => {
+            Statement::EmitEvent { event_name, event_data } => {
                 bytecode.push(Opcode::Push(Value::String(event_name.clone())));
                 bytecode.push(Opcode::Push(Value::String(event_data.clone())));
-                bytecode.push(Opcode::EmitEvent(event_name.clone()));
+                bytecode.push(Opcode::EmitEvent);
             },
         }
     }
@@ -5504,7 +5551,7 @@ mod tests {
         let result = parse_net_node_connect(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Net_Node_Connect {
+        assert_eq!(statement, Statement::NetNodeConnect {
             node1: "node1".to_string(),
             node2: "node2".to_string(),
         });
@@ -5516,7 +5563,7 @@ mod tests {
         let result = parse_chain_block_create(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Chain_Block_Create {
+        assert_eq!(statement, Statement::ChainBlockCreate {
             transactions: vec!["tx1".to_string(), "tx2".to_string(), "tx3".to_string()],
         });
     }
@@ -5527,7 +5574,7 @@ mod tests {
         let result = parse_econ_currency_mint(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Econ_Currency_Mint {
+        assert_eq!(statement, Statement::EconCurrencyMint {
             amount: 100.5,
             currency_type: "BasicNeeds".to_string(),
         });
@@ -5539,7 +5586,7 @@ mod tests {
         let result = parse_gov_proposal_submit(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Gov_Proposal_Submit {
+        assert_eq!(statement, Statement::GovProposalSubmit {
             description: "Increase node count".to_string(),
         });
     }
@@ -5550,7 +5597,7 @@ mod tests {
         let result = parse_coop_member_add(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Coop_Member_Add {
+        assert_eq!(statement, Statement::CoopMemberAdd {
             coop_id: "coop1".to_string(),
             member_id: "member1".to_string(),
         });
@@ -5562,7 +5609,7 @@ mod tests {
         let result = parse_comm_event_organize(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Comm_Event_Organize {
+        assert_eq!(statement, Statement::CommEventOrganize {
             event_details: "Community meetup on Saturday".to_string(),
         });
     }
@@ -5573,7 +5620,7 @@ mod tests {
         let result = parse_vote_on_proposal(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Vote_On_Proposal {
+        assert_eq!(statement, Statement::VoteOnProposal {
             proposal_id: "proposal1".to_string(),
             vote: true,
         });
@@ -5583,9 +5630,9 @@ mod tests {
     fn test_parse_allocate_resource() {
         let input = r#"allocate-resource("computing_power", 100)"#;
         let result = parse_allocate_resource(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Allocate_Resource {
+        assert_eq!(statement, Statement::AllocateResource {
             resource: "computing_power".to_string(),
             amount: 100,
         });
@@ -5595,9 +5642,9 @@ mod tests {
     fn test_parse_update_reputation() {
         let input = r#"update-reputation("user1", 5)"#;
         let result = parse_update_reputation(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Update_Reputation {
+        assert_eq!(statement, Statement::UpdateReputation {
             address: "user1".to_string(),
             change: 5,
         });
@@ -5607,9 +5654,9 @@ mod tests {
     fn test_parse_create_proposal() {
         let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
         let result = parse_create_proposal(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Create_Proposal {
+        assert_eq!(statement, Statement::CreateProposal {
             title: "New Policy".to_string(),
             description: "Implement resource sharing".to_string(),
         });
@@ -5619,9 +5666,9 @@ mod tests {
     fn test_parse_get_proposal_status() {
         let input = r#"get-proposal-status("proposal1")"#;
         let result = parse_get_proposal_status(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Get_Proposal_Status {
+        assert_eq!(statement, Statement::GetProposalStatus {
             proposal_id: "proposal1".to_string(),
         });
     }
@@ -5630,9 +5677,9 @@ mod tests {
     fn test_parse_emit_event() {
         let input = r#"emit-event("NewMember", "Alice joined the network")"#;
         let result = parse_emit_event(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Emit_Event {
+        assert_eq!(statement, Statement::EmitEvent {
             event_name: "NewMember".to_string(),
             event_data: "Alice joined the network".to_string(),
         });
@@ -5654,20 +5701,20 @@ mod tests {
             emit-event("NetworkUpdate", "New node added")
         "#;
         let result = compile(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 11);
-        assert!(matches!(statements[0], Statement::Net_Node_Connect { .. }));
-        assert!(matches!(statements[1], Statement::Econ_Currency_Mint { .. }));
-        assert!(matches!(statements[2], Statement::Gov_Proposal_Submit { .. }));
-        assert!(matches!(statements[3], Statement::Coop_Member_Add { .. }));
-        assert!(matches!(statements[4], Statement::Comm_Event_Organize { .. }));
-        assert!(matches!(statements[5], Statement::Vote_On_Proposal { .. }));
-        assert!(matches!(statements[6], Statement::Allocate_Resource { .. }));
-        assert!(matches!(statements[7], Statement::Update_Reputation { .. }));
-        assert!(matches!(statements[8], Statement::Create_Proposal { .. }));
-        assert!(matches!(statements[9], Statement::Get_Proposal_Status { .. }));
-        assert!(matches!(statements[10], Statement::Emit_Event { .. }));
+        assert!(matches!(statements[0], Statement::NetNodeConnect { .. }));
+        assert!(matches!(statements[1], Statement::EconCurrencyMint { .. }));
+        assert!(matches!(statements[2], Statement::GovProposalSubmit { .. }));
+        assert!(matches!(statements[3], Statement::CoopMemberAdd { .. }));
+        assert!(matches!(statements[4], Statement::CommEventOrganize { .. }));
+        assert!(matches!(statements[5], Statement::VoteOnProposal { .. }));
+        assert!(matches!(statements[6], Statement::AllocateResource { .. }));
+        assert!(matches!(statements[7], Statement::UpdateReputation { .. }));
+        assert!(matches!(statements[8], Statement::CreateProposal { .. }));
+        assert!(matches!(statements[9], Statement::GetProposalStatus { .. }));
+        assert!(matches!(statements[10], Statement::EmitEvent { .. }));
     }
 
     #[test]
@@ -5680,7 +5727,7 @@ mod tests {
             
         "#;
         let result = compile(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 3);
     }
@@ -5699,11 +5746,11 @@ mod tests {
     #[test]
     fn test_generate_bytecode() {
         let statements = vec![
-            Statement::Net_Node_Connect {
+            Statement::NetNodeConnect {
                 node1: "node1".to_string(),
                 node2: "node2".to_string(),
             },
-            Statement::Econ_Currency_Mint {
+            Statement::EconCurrencyMint {
                 amount: 100.0,
                 currency_type: "BasicNeeds".to_string(),
             },
@@ -5718,7 +5765,8 @@ mod tests {
         assert!(matches!(bytecode[3], Opcode::Push(Value::Float(_))));
         assert!(matches!(bytecode[4], Opcode::Push(Value::String(_))));
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_language/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/Cargo.toml =====
 [package]
@@ -8175,6 +8223,7 @@ impl ShardingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_shard_assignment() {
@@ -8357,7 +8406,8 @@ mod tests {
             hash: "0".to_string(),
         }).is_err());
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
 # File: /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml
@@ -10353,9 +10403,9 @@ impl CoopVM {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 // File: crates/icn_vm/src/lib.rs
 
-use icn_common::{IcnResult, IcnError};
-use std::collections::HashMap;
+use icn_common::{IcnError, IcnResult};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -10403,6 +10453,18 @@ pub enum Opcode {
     Jump(usize),
     Call(String),
     Return,
+    NetNodeConnect,
+    ChainBlockCreate,
+    EconCurrencyMint,
+    GovProposalSubmit,
+    CoopMemberAdd,
+    CommEventOrganize,
+    VoteOnProposal,
+    AllocateResource,
+    UpdateReputation,
+    CreateProposal,
+    GetProposalStatus,
+    EmitEvent,
 }
 
 pub struct CoopVM {
@@ -10434,7 +10496,9 @@ impl CoopVM {
         let instruction = self.program[self.pc].clone();
         match instruction {
             Opcode::Push(value) => self.stack.push(value),
-            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?; },
+            Opcode::Pop => {
+                self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+            }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
             Opcode::Mul => self.binary_op(|a, b| a * b)?,
@@ -10450,35 +10514,95 @@ impl CoopVM {
                 let b = self.pop_bool()?;
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(a && b));
-            },
+            }
             Opcode::Or => {
                 let b = self.pop_bool()?;
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(a || b));
-            },
+            }
             Opcode::Not => {
                 let a = self.pop_bool()?;
                 self.stack.push(Value::Bool(!a));
-            },
+            }
             Opcode::Store(name) => {
                 let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
                 self.memory.insert(name, value);
-            },
+            }
             Opcode::Load(name) => {
                 let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
                 self.stack.push(value);
-            },
+            }
             Opcode::JumpIf(target) => {
                 let condition = self.pop_bool()?;
                 if condition {
                     self.pc = target - 1; // -1 because pc will be incremented after this
                 }
-            },
+            }
             Opcode::Jump(target) => {
                 self.pc = target - 1; // -1 because pc will be incremented after this
-            },
+            }
             Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
             Opcode::Return => return Ok(()),
+            Opcode::NetNodeConnect => {
+                // Implement the logic for NetNodeConnect
+                // This is a placeholder implementation
+                println!("Executing NetNodeConnect");
+            }
+            Opcode::ChainBlockCreate => {
+                // Implement the logic for ChainBlockCreate
+                // This is a placeholder implementation
+                println!("Executing ChainBlockCreate");
+            }
+            Opcode::EconCurrencyMint => {
+                // Implement the logic for EconCurrencyMint
+                // This is a placeholder implementation
+                println!("Executing EconCurrencyMint");
+            }
+            Opcode::GovProposalSubmit => {
+                // Implement the logic for GovProposalSubmit
+                // This is a placeholder implementation
+                println!("Executing GovProposalSubmit");
+            }
+            Opcode::CoopMemberAdd => {
+                // Implement the logic for CoopMemberAdd
+                // This is a placeholder implementation
+                println!("Executing CoopMemberAdd");
+            }
+            Opcode::CommEventOrganize => {
+                // Implement the logic for CommEventOrganize
+                // This is a placeholder implementation
+                println!("Executing CommEventOrganize");
+            }
+            Opcode::VoteOnProposal => {
+                // Implement the logic for VoteOnProposal
+                // This is a placeholder implementation
+                println!("Executing VoteOnProposal");
+            }
+            Opcode::AllocateResource => {
+                // Implement the logic for AllocateResource
+                // This is a placeholder implementation
+                println!("Executing AllocateResource");
+            }
+            Opcode::UpdateReputation => {
+                // Implement the logic for UpdateReputation
+                // This is a placeholder implementation
+                println!("Executing UpdateReputation");
+            }
+            Opcode::CreateProposal => {
+                // Implement the logic for CreateProposal
+                // This is a placeholder implementation
+                println!("Executing CreateProposal");
+            }
+            Opcode::GetProposalStatus => {
+                // Implement the logic for GetProposalStatus
+                // This is a placeholder implementation
+                println!("Executing GetProposalStatus");
+            }
+            Opcode::EmitEvent => {
+                // Implement the logic for EmitEvent
+                // This is a placeholder implementation
+                println!("Executing EmitEvent");
+            }
         }
         Ok(())
     }
@@ -10651,7 +10775,8 @@ mod tests {
         // Sum of numbers from 1 to 10 is 55
         assert_eq!(vm.stack, vec![Value::Float(55.0)]);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/opcode.rs =====
 #[derive(Debug, Clone, PartialEq, PartialOrd)] // Add PartialOrd here

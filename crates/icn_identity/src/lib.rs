@@ -1,8 +1,11 @@
-use icn_common::{IcnResult, IcnError};
+// File: crates/icn_identity/src/lib.rs
+
+use icn_common::{IcnError, IcnResult};
 use std::collections::HashMap;
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
 use rand::rngs::OsRng;
 
+#[derive(Clone)]
 pub struct DecentralizedIdentity {
     pub id: String,
     pub public_key: PublicKey,
@@ -21,7 +24,7 @@ impl IdentityManager {
     }
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let mut csprng = OsRng{};
+        let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let public_key = keypair.public;
 
@@ -39,14 +42,17 @@ impl IdentityManager {
     }
 
     pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
-        self.identities.get(id)
+        self.identities
+            .get(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))
     }
 
     pub fn update_attributes(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        let identity = self.identities.get_mut(id)
+        let identity = self
+            .identities
+            .get_mut(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
-        
+
         identity.attributes.extend(attributes);
         Ok(())
     }
@@ -70,13 +76,15 @@ impl DecentralizedIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
+    use rand::rngs::OsRng;
 
     #[test]
     fn test_create_identity() {
         let mut manager = IdentityManager::new();
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        
+
         let identity = manager.create_identity(attributes).unwrap();
         assert!(identity.id.starts_with("did:icn:"));
         assert_eq!(identity.attributes.get("name"), Some(&"Alice".to_string()));
@@ -87,7 +95,7 @@ mod tests {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let retrieved_identity = manager.get_identity(&identity.id).unwrap();
         assert_eq!(retrieved_identity.id, identity.id);
     }
@@ -97,14 +105,14 @@ mod tests {
         let mut manager = IdentityManager::new();
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        
+
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let mut new_attributes = HashMap::new();
         new_attributes.insert("age".to_string(), "30".to_string());
-        
+
         manager.update_attributes(&identity.id, new_attributes).unwrap();
-        
+
         let updated_identity = manager.get_identity(&identity.id).unwrap();
         assert_eq!(updated_identity.attributes.get("name"), Some(&"Alice".to_string()));
         assert_eq!(updated_identity.attributes.get("age"), Some(&"30".to_string()));
@@ -114,17 +122,17 @@ mod tests {
     fn test_verify_signature() {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
-        
-        let mut csprng = OsRng{};
+
+        let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
-        
+
         let identity = manager.create_identity(attributes).unwrap();
-        
+
         let message = b"Hello, world!";
         let signature = identity.sign(&keypair, message);
-        
+
         assert!(manager.verify_signature(&identity.id, message, &signature).unwrap());
-        
+
         // Test with incorrect message
         let wrong_message = b"Wrong message";
         assert!(!manager.verify_signature(&identity.id, wrong_message, &signature).unwrap());
@@ -134,10 +142,10 @@ mod tests {
     fn test_list_identities() {
         let mut manager = IdentityManager::new();
         let attributes = HashMap::new();
-        
+
         manager.create_identity(attributes.clone()).unwrap();
         manager.create_identity(attributes.clone()).unwrap();
-        
+
         let identities = manager.list_identities();
         assert_eq!(identities.len(), 2);
     }

@@ -260,6 +260,7 @@ impl ShardingManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_shard_assignment() {

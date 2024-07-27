@@ -1,4 +1,6 @@
-use icn_common::{Opcode, Value};
+// File: icn_language/src/lib.rs
+
+use icn_vm::{Opcode, Value};
 use nom::{
     IResult,
     branch::alt,
@@ -11,18 +13,18 @@ use nom::{
 
 #[derive(Debug, PartialEq)]
 pub enum Statement {
-    Net_Node_Connect { node1: String, node2: String },
-    Chain_Block_Create { transactions: Vec<String> },
-    Econ_Currency_Mint { amount: f64, currency_type: String },
-    Gov_Proposal_Submit { description: String },
-    Coop_Member_Add { coop_id: String, member_id: String },
-    Comm_Event_Organize { event_details: String },
-    Vote_On_Proposal { proposal_id: String, vote: bool },
-    Allocate_Resource { resource: String, amount: i64 },
-    Update_Reputation { address: String, change: i64 },
-    Create_Proposal { title: String, description: String },
-    Get_Proposal_Status { proposal_id: String },
-    Emit_Event { event_name: String, event_data: String },
+    NetNodeConnect { node1: String, node2: String },
+    ChainBlockCreate { transactions: Vec<String> },
+    EconCurrencyMint { amount: f64, currency_type: String },
+    GovProposalSubmit { description: String },
+    CoopMemberAdd { coop_id: String, member_id: String },
+    CommEventOrganize { event_details: String },
+    VoteOnProposal { proposal_id: String, vote: bool },
+    AllocateResource { resource: String, amount: i64 },
+    UpdateReputation { address: String, change: i64 },
+    CreateProposal { title: String, description: String },
+    GetProposalStatus { proposal_id: String },
+    EmitEvent { event_name: String, event_data: String },
 }
 
 fn parse_string(input: &str) -> IResult<&str, String> {
@@ -82,7 +84,7 @@ fn parse_net_node_connect(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, node1, _, _, _, node2, _, _)| Statement::Net_Node_Connect { node1, node2 }
+        |(_, _, _, _, node1, _, _, _, node2, _, _)| Statement::NetNodeConnect { node1, node2 }
     )(input)
 }
 
@@ -97,7 +99,7 @@ fn parse_chain_block_create(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, transactions, _, _)| Statement::Chain_Block_Create { transactions }
+        |(_, _, _, _, transactions, _, _)| Statement::ChainBlockCreate { transactions }
     )(input)
 }
 
@@ -116,7 +118,7 @@ fn parse_econ_currency_mint(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, amount, _, _, _, currency_type, _, _)| Statement::Econ_Currency_Mint { amount, currency_type }
+        |(_, _, _, _, amount, _, _, _, currency_type, _, _)| Statement::EconCurrencyMint { amount, currency_type }
     )(input)
 }
 
@@ -131,7 +133,7 @@ fn parse_gov_proposal_submit(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, description, _, _)| Statement::Gov_Proposal_Submit { description }
+        |(_, _, _, _, description, _, _)| Statement::GovProposalSubmit { description }
     )(input)
 }
 
@@ -150,7 +152,7 @@ fn parse_coop_member_add(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, coop_id, _, _, _, member_id, _, _)| Statement::Coop_Member_Add { coop_id, member_id }
+        |(_, _, _, _, coop_id, _, _, _, member_id, _, _)| Statement::CoopMemberAdd { coop_id, member_id }
     )(input)
 }
 
@@ -165,7 +167,7 @@ fn parse_comm_event_organize(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, event_details, _, _)| Statement::Comm_Event_Organize { event_details }
+        |(_, _, _, _, event_details, _, _)| Statement::CommEventOrganize { event_details }
     )(input)
 }
 
@@ -184,7 +186,7 @@ fn parse_vote_on_proposal(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, proposal_id, _, _, _, vote, _, _)| Statement::Vote_On_Proposal { proposal_id, vote }
+        |(_, _, _, _, proposal_id, _, _, _, vote, _, _)| Statement::VoteOnProposal { proposal_id, vote }
     )(input)
 }
 
@@ -203,7 +205,7 @@ fn parse_allocate_resource(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, resource, _, _, _, amount, _, _)| Statement::Allocate_Resource { resource, amount }
+        |(_, _, _, _, resource, _, _, _, amount, _, _)| Statement::AllocateResource { resource, amount }
     )(input)
 }
 
@@ -222,7 +224,7 @@ fn parse_update_reputation(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, address, _, _, _, change, _, _)| Statement::Update_Reputation { address, change }
+        |(_, _, _, _, address, _, _, _, change, _, _)| Statement::UpdateReputation { address, change }
     )(input)
 }
 
@@ -241,7 +243,7 @@ fn parse_create_proposal(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, title, _, _, _, description, _, _)| Statement::Create_Proposal { title, description }
+        |(_, _, _, _, title, _, _, _, description, _, _)| Statement::CreateProposal { title, description }
     )(input)
 }
 
@@ -256,7 +258,7 @@ fn parse_get_proposal_status(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, proposal_id, _, _)| Statement::Get_Proposal_Status { proposal_id }
+        |(_, _, _, _, proposal_id, _, _)| Statement::GetProposalStatus { proposal_id }
     )(input)
 }
 
@@ -275,7 +277,7 @@ fn parse_emit_event(input: &str) -> IResult<&str, Statement> {
             multispace0,
             char(')')
         )),
-        |(_, _, _, _, event_name, _, _, _, event_data, _, _)| Statement::Emit_Event { event_name, event_data }
+        |(_, _, _, _, event_name, _, _, _, event_data, _, _)| Statement::EmitEvent { event_name, event_data }
     )(input)
 }
 
@@ -321,64 +323,64 @@ pub fn generate_bytecode(statements: &[Statement]) -> Vec<Opcode> {
 
     for statement in statements {
         match statement {
-            Statement::Net_Node_Connect { node1, node2 } => {
+            Statement::NetNodeConnect { node1, node2 } => {
                 bytecode.push(Opcode::Push(Value::String(node1.clone())));
                 bytecode.push(Opcode::Push(Value::String(node2.clone())));
                 bytecode.push(Opcode::NetNodeConnect);
             },
-            Statement::Chain_Block_Create { transactions } => {
+            Statement::ChainBlockCreate { transactions } => {
                 for tx in transactions {
                     bytecode.push(Opcode::Push(Value::String(tx.clone())));
                 }
                 bytecode.push(Opcode::Push(Value::Int(transactions.len() as i64)));
                 bytecode.push(Opcode::ChainBlockCreate);
             },
-            Statement::Econ_Currency_Mint { amount, currency_type } => {
+            Statement::EconCurrencyMint { amount, currency_type } => {
                 bytecode.push(Opcode::Push(Value::Float(*amount)));
                 bytecode.push(Opcode::Push(Value::String(currency_type.clone())));
                 bytecode.push(Opcode::EconCurrencyMint);
             },
-            Statement::Gov_Proposal_Submit { description } => {
+            Statement::GovProposalSubmit { description } => {
                 bytecode.push(Opcode::Push(Value::String(description.clone())));
                 bytecode.push(Opcode::GovProposalSubmit);
             },
-            Statement::Coop_Member_Add { coop_id, member_id } => {
+            Statement::CoopMemberAdd { coop_id, member_id } => {
                 bytecode.push(Opcode::Push(Value::String(coop_id.clone())));
                 bytecode.push(Opcode::Push(Value::String(member_id.clone())));
                 bytecode.push(Opcode::CoopMemberAdd);
             },
-            Statement::Comm_Event_Organize { event_details } => {
+            Statement::CommEventOrganize { event_details } => {
                 bytecode.push(Opcode::Push(Value::String(event_details.clone())));
                 bytecode.push(Opcode::CommEventOrganize);
             },
-            Statement::Vote_On_Proposal { proposal_id, vote } => {
+            Statement::VoteOnProposal { proposal_id, vote } => {
                 bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
                 bytecode.push(Opcode::Push(Value::Bool(*vote)));
                 bytecode.push(Opcode::VoteOnProposal);
             },
-            Statement::Allocate_Resource { resource, amount } => {
+            Statement::AllocateResource { resource, amount } => {
                 bytecode.push(Opcode::Push(Value::String(resource.clone())));
                 bytecode.push(Opcode::Push(Value::Int(*amount)));
                 bytecode.push(Opcode::AllocateResource);
             },
-            Statement::Update_Reputation { address, change } => {
+            Statement::UpdateReputation { address, change } => {
                 bytecode.push(Opcode::Push(Value::String(address.clone())));
                 bytecode.push(Opcode::Push(Value::Int(*change)));
                 bytecode.push(Opcode::UpdateReputation);
             },
-            Statement::Create_Proposal { title, description } => {
+            Statement::CreateProposal { title, description } => {
                 bytecode.push(Opcode::Push(Value::String(title.clone())));
                 bytecode.push(Opcode::Push(Value::String(description.clone())));
                 bytecode.push(Opcode::CreateProposal);
             },
-            Statement::Get_Proposal_Status { proposal_id } => {
+            Statement::GetProposalStatus { proposal_id } => {
                 bytecode.push(Opcode::Push(Value::String(proposal_id.clone())));
                 bytecode.push(Opcode::GetProposalStatus);
             },
-            Statement::Emit_Event { event_name, event_data } => {
+            Statement::EmitEvent { event_name, event_data } => {
                 bytecode.push(Opcode::Push(Value::String(event_name.clone())));
                 bytecode.push(Opcode::Push(Value::String(event_data.clone())));
-                bytecode.push(Opcode::EmitEvent(event_name.clone()));
+                bytecode.push(Opcode::EmitEvent);
             },
         }
     }
@@ -396,7 +398,7 @@ mod tests {
         let result = parse_net_node_connect(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Net_Node_Connect {
+        assert_eq!(statement, Statement::NetNodeConnect {
             node1: "node1".to_string(),
             node2: "node2".to_string(),
         });
@@ -408,7 +410,7 @@ mod tests {
         let result = parse_chain_block_create(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Chain_Block_Create {
+        assert_eq!(statement, Statement::ChainBlockCreate {
             transactions: vec!["tx1".to_string(), "tx2".to_string(), "tx3".to_string()],
         });
     }
@@ -419,7 +421,7 @@ mod tests {
         let result = parse_econ_currency_mint(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Econ_Currency_Mint {
+        assert_eq!(statement, Statement::EconCurrencyMint {
             amount: 100.5,
             currency_type: "BasicNeeds".to_string(),
         });
@@ -431,7 +433,7 @@ mod tests {
         let result = parse_gov_proposal_submit(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Gov_Proposal_Submit {
+        assert_eq!(statement, Statement::GovProposalSubmit {
             description: "Increase node count".to_string(),
         });
     }
@@ -442,7 +444,7 @@ mod tests {
         let result = parse_coop_member_add(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Coop_Member_Add {
+        assert_eq!(statement, Statement::CoopMemberAdd {
             coop_id: "coop1".to_string(),
             member_id: "member1".to_string(),
         });
@@ -454,7 +456,7 @@ mod tests {
         let result = parse_comm_event_organize(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Comm_Event_Organize {
+        assert_eq!(statement, Statement::CommEventOrganize {
             event_details: "Community meetup on Saturday".to_string(),
         });
     }
@@ -465,7 +467,7 @@ mod tests {
         let result = parse_vote_on_proposal(input);
         assert!(result.is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Vote_On_Proposal {
+        assert_eq!(statement, Statement::VoteOnProposal {
             proposal_id: "proposal1".to_string(),
             vote: true,
         });
@@ -475,9 +477,9 @@ mod tests {
     fn test_parse_allocate_resource() {
         let input = r#"allocate-resource("computing_power", 100)"#;
         let result = parse_allocate_resource(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Allocate_Resource {
+        assert_eq!(statement, Statement::AllocateResource {
             resource: "computing_power".to_string(),
             amount: 100,
         });
@@ -487,9 +489,9 @@ mod tests {
     fn test_parse_update_reputation() {
         let input = r#"update-reputation("user1", 5)"#;
         let result = parse_update_reputation(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Update_Reputation {
+        assert_eq!(statement, Statement::UpdateReputation {
             address: "user1".to_string(),
             change: 5,
         });
@@ -499,9 +501,9 @@ mod tests {
     fn test_parse_create_proposal() {
         let input = r#"create-proposal("New Policy", "Implement resource sharing")"#;
         let result = parse_create_proposal(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Create_Proposal {
+        assert_eq!(statement, Statement::CreateProposal {
             title: "New Policy".to_string(),
             description: "Implement resource sharing".to_string(),
         });
@@ -511,9 +513,9 @@ mod tests {
     fn test_parse_get_proposal_status() {
         let input = r#"get-proposal-status("proposal1")"#;
         let result = parse_get_proposal_status(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Get_Proposal_Status {
+        assert_eq!(statement, Statement::GetProposalStatus {
             proposal_id: "proposal1".to_string(),
         });
     }
@@ -522,9 +524,9 @@ mod tests {
     fn test_parse_emit_event() {
         let input = r#"emit-event("NewMember", "Alice joined the network")"#;
         let result = parse_emit_event(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let (_, statement) = result.unwrap();
-        assert_eq!(statement, Statement::Emit_Event {
+        assert_eq!(statement, Statement::EmitEvent {
             event_name: "NewMember".to_string(),
             event_data: "Alice joined the network".to_string(),
         });
@@ -546,20 +548,20 @@ mod tests {
             emit-event("NetworkUpdate", "New node added")
         "#;
         let result = compile(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 11);
-        assert!(matches!(statements[0], Statement::Net_Node_Connect { .. }));
-        assert!(matches!(statements[1], Statement::Econ_Currency_Mint { .. }));
-        assert!(matches!(statements[2], Statement::Gov_Proposal_Submit { .. }));
-        assert!(matches!(statements[3], Statement::Coop_Member_Add { .. }));
-        assert!(matches!(statements[4], Statement::Comm_Event_Organize { .. }));
-        assert!(matches!(statements[5], Statement::Vote_On_Proposal { .. }));
-        assert!(matches!(statements[6], Statement::Allocate_Resource { .. }));
-        assert!(matches!(statements[7], Statement::Update_Reputation { .. }));
-        assert!(matches!(statements[8], Statement::Create_Proposal { .. }));
-        assert!(matches!(statements[9], Statement::Get_Proposal_Status { .. }));
-        assert!(matches!(statements[10], Statement::Emit_Event { .. }));
+        assert!(matches!(statements[0], Statement::NetNodeConnect { .. }));
+        assert!(matches!(statements[1], Statement::EconCurrencyMint { .. }));
+        assert!(matches!(statements[2], Statement::GovProposalSubmit { .. }));
+        assert!(matches!(statements[3], Statement::CoopMemberAdd { .. }));
+        assert!(matches!(statements[4], Statement::CommEventOrganize { .. }));
+        assert!(matches!(statements[5], Statement::VoteOnProposal { .. }));
+        assert!(matches!(statements[6], Statement::AllocateResource { .. }));
+        assert!(matches!(statements[7], Statement::UpdateReputation { .. }));
+        assert!(matches!(statements[8], Statement::CreateProposal { .. }));
+        assert!(matches!(statements[9], Statement::GetProposalStatus { .. }));
+        assert!(matches!(statements[10], Statement::EmitEvent { .. }));
     }
 
     #[test]
@@ -572,7 +574,7 @@ mod tests {
             
         "#;
         let result = compile(input);
-        assert!(result.is_ok());
+        assert!(result is_ok());
         let statements = result.unwrap();
         assert_eq!(statements.len(), 3);
     }
@@ -591,11 +593,11 @@ mod tests {
     #[test]
     fn test_generate_bytecode() {
         let statements = vec![
-            Statement::Net_Node_Connect {
+            Statement::NetNodeConnect {
                 node1: "node1".to_string(),
                 node2: "node2".to_string(),
             },
-            Statement::Econ_Currency_Mint {
+            Statement::EconCurrencyMint {
                 amount: 100.0,
                 currency_type: "BasicNeeds".to_string(),
             },

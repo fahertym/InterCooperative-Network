@@ -10,6 +10,7 @@ nom = "7.1.0"
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+icn_common = { path = "../icn_common" }  # Add icn_common dependency
 icn_vm = { path = "../icn_vm" }
 
 [dev-dependencies]
