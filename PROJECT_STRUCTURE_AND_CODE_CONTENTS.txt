@@ -1,5 +1,6 @@
 ===== START OF FILE STRUCTURE =====
 /home/matt/InterCooperative-Network
+├── build_and_run_demo.sh
 ├── Cargo.lock
 ├── Cargo.toml
 ├── CHANGELOG.md
@@ -188,7 +189,7 @@
 ├── README.md
 └── update_project.sh
 
-56 directories, 132 files
+56 directories, 133 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -629,9 +630,10 @@ impl Blockchain {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-use icn_common::{Block, Transaction, IcnResult, IcnError};
+// File: /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs
+
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use chrono::Utc;
-use sha2::{Sha256, Digest};
 
 pub struct Blockchain {
     pub chain: Vec<Block>,
@@ -671,24 +673,9 @@ impl Blockchain {
             hash: String::new(),
         };
 
-        new_block.hash = self.calculate_hash(&new_block);
+        new_block.hash = new_block.hash();
         self.chain.push(new_block.clone());
         Ok(new_block)
-    }
-
-    fn calculate_hash(&self, block: &Block) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(block.index.to_string());
-        hasher.update(&block.timestamp.to_string());
-        for transaction in &block.transactions {
-            hasher.update(&transaction.from);
-            hasher.update(&transaction.to);
-            hasher.update(&transaction.amount.to_string());
-            hasher.update(&transaction.currency_type.to_string());
-            hasher.update(&transaction.timestamp.to_string());
-        }
-        hasher.update(&block.previous_hash);
-        format!("{:x}", hasher.finalize())
     }
 
     pub fn validate_chain(&self) -> bool {
@@ -700,11 +687,31 @@ impl Blockchain {
                 return false;
             }
 
-            if current_block.hash != self.calculate_hash(current_block) {
+            if current_block.hash != current_block.hash() {
                 return false;
             }
         }
         true
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.chain.last()
+    }
+
+    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
+        self.chain.get(index as usize)
+    }
+
+    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
+        self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    pub fn get_pending_transactions(&self) -> &[Transaction] {
+        &self.pending_transactions
+    }
+
+    pub fn clear_pending_transactions(&mut self) {
+        self.pending_transactions.clear();
     }
 }
 
@@ -774,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_hash() {
+    fn test_get_block_methods() {
         let mut blockchain = Blockchain::new();
         let transaction = Transaction {
             from: "Alice".to_string(),
@@ -788,8 +795,10 @@ mod tests {
         blockchain.add_transaction(transaction).unwrap();
         let new_block = blockchain.create_block().unwrap();
 
-        let calculated_hash = blockchain.calculate_hash(&new_block);
-        assert_eq!(new_block.hash, calculated_hash);
+        assert_eq!(blockchain.get_latest_block().unwrap().index, 1);
+        assert_eq!(blockchain.get_block_by_index(1).unwrap().hash, new_block.hash);
+        assert!(blockchain.get_block_by_hash(&new_block.hash).is_some());
+        assert!(blockchain.get_block_by_hash("nonexistent_hash").is_none());
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
@@ -1155,9 +1164,10 @@ pub type IcnResult<T> = std::result::Result<T, IcnError>;
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_common/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/src/lib.rs =====
+// File: crates/icn_common/src/lib.rs
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -1242,6 +1252,8 @@ pub enum IcnError {
     SmartContract(String),
     #[error("ZKP error: {0}")]
     ZKP(String),
+    #[error("VM error: {0}")]
+    VM(String),
 }
 
 pub type IcnResult<T> = std::result::Result<T, IcnError>;
@@ -2161,13 +2173,16 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
+// File: /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs
+
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
 use icn_governance::GovernanceSystem;
 use icn_identity::IdentityManager;
-use icn_common::{IcnResult, IcnError, Transaction, Proposal, Block, CurrencyType};
-use std::sync::{Arc, RwLock};
+use icn_common::{IcnResult, IcnError, Transaction, Proposal, Block, CurrencyType, ProposalStatus};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct IcnNode {
     blockchain: Arc<RwLock<Blockchain>>,
@@ -2178,9 +2193,9 @@ pub struct IcnNode {
 }
 
 impl IcnNode {
-    pub fn new() -> IcnResult<Self> {
+    pub async fn new() -> IcnResult<Self> {
         Ok(IcnNode {
-            blockchain: Arc::new(RwLock::new(Blockchain::new()?)),
+            blockchain: Arc::new(RwLock::new(Blockchain::new())),
             consensus: Arc::new(RwLock::new(PoCConsensus::new(0.66, 0.51)?)),
             currency_system: Arc::new(RwLock::new(CurrencySystem::new())),
             governance: Arc::new(RwLock::new(GovernanceSystem::new())),
@@ -2188,53 +2203,127 @@ impl IcnNode {
         })
     }
 
-    pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
+    pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         // Verify transaction
-        self.verify_transaction(&transaction)?;
+        self.verify_transaction(&transaction).await?;
 
         // Process transaction in currency system
-        self.currency_system.write().unwrap().process_transaction(&transaction)?;
+        self.currency_system.write().await.process_transaction(&transaction)?;
 
         // Add transaction to blockchain
-        self.blockchain.write().unwrap().add_transaction(transaction)?;
+        self.blockchain.write().await.add_transaction(transaction)?;
 
         Ok(())
     }
 
-    pub fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
-        self.identity_manager.write().unwrap().create_identity(attributes)
+    pub async fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<icn_identity::DecentralizedIdentity> {
+        self.identity_manager.write().await.create_identity(attributes)
     }
 
-    pub fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        self.governance.write().unwrap().create_proposal(proposal)
+    pub async fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
+        self.governance.write().await.create_proposal(proposal)
     }
 
-    pub fn vote_on_proposal(&self, proposal_id: &str, voter: String, in_favor: bool) -> IcnResult<()> {
-        self.governance.write().unwrap().vote_on_proposal(proposal_id, voter, in_favor)
+    pub async fn vote_on_proposal(&self, proposal_id: &str, voter: String, in_favor: bool) -> IcnResult<()> {
+        self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor)
     }
 
-    pub fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<icn_common::ProposalStatus> {
-        self.governance.write().unwrap().finalize_proposal(proposal_id)
+    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        self.governance.write().await.finalize_proposal(proposal_id)
     }
 
-    pub fn get_balance(&self, account_id: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        self.currency_system.read().unwrap().get_balance(account_id, currency_type)
+    pub async fn get_balance(&self, account_id: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currency_system.read().await.get_balance(account_id, currency_type)
     }
 
-    pub fn create_block(&self) -> IcnResult<Block> {
-        let block = self.blockchain.write().unwrap().create_block()?;
-        self.consensus.read().unwrap().validate_block(&block)?;
+    pub async fn create_block(&self) -> IcnResult<Block> {
+        let mut blockchain = self.blockchain.write().await;
+        let block = blockchain.create_block()?;
+        
+        // Validate the block using the consensus mechanism
+        self.consensus.read().await.validate_block(&block)?;
+        
         Ok(block)
     }
 
-    fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
-        // In a real implementation, you would verify the transaction signature here
-        // For now, we'll just check if the sender has sufficient balance
-        let balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+    async fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
+        // Check if the sender has sufficient balance
+        let balance = self.get_balance(&transaction.from, &transaction.currency_type).await?;
         if balance < transaction.amount {
             return Err(IcnError::Currency("Insufficient balance".into()));
         }
+
+        // TODO: Implement signature verification
+        // For now, we'll assume all transactions without signatures are valid
+        if transaction.signature.is_none() {
+            return Ok(());
+        }
+
+        // In a real implementation, you would verify the transaction signature here
+        // For example:
+        // self.identity_manager.read().await.verify_signature(&transaction.from, &transaction.hash(), &transaction.signature.unwrap())?;
+
         Ok(())
+    }
+
+    pub async fn get_latest_block(&self) -> IcnResult<Block> {
+        self.blockchain.read().await.get_latest_block()
+            .cloned()
+            .ok_or_else(|| IcnError::Blockchain("No blocks in the chain".into()))
+    }
+
+    pub async fn get_blockchain_height(&self) -> u64 {
+        self.blockchain.read().await.chain.len() as u64
+    }
+
+    pub async fn validate_blockchain(&self) -> bool {
+        self.blockchain.read().await.validate_chain()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use icn_common::CurrencyType;
+
+    #[tokio::test]
+    async fn test_icn_node() {
+        let node = IcnNode::new().await.unwrap();
+
+        // Test create identity
+        let alice_identity = node.create_identity(HashMap::new()).await.unwrap();
+        let bob_identity = node.create_identity(HashMap::new()).await.unwrap();
+
+        // Test process transaction
+        let transaction = Transaction {
+            from: alice_identity.id.clone(),
+            to: bob_identity.id.clone(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
+
+        // First, mint some currency for Alice
+        node.currency_system.write().await.mint(&alice_identity.id, &CurrencyType::BasicNeeds, 100.0).unwrap();
+
+        // Now process the transaction
+        node.process_transaction(transaction).await.unwrap();
+
+        // Check balances
+        let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await.unwrap();
+        let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await.unwrap();
+
+        assert_eq!(alice_balance, 50.0);
+        assert_eq!(bob_balance, 50.0);
+
+        // Test create block
+        let block = node.create_block().await.unwrap();
+        assert_eq!(block.index, 1);
+        assert_eq!(block.transactions.len(), 1);
+
+        // Test blockchain validation
+        assert!(node.validate_blockchain().await);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
@@ -3795,62 +3884,60 @@ icn_common = { path = "../icn_common" }
 chrono = { version = "0.4", features = ["serde"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_demo/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs =====
+// File: /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs
+
 use icn_core::IcnNode;
 use icn_common::{Transaction, Proposal, CurrencyType, ProposalType, ProposalCategory, ProposalStatus};
 use chrono::{Utc, Duration};
 use std::collections::HashMap;
+use uuid::Uuid;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting InterCooperative Network Demo");
 
-    let node = IcnNode::new()?;
+    let node = IcnNode::new().await?;
 
     // Create identities
     println!("\nCreating identities...");
-    let alice_identity = node.create_identity(HashMap::new())?;
-    let bob_identity = node.create_identity(HashMap::new())?;
+    let alice_identity = node.create_identity(HashMap::new()).await?;
+    let bob_identity = node.create_identity(HashMap::new()).await?;
     println!("Created identities for Alice and Bob");
 
     // Initialize currency system
     println!("\nInitializing currency system...");
-    node.process_transaction(Transaction {
-        from: "genesis".to_string(),
-        to: alice_identity.id.clone(),
-        amount: 1000.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None,
-    })?;
+    node.currency_system.write().await.mint(&alice_identity.id, &CurrencyType::BasicNeeds, 1000.0)?;
     println!("Initialized Alice's account with 1000 BasicNeeds");
 
     // Check balances
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
     println!("Alice's balance: {} BasicNeeds", alice_balance);
     println!("Bob's balance: {} BasicNeeds", bob_balance);
 
     // Process a transaction
     println!("\nProcessing transaction...");
-    node.process_transaction(Transaction {
+    let transaction = Transaction {
         from: alice_identity.id.clone(),
         to: bob_identity.id.clone(),
         amount: 100.0,
         currency_type: CurrencyType::BasicNeeds,
         timestamp: Utc::now().timestamp(),
         signature: None,
-    })?;
+    };
+    node.process_transaction(transaction).await?;
     println!("Processed transaction from Alice to Bob");
 
     // Check updated balances
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
     println!("Alice's updated balance: {} BasicNeeds", alice_balance);
     println!("Bob's updated balance: {} BasicNeeds", bob_balance);
 
     // Create a proposal
     println!("\nCreating a proposal...");
     let proposal = Proposal {
-        id: "proposal1".to_string(),
+        id: Uuid::new_v4().to_string(),
         title: "Increase node count".to_string(),
         description: "Proposal to increase the number of nodes in the network".to_string(),
         proposer: alice_identity.id.clone(),
@@ -3862,31 +3949,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         required_quorum: 0.51,
         execution_timestamp: None,
     };
-    let proposal_id = node.create_proposal(proposal)?;
+    let proposal_id = node.create_proposal(proposal).await?;
     println!("Created proposal: {}", proposal_id);
 
     // Vote on the proposal
     println!("\nVoting on the proposal...");
-    node.vote_on_proposal(&proposal_id, alice_identity.id.clone(), true)?;
-    node.vote_on_proposal(&proposal_id, bob_identity.id.clone(), false)?;
+    node.vote_on_proposal(&proposal_id, alice_identity.id.clone(), true).await?;
+    node.vote_on_proposal(&proposal_id, bob_identity.id.clone(), false).await?;
     println!("Alice voted in favor, Bob voted against");
 
     // Finalize the proposal
     println!("\nFinalizing the proposal...");
-    let proposal_status = node.finalize_proposal(&proposal_id)?;
+    let proposal_status = node.finalize_proposal(&proposal_id).await?;
     println!("Proposal status after finalization: {:?}", proposal_status);
 
     // Create a new block
     println!("\nCreating a new block...");
-    let new_block = node.create_block()?;
+    let new_block = node.create_block().await?;
     println!("Created new block: {:?}", new_block);
 
     // Display final state
     println!("\nFinal state:");
-    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds)?;
-    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds)?;
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
     println!("Alice's final balance: {} BasicNeeds", alice_balance);
     println!("Bob's final balance: {} BasicNeeds", bob_balance);
+
+    let blockchain_height = node.get_blockchain_height().await;
+    println!("Blockchain height: {}", blockchain_height);
+
+    let is_valid = node.validate_blockchain().await;
+    println!("Is blockchain valid: {}", is_valid);
 
     println!("\nDemo completed successfully!");
     Ok(())
@@ -10311,345 +10404,307 @@ impl CoopVM {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/coop_vm.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
-use icn_common::{IcnResult, IcnError, Opcode, Value};
+// File: crates/icn_vm/src/lib.rs
+
+use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
+use std::cmp::Ordering;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a.partial_cmp(b),
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
+            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
+            (Value::Int(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
+            (Value::Float(a), Value::Int(b)) => a.partial_cmp(&(*b as f64)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Opcode {
+    Push(Value),
+    Pop,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Neq,
+    Gt,
+    Lt,
+    Gte,
+    Lte,
+    And,
+    Or,
+    Not,
+    Store(String),
+    Load(String),
+    JumpIf(usize),
+    Jump(usize),
+    Call(String),
+    Return,
+}
 
 pub struct CoopVM {
     stack: Vec<Value>,
     memory: HashMap<String, Value>,
+    program: Vec<Opcode>,
     pc: usize,
 }
 
 impl CoopVM {
-    pub fn new() -> Self {
+    pub fn new(program: Vec<Opcode>) -> Self {
         CoopVM {
             stack: Vec::new(),
             memory: HashMap::new(),
+            program,
             pc: 0,
         }
     }
 
-    pub fn execute(&mut self, program: Vec<Opcode>) -> IcnResult<()> {
-        self.pc = 0;
-        while self.pc < program.len() {
-            match &program[self.pc] {
-                Opcode::Push(value) => self.stack.push(value.clone()),
-                Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?; }
-                Opcode::Add => self.binary_op(|a, b| a + b)?,
-                Opcode::Sub => self.binary_op(|a, b| a - b)?,
-                Opcode::Mul => self.binary_op(|a, b| a * b)?,
-                Opcode::Div => self.binary_op(|a, b| a / b)?,
-                Opcode::Mod => self.binary_op(|a, b| a % b)?,
-                Opcode::Eq => self.compare_op(|a, b| a == b)?,
-                Opcode::Neq => self.compare_op(|a, b| a != b)?,
-                Opcode::Gt => self.compare_op(|a, b| a > b)?,
-                Opcode::Lt => self.compare_op(|a, b| a < b)?,
-                Opcode::Gte => self.compare_op(|a, b| a >= b)?,
-                Opcode::Lte => self.compare_op(|a, b| a <= b)?,
-                Opcode::And => {
-                    let b = self.pop_bool()?;
-                    let a = self.pop_bool()?;
-                    self.stack.push(Value::Bool(a && b));
-                }
-                Opcode::Or => {
-                    let b = self.pop_bool()?;
-                    let a = self.pop_bool()?;
-                    self.stack.push(Value::Bool(a || b));
-                }
-                Opcode::Not => {
-                    let a = self.pop_bool()?;
-                    self.stack.push(Value::Bool(!a));
-                }
-                Opcode::Store(name) => {
-                    let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-                    self.memory.insert(name.clone(), value);
-                }
-                Opcode::Load(name) => {
-                    let value = self.memory.get(name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
-                    self.stack.push(value);
-                }
-                Opcode::JumpIf(target) => {
-                    let condition = self.pop_bool()?;
-                    if condition {
-                        self.pc = *target;
-                        continue;
-                    }
-                    Opcode::Jump(target) => {
-                        self.pc = *target;
-                        continue;
-                    }
-                    Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
-                    Opcode::Return => break,
-                    Opcode::NetNodeConnect => {
-                        let node2 = self.pop_string()?;
-                        let node1 = self.pop_string()?;
-                        println!("Connecting nodes: {} and {}", node1, node2);
-                    }
-                    Opcode::ChainBlockCreate => {
-                        let num_transactions = self.pop_int()?;
-                        let mut transactions = Vec::new();
-                        for _ in 0..num_transactions {
-                            transactions.push(self.pop_string()?);
-                        }
-                        println!("Creating block with {} transactions", transactions.len());
-                    }
-                    Opcode::EconCurrencyMint => {
-                        let currency_type = self.pop_string()?;
-                        let amount = self.pop_float()?;
-                        println!("Minting {} of currency type {}", amount, currency_type);
-                    }
-                    Opcode::GovProposalSubmit => {
-                        let description = self.pop_string()?;
-                        println!("Submitting proposal: {}", description);
-                    }
-                    Opcode::CoopMemberAdd => {
-                        let member_id = self.pop_string()?;
-                        let coop_id = self.pop_string()?;
-                        println!("Adding member {} to cooperative {}", member_id, coop_id);
-                    }
-                    Opcode::CommEventOrganize => {
-                        let event_details = self.pop_string()?;
-                        println!("Organizing community event: {}", event_details);
-                    }
-                    Opcode::VoteOnProposal => {
-                        let vote = self.pop_bool()?;
-                        let proposal_id = self.pop_string()?;
-                        println!("Voting {} on proposal {}", if vote { "Yes" } else { "No" }, proposal_id);
-                    }
-                    Opcode::AllocateResource => {
-                        let amount = self.pop_int()?;
-                        let resource = self.pop_string()?;
-                        println!("Allocating {} units of resource {}", amount, resource);
-                    }
-                    Opcode::UpdateReputation => {
-                        let change = self.pop_int()?;
-                        let address = self.pop_string()?;
-                        println!("Updating reputation of {} by {}", address, change);
-                    }
-                    Opcode::CreateProposal => {
-                        let description = self.pop_string()?;
-                        let title = self.pop_string()?;
-                        println!("Creating proposal: {} - {}", title, description);
-                        self.stack.push(Value::String("new_proposal_id".to_string()));
-                    }
-                    Opcode::GetProposalStatus => {
-                        let proposal_id = self.pop_string()?;
-                        println!("Getting status of proposal: {}", proposal_id);
-                        self.stack.push(Value::String("Active".to_string()));
-                    }
-                    Opcode::EmitEvent(event_name) => {
-                        let event_data = self.pop_string()?;
-                        println!("Emitting event {}: {}", event_name, event_data);
-                    }
-                }
-                self.pc += 1;
-            }
-            Ok(())
+    pub fn execute(&mut self) -> IcnResult<()> {
+        while self.pc < self.program.len() {
+            self.execute_instruction()?;
+            self.pc += 1;
         }
-    
-        fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
-        where
-            F: Fn(f64, f64) -> f64,
-        {
-            let b = self.pop_float()?;
-            let a = self.pop_float()?;
-            self.stack.push(Value::Float(op(a, b)));
-            Ok(())
+        Ok(())
+    }
+
+    fn execute_instruction(&mut self) -> IcnResult<()> {
+        let instruction = self.program[self.pc].clone();
+        match instruction {
+            Opcode::Push(value) => self.stack.push(value),
+            Opcode::Pop => { self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?; },
+            Opcode::Add => self.binary_op(|a, b| a + b)?,
+            Opcode::Sub => self.binary_op(|a, b| a - b)?,
+            Opcode::Mul => self.binary_op(|a, b| a * b)?,
+            Opcode::Div => self.binary_op(|a, b| a / b)?,
+            Opcode::Mod => self.binary_op(|a, b| a % b)?,
+            Opcode::Eq => self.compare_op(|a, b| a == b)?,
+            Opcode::Neq => self.compare_op(|a, b| a != b)?,
+            Opcode::Gt => self.compare_op(|a, b| a > b)?,
+            Opcode::Lt => self.compare_op(|a, b| a < b)?,
+            Opcode::Gte => self.compare_op(|a, b| a >= b)?,
+            Opcode::Lte => self.compare_op(|a, b| a <= b)?,
+            Opcode::And => {
+                let b = self.pop_bool()?;
+                let a = self.pop_bool()?;
+                self.stack.push(Value::Bool(a && b));
+            },
+            Opcode::Or => {
+                let b = self.pop_bool()?;
+                let a = self.pop_bool()?;
+                self.stack.push(Value::Bool(a || b));
+            },
+            Opcode::Not => {
+                let a = self.pop_bool()?;
+                self.stack.push(Value::Bool(!a));
+            },
+            Opcode::Store(name) => {
+                let value = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+                self.memory.insert(name, value);
+            },
+            Opcode::Load(name) => {
+                let value = self.memory.get(&name).ok_or(IcnError::VM("Variable not found".into()))?.clone();
+                self.stack.push(value);
+            },
+            Opcode::JumpIf(target) => {
+                let condition = self.pop_bool()?;
+                if condition {
+                    self.pc = target - 1; // -1 because pc will be incremented after this
+                }
+            },
+            Opcode::Jump(target) => {
+                self.pc = target - 1; // -1 because pc will be incremented after this
+            },
+            Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
+            Opcode::Return => return Ok(()),
         }
-    
-        fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
-        where
-            F: Fn(&Value, &Value) -> bool,
-        {
-            let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-            let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
-            self.stack.push(Value::Bool(op(&a, &b)));
-            Ok(())
-        }
-    
-        fn pop_float(&mut self) -> IcnResult<f64> {
-            match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-                Value::Float(f) => Ok(f),
-                Value::Int(i) => Ok(i as f64),
-                _ => Err(IcnError::VM("Expected float value".into())),
-            }
-        }
-    
-        fn pop_bool(&mut self) -> IcnResult<bool> {
-            match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-                Value::Bool(b) => Ok(b),
-                _ => Err(IcnError::VM("Expected boolean value".into())),
-            }
-        }
-    
-        fn pop_string(&mut self) -> IcnResult<String> {
-            match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-                Value::String(s) => Ok(s),
-                _ => Err(IcnError::VM("Expected string value".into())),
-            }
-        }
-    
-        fn pop_int(&mut self) -> IcnResult<i64> {
-            match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
-                Value::Int(i) => Ok(i),
-                _ => Err(IcnError::VM("Expected integer value".into())),
-            }
+        Ok(())
+    }
+
+    fn binary_op<F>(&mut self, op: F) -> IcnResult<()>
+    where
+        F: Fn(f64, f64) -> f64,
+    {
+        let b = self.pop_float()?;
+        let a = self.pop_float()?;
+        self.stack.push(Value::Float(op(a, b)));
+        Ok(())
+    }
+
+    fn compare_op<F>(&mut self, op: F) -> IcnResult<()>
+    where
+        F: Fn(&Value, &Value) -> bool,
+    {
+        let b = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        let a = self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))?;
+        self.stack.push(Value::Bool(op(&a, &b)));
+        Ok(())
+    }
+
+    fn pop_float(&mut self) -> IcnResult<f64> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Float(f) => Ok(f),
+            Value::Int(i) => Ok(i as f64),
+            _ => Err(IcnError::VM("Expected float value".into())),
         }
     }
-    
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-    
-        #[test]
-        fn test_basic_operations() {
-            let mut vm = CoopVM::new();
-            let program = vec![
-                Opcode::Push(Value::Float(5.0)),
-                Opcode::Push(Value::Float(3.0)),
-                Opcode::Add,
-                Opcode::Push(Value::Float(2.0)),
-                Opcode::Mul,
-            ];
-    
-            assert!(vm.execute(program).is_ok());
-            assert_eq!(vm.stack, vec![Value::Float(16.0)]);
+
+    fn pop_bool(&mut self) -> IcnResult<bool> {
+        match self.stack.pop().ok_or(IcnError::VM("Stack underflow".into()))? {
+            Value::Bool(b) => Ok(b),
+            _ => Err(IcnError::VM("Expected boolean value".into())),
         }
-    
-        #[test]
-        fn test_conditional_execution() {
-            let mut vm = CoopVM::new();
-            let program = vec![
-                Opcode::Push(Value::Bool(true)),
-                Opcode::JumpIf(4),
-                Opcode::Push(Value::String("Condition is false".to_string())),
-                Opcode::Jump(5),
-                Opcode::Push(Value::String("Condition is true".to_string())),
-            ];
-    
-            assert!(vm.execute(program).is_ok());
-            assert_eq!(vm.stack, vec![Value::String("Condition is true".to_string())]);
-        }
-    
-        #[test]
-        fn test_cooperative_operations() {
-            let mut vm = CoopVM::new();
-            let program = vec![
-                Opcode::Push(Value::String("Proposal 1".to_string())),
-                Opcode::Push(Value::String("New community project".to_string())),
-                Opcode::CreateProposal,
-                Opcode::Push(Value::String("proposal_1".to_string())),
-                Opcode::Push(Value::Bool(true)),
-                Opcode::VoteOnProposal,
-                Opcode::Push(Value::String("computing_power".to_string())),
-                Opcode::Push(Value::Int(100)),
-                Opcode::AllocateResource,
-                Opcode::Push(Value::String("user1".to_string())),
-                Opcode::Push(Value::Int(5)),
-                Opcode::UpdateReputation,
-                Opcode::Push(Value::String("proposal_1".to_string())),
-                Opcode::GetProposalStatus,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_operations() {
+        let program = vec![
+            Opcode::Push(Value::Float(5.0)),
+            Opcode::Push(Value::Float(3.0)),
+            Opcode::Add,
+            Opcode::Push(Value::Float(2.0)),
+            Opcode::Mul,
         ];
 
-        assert!(vm.execute(program).is_ok());
-        assert_eq!(vm.stack, vec![Value::String("new_proposal_id".to_string()), Value::String("Active".to_string())]);
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
+        assert_eq!(vm.stack, vec![Value::Float(16.0)]);
     }
 
     #[test]
-    fn test_error_handling() {
-        let mut vm = CoopVM::new();
+    fn test_comparison_operations() {
         let program = vec![
             Opcode::Push(Value::Int(5)),
-            Opcode::Push(Value::String("Not a number".to_string())),
-            Opcode::Add,
+            Opcode::Push(Value::Int(3)),
+            Opcode::Gt,
+            Opcode::Push(Value::Int(5)),
+            Opcode::Push(Value::Int(5)),
+            Opcode::Eq,
+            Opcode::And,
         ];
 
-        let result = vm.execute(program);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), IcnError::VM(_)));
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
+        assert_eq!(vm.stack, vec![Value::Bool(true)]);
+    }
+
+    #[test]
+    fn test_logical_operations() {
+        let program = vec![
+            Opcode::Push(Value::Bool(true)),
+            Opcode::Push(Value::Bool(false)),
+            Opcode::Or,
+            Opcode::Push(Value::Bool(true)),
+            Opcode::And,
+            Opcode::Not,
+        ];
+
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
+        assert_eq!(vm.stack, vec![Value::Bool(false)]);
+    }
+
+    #[test]
+    fn test_conditional_jump() {
+        let program = vec![
+            Opcode::Push(Value::Bool(true)),
+            Opcode::JumpIf(4),
+            Opcode::Push(Value::Int(1)),
+            Opcode::Jump(5),
+            Opcode::Push(Value::Int(2)),
+        ];
+
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
+        assert_eq!(vm.stack, vec![Value::Int(2)]);
     }
 
     #[test]
     fn test_store_and_load() {
-        let mut vm = CoopVM::new();
         let program = vec![
             Opcode::Push(Value::Int(42)),
             Opcode::Store("x".to_string()),
-            Opcode::Load("x".to_string()),
             Opcode::Push(Value::Int(10)),
+            Opcode::Load("x".to_string()),
             Opcode::Add,
         ];
 
-        assert!(vm.execute(program).is_ok());
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
         assert_eq!(vm.stack, vec![Value::Float(52.0)]);
     }
 
     #[test]
-    fn test_network_operations() {
-        let mut vm = CoopVM::new();
+    fn test_error_handling() {
         let program = vec![
-            Opcode::Push(Value::String("node1".to_string())),
-            Opcode::Push(Value::String("node2".to_string())),
-            Opcode::NetNodeConnect,
-            Opcode::Push(Value::String("tx1".to_string())),
-            Opcode::Push(Value::String("tx2".to_string())),
-            Opcode::Push(Value::Int(2)),
-            Opcode::ChainBlockCreate,
+            Opcode::Push(Value::Int(1)),
+            Opcode::Pop,
+            Opcode::Pop, // This should cause an error
         ];
 
-        assert!(vm.execute(program).is_ok());
-        // The stack should be empty after these operations
-        assert!(vm.stack.is_empty());
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_err());
     }
 
     #[test]
-    fn test_economic_operations() {
-        let mut vm = CoopVM::new();
+    fn test_complex_program() {
         let program = vec![
-            Opcode::Push(Value::Float(100.0)),
-            Opcode::Push(Value::String("BasicNeeds".to_string())),
-            Opcode::EconCurrencyMint,
+            Opcode::Push(Value::Int(10)),
+            Opcode::Store("x".to_string()),
+            Opcode::Push(Value::Int(0)),
+            Opcode::Store("sum".to_string()),
+            Opcode::Push(Value::Int(1)),
+            Opcode::Store("i".to_string()),
+            // Loop start
+            Opcode::Load("i".to_string()),
+            Opcode::Load("x".to_string()),
+            Opcode::Lte,
+            Opcode::JumpIf(17), // Jump to end if false
+            Opcode::Load("sum".to_string()),
+            Opcode::Load("i".to_string()),
+            Opcode::Add,
+            Opcode::Store("sum".to_string()),
+            Opcode::Load("i".to_string()),
+            Opcode::Push(Value::Int(1)),
+            Opcode::Add,
+            Opcode::Store("i".to_string()),
+            Opcode::Jump(6), // Jump back to loop start
+            // Loop end
+            Opcode::Load("sum".to_string()),
         ];
 
-        assert!(vm.execute(program).is_ok());
-        // The stack should be empty after these operations
-        assert!(vm.stack.is_empty());
+        let mut vm = CoopVM::new(program);
+        assert!(vm.execute().is_ok());
+        
+        // Sum of numbers from 1 to 10 is 55
+        assert_eq!(vm.stack, vec![Value::Float(55.0)]);
     }
-
-    #[test]
-    fn test_governance_operations() {
-        let mut vm = CoopVM::new();
-        let program = vec![
-            Opcode::Push(Value::String("Increase node count".to_string())),
-            Opcode::GovProposalSubmit,
-            Opcode::Push(Value::String("coop1".to_string())),
-            Opcode::Push(Value::String("member1".to_string())),
-            Opcode::CoopMemberAdd,
-        ];
-
-        assert!(vm.execute(program).is_ok());
-        // The stack should be empty after these operations
-        assert!(vm.stack.is_empty());
-    }
-
-    #[test]
-    fn test_community_operations() {
-        let mut vm = CoopVM::new();
-        let program = vec![
-            Opcode::Push(Value::String("Community meetup on Saturday".to_string())),
-            Opcode::CommEventOrganize,
-            Opcode::Push(Value::String("NewMember".to_string())),
-            Opcode::Push(Value::String("Alice joined the network".to_string())),
-            Opcode::EmitEvent("NewMember".to_string()),
-        ];
-
-        assert!(vm.execute(program).is_ok());
-        // The stack should be empty after these operations
-        assert!(vm.stack.is_empty());
-    }
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_vm/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_vm/src/opcode.rs =====
 #[derive(Debug, Clone, PartialEq, PartialOrd)] // Add PartialOrd here

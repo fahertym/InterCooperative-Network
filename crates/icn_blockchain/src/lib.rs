@@ -1,6 +1,7 @@
-use icn_common::{Block, Transaction, IcnResult, IcnError};
+// File: /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs
+
+use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
 use chrono::Utc;
-use sha2::{Sha256, Digest};
 
 pub struct Blockchain {
     pub chain: Vec<Block>,
@@ -40,24 +41,9 @@ impl Blockchain {
             hash: String::new(),
         };
 
-        new_block.hash = self.calculate_hash(&new_block);
+        new_block.hash = new_block.hash();
         self.chain.push(new_block.clone());
         Ok(new_block)
-    }
-
-    fn calculate_hash(&self, block: &Block) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(block.index.to_string());
-        hasher.update(&block.timestamp.to_string());
-        for transaction in &block.transactions {
-            hasher.update(&transaction.from);
-            hasher.update(&transaction.to);
-            hasher.update(&transaction.amount.to_string());
-            hasher.update(&transaction.currency_type.to_string());
-            hasher.update(&transaction.timestamp.to_string());
-        }
-        hasher.update(&block.previous_hash);
-        format!("{:x}", hasher.finalize())
     }
 
     pub fn validate_chain(&self) -> bool {
@@ -69,11 +55,31 @@ impl Blockchain {
                 return false;
             }
 
-            if current_block.hash != self.calculate_hash(current_block) {
+            if current_block.hash != current_block.hash() {
                 return false;
             }
         }
         true
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.chain.last()
+    }
+
+    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
+        self.chain.get(index as usize)
+    }
+
+    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
+        self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    pub fn get_pending_transactions(&self) -> &[Transaction] {
+        &self.pending_transactions
+    }
+
+    pub fn clear_pending_transactions(&mut self) {
+        self.pending_transactions.clear();
     }
 }
 
@@ -143,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_hash() {
+    fn test_get_block_methods() {
         let mut blockchain = Blockchain::new();
         let transaction = Transaction {
             from: "Alice".to_string(),
@@ -157,7 +163,9 @@ mod tests {
         blockchain.add_transaction(transaction).unwrap();
         let new_block = blockchain.create_block().unwrap();
 
-        let calculated_hash = blockchain.calculate_hash(&new_block);
-        assert_eq!(new_block.hash, calculated_hash);
+        assert_eq!(blockchain.get_latest_block().unwrap().index, 1);
+        assert_eq!(blockchain.get_block_by_index(1).unwrap().hash, new_block.hash);
+        assert!(blockchain.get_block_by_hash(&new_block.hash).is_some());
+        assert!(blockchain.get_block_by_hash("nonexistent_hash").is_none());
     }
 }

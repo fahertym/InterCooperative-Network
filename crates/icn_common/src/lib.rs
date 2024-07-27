@@ -1,6 +1,7 @@
+// File: crates/icn_common/src/lib.rs
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
@@ -85,6 +86,8 @@ pub enum IcnError {
     SmartContract(String),
     #[error("ZKP error: {0}")]
     ZKP(String),
+    #[error("VM error: {0}")]
+    VM(String),
 }
 
 pub type IcnResult<T> = std::result::Result<T, IcnError>;
