@@ -60,6 +60,10 @@
 │   │       ├── currency.rs
 │   │       ├── lib.rs
 │   │       └── wallet.rs
+│   ├── icn_dao
+│   │   ├── Cargo.toml
+│   │   └── src
+│   │       └── lib.rs
 │   ├── icn_demo
 │   │   ├── Cargo.toml
 │   │   └── src
@@ -181,7 +185,7 @@
 ├── README.md
 └── update_project.sh
 
-54 directories, 127 files
+56 directories, 129 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -3568,6 +3572,12 @@ mod tests {
         assert_eq!(wallet2.get_balance(&CurrencyType::BasicNeeds), 25.0);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/wallet.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_dao/Cargo.toml =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_dao/Cargo.toml =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_dao/src/lib.rs =====
+===== END OF /home/matt/InterCooperative-Network/crates/icn_dao/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_demo/Cargo.toml =====
 [package]
