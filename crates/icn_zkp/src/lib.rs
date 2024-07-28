@@ -19,31 +19,31 @@ impl ZKPManager {
         }
     }
 
-    pub fn create_proof(&self, transaction: &Transaction) -> IcnResult<(RangeProof, Vec<u64>)> {
+    pub fn create_proof(&self, transaction: &Transaction) -> IcnResult<(RangeProof, Vec<Scalar>)> {
         let amount = (transaction.amount * 100.0) as u64; // Convert to cents for integer representation
         let (proof, committed_value) = self.create_range_proof(amount)?;
         Ok((proof, vec![committed_value]))
     }
 
-    pub fn verify_proof(&self, proof: &RangeProof, committed_value: &[u64]) -> IcnResult<bool> {
-        if committed_value.len() != 1 {
+    pub fn verify_proof(&self, proof: &RangeProof, committed_values: &[Scalar]) -> IcnResult<bool> {
+        if committed_values.len() != 1 {
             return Err(IcnError::ZKP("Invalid number of committed values".into()));
         }
 
         let mut transcript = Transcript::new(b"TransactionRangeProof");
         proof
-            .verify_single(&self.bp_gens, &self.pc_gens, &mut transcript, committed_value[0], 64)
+            .verify_single(&self.bp_gens, &self.pc_gens, &mut transcript, &committed_values[0], 64)
             .map_err(|e| IcnError::ZKP(format!("Proof verification failed: {}", e)))
     }
 
-    fn create_range_proof(&self, value: u64) -> IcnResult<(RangeProof, u64)> {
+    fn create_range_proof(&self, value: u64) -> IcnResult<(RangeProof, Scalar)> {
         let mut transcript = Transcript::new(b"TransactionRangeProof");
         let (proof, committed_value) = RangeProof::prove_single(
             &self.bp_gens,
             &self.pc_gens,
             &mut transcript,
             value,
-            &mut thread_rng(),
+            &Scalar::random(&mut thread_rng()),
             64,
         )
         .map_err(|e| IcnError::ZKP(format!("Failed to create range proof: {}", e)))?;
@@ -51,7 +51,7 @@ impl ZKPManager {
         Ok((proof, committed_value))
     }
 
-    pub fn create_multi_proof(&self, values: &[u64]) -> IcnResult<(RangeProof, Vec<u64>)> {
+    pub fn create_multi_proof(&self, values: &[u64]) -> IcnResult<(RangeProof, Vec<Scalar>)> {
         let mut transcript = Transcript::new(b"MultiRangeProof");
         let (proof, committed_values) = RangeProof::prove_multiple(
             &self.bp_gens,
@@ -59,6 +59,7 @@ impl ZKPManager {
             &mut transcript,
             values,
             &vec![64; values.len()],
+            &Scalar::random(&mut thread_rng()),
             &mut thread_rng(),
         )
         .map_err(|e| IcnError::ZKP(format!("Failed to create multi-range proof: {}", e)))?;
@@ -66,7 +67,7 @@ impl ZKPManager {
         Ok((proof, committed_values))
     }
 
-    pub fn verify_multi_proof(&self, proof: &RangeProof, committed_values: &[u64]) -> IcnResult<bool> {
+    pub fn verify_multi_proof(&self, proof: &RangeProof, committed_values: &[Scalar]) -> IcnResult<bool> {
         let mut transcript = Transcript::new(b"MultiRangeProof");
         proof
             .verify_multiple(&self.bp_gens, &self.pc_gens, &mut transcript, committed_values, &vec![64; committed_values.len()])
@@ -108,7 +109,7 @@ mod tests {
         };
 
         let (proof, mut committed_value) = zkp_manager.create_proof(&transaction).unwrap();
-        committed_value[0] += 1; // Tamper with the committed value
+        committed_value[0] += Scalar::one(); // Tamper with the committed value
         assert!(!zkp_manager.verify_proof(&proof, &committed_value).unwrap());
     }
 
