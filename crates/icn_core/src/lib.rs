@@ -1,3 +1,5 @@
+// File: icn_core/src/lib.rs
+
 use icn_common::{Config, Transaction, CurrencyType, ProposalStatus as CommonProposalStatus, NetworkStats, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
@@ -19,7 +21,7 @@ pub struct IcnNode {
 }
 
 impl IcnNode {
-    pub fn new(config: Config) -> IcnResult<Self> {
+    pub async fn new(config: Config) -> IcnResult<Self> {
         let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
         Ok(Self {
             config,
@@ -32,13 +34,11 @@ impl IcnNode {
     }
 
     pub async fn start(&self) -> IcnResult<()> {
-        // Initialize and start necessary components
         self.consensus.read().await.start()?;
         Ok(())
     }
 
     pub async fn stop(&self) -> IcnResult<()> {
-        // Stop and clean up components
         self.consensus.read().await.stop()?;
         Ok(())
     }
@@ -48,7 +48,8 @@ impl IcnNode {
     }
 
     pub async fn get_identity(&self, id: &str) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.read().await.get_identity(id).cloned().unwrap_or_else(|| Err(IcnError::CustomError("Identity not found".to_string())))
+        self.identity_service.read().await.get_identity(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".to_string()))
     }
 
     pub async fn update_identity_attributes(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
@@ -77,12 +78,13 @@ impl IcnNode {
         self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor, weight)
     }
 
-    pub async fn close_proposal(&self, proposal_id: &str) -> IcnResult<CommonProposalStatus> {
+    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<CommonProposalStatus> {
         let status = self.governance.write().await.finalize_proposal(proposal_id)?;
         match status {
             ProposalStatus::Active => Ok(CommonProposalStatus::Active),
             ProposalStatus::Passed => Ok(CommonProposalStatus::Passed),
             ProposalStatus::Rejected => Ok(CommonProposalStatus::Rejected),
+            ProposalStatus::Executed => Ok(CommonProposalStatus::Executed),
         }
     }
 
@@ -118,11 +120,12 @@ impl IcnNode {
     }
 
     pub async fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        Ok(self.governance.read().await.list_active_proposals().into_iter().cloned().collect())
+        Ok(self.governance.read().await.list_active_proposals())
     }
 
     pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Proposal> {
-        self.governance.read().await.get_proposal(proposal_id).cloned().unwrap_or_else(|| Err(IcnError::CustomError("Proposal not found".to_string())))
+        self.governance.read().await.get_proposal(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Proposal not found".to_string()))
     }
 
     pub async fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
@@ -146,7 +149,7 @@ mod tests {
             network_port: 8080,
         };
 
-        let node = IcnNode::new(config).unwrap();
+        let node = IcnNode::new(config).await.unwrap();
 
         // Test identity creation
         let mut attributes = HashMap::new();
@@ -183,18 +186,10 @@ mod tests {
 
         let proposal_id = node.create_proposal(proposal).await.unwrap();
 
-        let vote = icn_governance::Vote {
-            voter: identity.id.clone(),
-            proposal_id: proposal_id.clone(),
-            in_favor: true,
-            weight: 1.0,
-            timestamp: Utc::now().timestamp(),
-        };
-
-        node.vote_on_proposal(&vote.proposal_id, vote.voter.clone(), vote.in_favor, vote.weight).await.unwrap();
+        node.vote_on_proposal(&proposal_id, identity.id.clone(), true, 1.0).await.unwrap();
 
         // Test closing proposal
-        let proposal_status = node.close_proposal(&proposal_id).await.unwrap();
+        let proposal_status = node.finalize_proposal(&proposal_id).await.unwrap();
         assert_eq!(proposal_status, CommonProposalStatus::Passed);
 
         // Test balance check
