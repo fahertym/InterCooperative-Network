@@ -1,5 +1,3 @@
-// crates/icn_blockchain/src/lib.rs
-
 use icn_common::{Block, Transaction, IcnResult, IcnError, CurrencyType};
 use chrono::Utc;
 
@@ -103,6 +101,14 @@ impl Blockchain {
             }
         }
         Ok(balance)
+    }
+
+    pub fn get_transaction_count(&self) -> usize {
+        self.chain.iter().map(|block| block.transactions.len()).sum()
+    }
+
+    pub fn get_chain(&self) -> &Vec<Block> {
+        &self.chain
     }
 }
 

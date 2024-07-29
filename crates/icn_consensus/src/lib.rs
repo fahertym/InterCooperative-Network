@@ -1,5 +1,3 @@
-// File: crates/icn_consensus/src/lib.rs
-
 use icn_common::{IcnResult, IcnError, Block, Transaction};
 use std::collections::HashMap;
 use log::info;
@@ -8,16 +6,16 @@ use std::sync::{Arc, RwLock};
 #[derive(Clone, PartialEq)]
 pub struct BlockWrapper(pub Block);
 
+struct Validator {
+    reputation: f64,
+}
+
 pub struct PoCConsensus {
     threshold: f64,
     quorum: f64,
     validators: HashMap<String, Validator>,
     pending_blocks: Vec<BlockWrapper>,
     blockchain: Arc<RwLock<Vec<Block>>>,
-}
-
-struct Validator {
-    reputation: f64,
 }
 
 impl PoCConsensus {
@@ -98,7 +96,7 @@ impl PoCConsensus {
         Ok(())
     }
 
-    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> { // Made public
+    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
         if block.index == 0 {
             return Ok(true); // Genesis block is always valid
         }

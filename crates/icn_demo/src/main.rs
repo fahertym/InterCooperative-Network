@@ -1,72 +1,62 @@
-// crates/icn_demo/src/main.rs
-
+use icn_core::{IcnNode, Config};
 use icn_common::{Transaction, Proposal, CurrencyType, ProposalStatus, ProposalType, ProposalCategory};
-use icn_blockchain::Blockchain;
-use icn_consensus::PoCConsensus;
-use icn_governance::GovernanceSystem;
-use icn_currency::CurrencySystem;
+use icn_identity::DecentralizedIdentity;
 use chrono::{Duration, Utc};
+use log::{info, error};
+use std::collections::HashMap;
 use uuid::Uuid;
 
-fn main() {
-    println!("Starting InterCooperative Network Demo");
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
 
-    // Initialize blockchain
-    let mut blockchain = Blockchain::new();
+    let config = Config {
+        shard_count: 4,
+        consensus_threshold: 0.66,
+        consensus_quorum: 0.51,
+        network_port: 8080,
+    };
 
-    // Initialize consensus mechanism
-    let mut consensus = PoCConsensus::new(0.66, 0.51).expect("Failed to create consensus mechanism");
+    info!("Starting InterCooperative Network demo...");
+    let node = IcnNode::new(config).await?;
+    node.start().await?;
 
-    // Initialize governance system
-    let mut governance = GovernanceSystem::new();
+    // Demo 1: Create identities
+    info!("Demo 1: Creating identities");
+    let alice_identity = create_identity(&node, "Alice").await?;
+    let bob_identity = create_identity(&node, "Bob").await?;
 
-    // Initialize currency system
-    let mut currency_system = CurrencySystem::new();
-    currency_system.add_currency(CurrencyType::BasicNeeds, 1000000.0, 0.01);
+    // Demo 2: Mint currency
+    info!("Demo 2: Minting currency");
+    node.mint_currency(&alice_identity.id, CurrencyType::BasicNeeds, 1000.0).await?;
+    node.mint_currency(&bob_identity.id, CurrencyType::BasicNeeds, 500.0).await?;
 
-    // Simulate network activity
-    simulate_transactions(&mut blockchain);
-    simulate_proposal(&mut governance);
-    simulate_block_creation(&mut blockchain, &mut consensus);
-
-    println!("Demo completed successfully!");
-}
-
-fn simulate_transactions(blockchain: &mut Blockchain) {
-    println!("Simulating transactions...");
-
-    let transaction1 = Transaction {
-        from: "Alice".to_string(),
-        to: "Bob".to_string(),
+    // Demo 3: Process a transaction
+    info!("Demo 3: Processing a transaction");
+    let transaction = Transaction {
+        from: alice_identity.id.clone(),
+        to: bob_identity.id.clone(),
         amount: 100.0,
         currency_type: CurrencyType::BasicNeeds,
         timestamp: Utc::now().timestamp(),
-        signature: None,
+        signature: None, // In a real scenario, this should be signed
     };
+    node.process_transaction(transaction).await?;
 
-    let transaction2 = Transaction {
-        from: "Bob".to_string(),
-        to: "Charlie".to_string(),
-        amount: 50.0,
-        currency_type: CurrencyType::BasicNeeds,
-        timestamp: Utc::now().timestamp(),
-        signature: None,
-    };
+    // Demo 4: Check balances
+    info!("Demo 4: Checking balances");
+    let alice_balance = node.get_balance(&alice_identity.id, &CurrencyType::BasicNeeds).await?;
+    let bob_balance = node.get_balance(&bob_identity.id, &CurrencyType::BasicNeeds).await?;
+    info!("Alice's balance: {}", alice_balance);
+    info!("Bob's balance: {}", bob_balance);
 
-    blockchain.add_transaction(transaction1).expect("Failed to add transaction 1");
-    blockchain.add_transaction(transaction2).expect("Failed to add transaction 2");
-
-    println!("Transactions added to the blockchain");
-}
-
-fn simulate_proposal(governance: &mut GovernanceSystem) {
-    println!("Simulating proposal creation and voting...");
-
+    // Demo 5: Create and vote on a proposal
+    info!("Demo 5: Creating and voting on a proposal");
     let proposal = Proposal {
         id: Uuid::new_v4().to_string(),
         title: "Increase node count".to_string(),
         description: "Proposal to increase the number of nodes in the network".to_string(),
-        proposer: "Alice".to_string(),
+        proposer: alice_identity.id.clone(),
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
         status: ProposalStatus::Active,
@@ -75,23 +65,32 @@ fn simulate_proposal(governance: &mut GovernanceSystem) {
         required_quorum: 0.51,
         execution_timestamp: None,
     };
+    let proposal_id = node.create_proposal(proposal).await?;
+    
+    node.vote_on_proposal(&proposal_id, alice_identity.id.clone(), true).await?;
+    node.vote_on_proposal(&proposal_id, bob_identity.id.clone(), false).await?;
 
-    let proposal_id = governance.create_proposal(proposal).expect("Failed to create proposal");
-    governance.vote_on_proposal(&proposal_id, "Alice".to_string(), true).expect("Failed to vote on proposal");
-    governance.vote_on_proposal(&proposal_id, "Bob".to_string(), true).expect("Failed to vote on proposal");
-    governance.vote_on_proposal(&proposal_id, "Charlie".to_string(), false).expect("Failed to vote on proposal");
+    // For demo purposes, we'll finalize the proposal immediately
+    let proposal_status = node.finalize_proposal(&proposal_id).await?;
+    info!("Proposal status: {:?}", proposal_status);
 
-    // For demonstration purposes, we'll finalize the proposal immediately
-    // In a real system, this would happen after the voting period ends
-    let result = governance.finalize_proposal(&proposal_id).expect("Failed to finalize proposal");
-    println!("Proposal finalized with result: {:?}", result);
+    // Demo 6: Allocate a resource
+    info!("Demo 6: Allocating a resource");
+    node.allocate_resource("computing_power", 100).await?;
+
+    // Demo 7: Get network stats
+    info!("Demo 7: Getting network stats");
+    let network_stats = node.get_network_stats().await?;
+    info!("Network stats: {:?}", network_stats);
+
+    info!("Demo completed successfully!");
+    node.stop().await?;
+
+    Ok(())
 }
 
-fn simulate_block_creation(blockchain: &mut Blockchain, consensus: &mut PoCConsensus) {
-    println!("Simulating block creation...");
-
-    let new_block = blockchain.create_block().expect("Failed to create block");
-    consensus.process_new_block(new_block.clone()).expect("Failed to process new block");
-
-    println!("New block created and processed: {:?}", new_block);
+async fn create_identity(node: &IcnNode, name: &str) -> Result<DecentralizedIdentity, Box<dyn std::error::Error>> {
+    let mut attributes = HashMap::new();
+    attributes.insert("name".to_string(), name.to_string());
+    Ok(node.create_identity(attributes).await?)
 }

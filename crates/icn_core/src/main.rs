@@ -1,7 +1,7 @@
 // icn_core/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_types::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use icn_common::{IcnResult, IcnError, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
