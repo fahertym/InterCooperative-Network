@@ -1,7 +1,10 @@
-use crate::{Proposal, ProposalStatus, Vote};
+// File: crates/icn_governance/src/governance.rs
+
+use crate::{Proposal, ProposalStatus, Vote, ProposalType, ProposalCategory};
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 use chrono::Utc;
+use log::{info, warn};
 
 /// Represents the governance system managing proposals and votes.
 pub struct GovernanceSystem {

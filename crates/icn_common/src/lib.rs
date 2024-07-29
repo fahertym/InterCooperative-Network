@@ -1,4 +1,4 @@
-// File: crates/icn_common/src/lib.rs
+// File: icn_common/src/lib.rs
 
 pub mod error;
 
@@ -122,11 +122,21 @@ mod tests {
     }
 
     #[test]
-    fn test_icn_error_messages() {
-        let blockchain_error = IcnError::Blockchain("Blockchain failed".to_string());
-        assert_eq!(format!("{}", blockchain_error), "Blockchain error: Blockchain failed");
+    fn test_proposal_status() {
+        let status1 = ProposalStatus::Active;
+        let status2 = ProposalStatus::Passed;
+        assert_ne!(status1, status2);
+    }
 
-        let consensus_error = IcnError::Consensus("Consensus failed".to_string());
-        assert_eq!(format!("{}", consensus_error), "Consensus error: Consensus failed");
+    #[test]
+    fn test_network_stats() {
+        let stats = NetworkStats {
+            node_count: 5,
+            total_transactions: 100,
+            active_proposals: 3,
+        };
+        assert_eq!(stats.node_count, 5);
+        assert_eq!(stats.total_transactions, 100);
+        assert_eq!(stats.active_proposals, 3);
     }
 }
