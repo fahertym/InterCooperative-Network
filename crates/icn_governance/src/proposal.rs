@@ -1,6 +1,26 @@
-use crate::democracy::{ProposalCategory, ProposalType, ProposalStatus};
 use chrono::{DateTime, Utc, Duration};
 use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum ProposalCategory {
+    Constitutional,
+    Economic,
+    Technical,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Proposal {
@@ -18,6 +38,7 @@ pub struct Proposal {
 }
 
 impl Proposal {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         title: String,

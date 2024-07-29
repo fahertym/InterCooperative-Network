@@ -1,9 +1,43 @@
-use icn_common::{Block, Transaction, IcnResult, IcnError, CurrencyType};
+// File: crates/icn_blockchain/src/lib.rs
+
+use icn_common::{Transaction, IcnResult, IcnError, CurrencyType};
 use chrono::Utc;
+use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
 
 pub struct Blockchain {
     pub chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+}
+
+impl Block {
+    pub fn calculate_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(self.timestamp.to_string());
+        hasher.update(serde_json::to_string(&self.transactions).unwrap());
+        hasher.update(&self.previous_hash);
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+            && self.timestamp == other.timestamp
+            && self.transactions == other.transactions
+            && self.previous_hash == other.previous_hash
+            && self.hash == other.hash
+    }
 }
 
 impl Blockchain {
@@ -39,15 +73,9 @@ impl Blockchain {
             hash: String::new(),
         };
 
-        new_block.hash = Self::calculate_hash(&new_block);
+        new_block.hash = new_block.calculate_hash();
         self.chain.push(new_block.clone());
         Ok(new_block)
-    }
-
-    fn calculate_hash(block: &Block) -> String {
-        // This is a placeholder hash function. In a real implementation,
-        // you would use a cryptographic hash function.
-        format!("hash_of_block_{}", block.index)
     }
 
     pub fn validate_chain(&self) -> bool {
@@ -59,7 +87,7 @@ impl Blockchain {
                 return false;
             }
 
-            if current_block.hash != Self::calculate_hash(current_block) {
+            if current_block.hash != current_block.calculate_hash() {
                 return false;
             }
         }
@@ -109,6 +137,12 @@ impl Blockchain {
 
     pub fn get_chain(&self) -> &Vec<Block> {
         &self.chain
+    }
+}
+
+impl Default for Blockchain {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -1,5 +1,3 @@
-// File: crates/icn_market/src/market.rs
-
 use crate::entities::{Cooperative, Community, Member, Resource, Labor};
 use crate::transaction::{Transaction, TransactionType, TransactionResult};
 use std::collections::HashMap;
@@ -92,5 +90,11 @@ impl Market {
         }
 
         Err("Invalid exchange".into())
+    }
+}
+
+impl Default for Market {
+    fn default() -> Self {
+        Self::new()
     }
 }

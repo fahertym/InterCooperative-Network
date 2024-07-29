@@ -1,9 +1,10 @@
-use icn_common::{IcnResult, IcnError, Transaction, Block};
+use icn_common::{IcnResult, IcnError, Transaction};
+use icn_blockchain::Block; // Correct import
 use std::net::SocketAddr;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use log::{info, warn, error};
+use log::{info};
 
 pub struct Network {
     local_addr: SocketAddr,
@@ -13,6 +14,7 @@ pub struct Network {
     event_receiver: mpsc::Receiver<NetworkEvent>,
 }
 
+#[allow(dead_code)]
 struct PeerInfo {
     last_seen: Instant,
 }
@@ -104,7 +106,7 @@ impl Network {
         Ok(())
     }
 
-    pub async fn broadcast_cross_shard_transaction(&self, cross_shard_tx: CrossShardTransaction) -> IcnResult<()> {
+    pub async fn broadcast_cross_shard_transaction(&self, _cross_shard_tx: CrossShardTransaction) -> IcnResult<()> {
         for peer_addr in self.peers.keys() {
             info!("Broadcasting cross-shard transaction to peer: {}", peer_addr);
         }

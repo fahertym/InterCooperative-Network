@@ -1,4 +1,7 @@
-use icn_common::{IcnResult, IcnError, Transaction, Block, CurrencyType};
+// File: crates/icn_sharding/src/lib.rs
+
+use icn_blockchain::Block;
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use sha2::{Sha256, Digest};
@@ -78,9 +81,9 @@ impl ShardingManager {
 
         let from_balance = shard.balances
             .entry(transaction.from.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(transaction.currency_type.clone())
-            .or_insert(0.0);
+            .or_default();
 
         if *from_balance < transaction.amount {
             return Err(IcnError::Sharding("Insufficient balance".into()));
@@ -89,9 +92,9 @@ impl ShardingManager {
         *from_balance -= transaction.amount;
         *shard.balances
             .entry(transaction.to.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(transaction.currency_type.clone())
-            .or_insert(0.0) += transaction.amount;
+            .or_default() += transaction.amount;
 
         shard.transactions.push(transaction);
 
@@ -124,9 +127,9 @@ impl ShardingManager {
 
         let balance = shard.balances
             .entry(address.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(currency_type.clone())
-            .or_insert(0.0);
+            .or_default();
 
         if *balance < amount {
             return Err(IcnError::Sharding("Insufficient balance to lock".into()));
@@ -142,9 +145,9 @@ impl ShardingManager {
         let to_shard_data = &mut shard_data[to_shard as usize];
         *to_shard_data.balances
             .entry(transaction.to.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(transaction.currency_type.clone())
-            .or_insert(0.0) += transaction.amount;
+            .or_default() += transaction.amount;
 
         shard_data[from_shard as usize].transactions.push(transaction.clone());
         shard_data[to_shard as usize].transactions.push(transaction.clone());
@@ -212,17 +215,17 @@ impl ShardingManager {
         for transaction in &block.transactions {
             let from_balance = shard.balances
                 .entry(transaction.from.clone())
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
+                .or_default();
 
             *from_balance -= transaction.amount;
 
             let to_balance = shard.balances
                 .entry(transaction.to.clone())
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
+                .or_default();
 
             *to_balance += transaction.amount;
         }

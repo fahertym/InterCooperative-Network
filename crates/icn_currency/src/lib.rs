@@ -26,6 +26,12 @@ impl Account {
     }
 }
 
+impl Default for Account {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct CurrencySystem {
     accounts: HashMap<String, Account>,
 }
@@ -72,9 +78,16 @@ impl CurrencySystem {
     }
 }
 
+impl Default for CurrencySystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common::CurrencyType;
 
     #[test]
     fn test_account_operations() {

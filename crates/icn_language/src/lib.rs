@@ -1,13 +1,11 @@
-// File: crates/icn_language/src/lib.rs
-
 use nom::{
     IResult,
     branch::alt,
     bytes::complete::{tag, take_while1},
     character::complete::{char, multispace0},
     combinator::{map, recognize, opt},
-    multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    multi::separated_list0,
+    sequence::{delimited, pair, tuple},
 };
 use icn_vm::{Opcode, Value};
 
@@ -42,10 +40,10 @@ fn parse_number(input: &str) -> IResult<&str, f64> {
     map(
         recognize(tuple((
             opt(char('-')),
-            take_while1(|c: char| c.is_digit(10)),
+            take_while1(|c: char| c.is_ascii_digit()),
             opt(pair(
                 char('.'),
-                take_while1(|c: char| c.is_digit(10))
+                take_while1(|c: char| c.is_ascii_digit())
             ))
         ))),
         |s: &str| s.parse().unwrap()
@@ -56,7 +54,7 @@ fn parse_integer(input: &str) -> IResult<&str, i64> {
     map(
         recognize(pair(
             opt(char('-')),
-            take_while1(|c: char| c.is_digit(10))
+            take_while1(|c: char| c.is_ascii_digit())
         )),
         |s: &str| s.parse().unwrap()
     )(input)

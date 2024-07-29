@@ -1,12 +1,49 @@
 // File: icn_blockchain/src/blockchain.rs
 
-use icn_common::{Block, Transaction, IcnResult, IcnError, Hashable};
-use std::collections::HashMap;
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use chrono::Utc;
-use log::{info, warn, error};
-use std::sync::{Arc, RwLock};
-use crate::consensus::ConsensusAlgorithm;
-use crate::transaction_validator::TransactionValidator;
+use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub index: u64,
+    pub timestamp: i64,
+    pub transactions: Vec<Transaction>,
+    pub previous_hash: String,
+    pub hash: String,
+}
+
+impl Block {
+    pub fn genesis() -> Self {
+        Block {
+            index: 0,
+            timestamp: Utc::now().timestamp(),
+            transactions: vec![],
+            previous_hash: String::from("0"),
+            hash: String::from("genesis_hash"),
+        }
+    }
+
+    pub fn calculate_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.index.to_string());
+        hasher.update(self.timestamp.to_string());
+        hasher.update(serde_json::to_string(&self.transactions).unwrap());
+        hasher.update(&self.previous_hash);
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+impl PartialEq for Block {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+            && self.timestamp == other.timestamp
+            && self.transactions == other.transactions
+            && self.previous_hash == other.previous_hash
+            && self.hash == other.hash
+    }
+}
 
 /// Represents a blockchain, maintaining a list of blocks and pending transactions.
 pub struct Blockchain {
@@ -64,7 +101,7 @@ impl Blockchain {
             hash: String::new(),
         };
 
-        new_block.hash = new_block.hash();
+        new_block.hash = new_block.calculate_hash();
         self.consensus.read().unwrap().validate_block(&new_block)?;
 
         self.chain.push(new_block.clone());
@@ -82,7 +119,7 @@ impl Blockchain {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
 
-            if current_block.hash != current_block.hash() {
+            if current_block.hash != current_block.calculate_hash() {
                 return false;
             }
 

@@ -1,4 +1,7 @@
-use icn_common::{IcnResult, IcnError, Block, Transaction};
+// File: crates/icn_consensus/src/lib.rs
+
+use icn_blockchain::Block;
+use icn_common::{IcnResult, IcnError, Transaction};
 use std::collections::HashMap;
 use log::info;
 use std::sync::{Arc, RwLock};
@@ -20,7 +23,7 @@ pub struct PoCConsensus {
 
 impl PoCConsensus {
     pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
-        if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
+        if !(0.0..=1.0).contains(&threshold) || !(0.0..=1.0).contains(&quorum) {
             return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
         }
 
@@ -44,7 +47,7 @@ impl PoCConsensus {
     }
 
     pub fn add_validator(&mut self, id: String, initial_reputation: f64) -> IcnResult<()> {
-        if initial_reputation < 0.0 || initial_reputation > 1.0 {
+        if !(0.0..=1.0).contains(&initial_reputation) {
             return Err(IcnError::Consensus("Invalid initial reputation".into()));
         }
         self.validators.insert(id, Validator { reputation: initial_reputation });
@@ -141,7 +144,7 @@ impl PoCConsensus {
     }
 
     pub fn update_validator_reputation(&mut self, id: &str, new_reputation: f64) -> IcnResult<()> {
-        if new_reputation < 0.0 || new_reputation > 1.0 {
+        if !(0.0..=1.0).contains(&new_reputation) {
             return Err(IcnError::Consensus("Invalid reputation value".into()));
         }
 

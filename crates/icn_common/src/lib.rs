@@ -1,6 +1,11 @@
+// File: crates/icn_common/src/lib.rs
+
+pub mod error;
+
+pub use crate::error::{IcnError, IcnResult};
+
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -10,7 +15,7 @@ pub struct Config {
     pub network_port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transaction {
     pub from: String,
     pub to: String,
@@ -83,22 +88,45 @@ pub struct NetworkStats {
     pub active_proposals: usize,
 }
 
-pub type IcnResult<T> = std::result::Result<T, IcnError>;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, thiserror::Error)]
-pub enum IcnError {
-    #[error("Blockchain error: {0}")]
-    Blockchain(String),
-    #[error("Consensus error: {0}")]
-    Consensus(String),
-    #[error("Currency error: {0}")]
-    Currency(String),
-    #[error("Governance error: {0}")]
-    Governance(String),
-    #[error("Identity error: {0}")]
-    Identity(String),
-    #[error("Network error: {0}")]
-    Network(String),
-    #[error("Other error: {0}")]
-    Other(String),
+    #[test]
+    fn test_transaction_equality() {
+        let tx1 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        let tx2 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        assert_eq!(tx1, tx2);
+    }
+
+    #[test]
+    fn test_currency_type_equality() {
+        assert_eq!(CurrencyType::BasicNeeds, CurrencyType::BasicNeeds);
+        assert_ne!(CurrencyType::BasicNeeds, CurrencyType::Education);
+    }
+
+    #[test]
+    fn test_icn_error_messages() {
+        let blockchain_error = IcnError::Blockchain("Blockchain failed".to_string());
+        assert_eq!(format!("{}", blockchain_error), "Blockchain error: Blockchain failed");
+
+        let consensus_error = IcnError::Consensus("Consensus failed".to_string());
+        assert_eq!(format!("{}", consensus_error), "Consensus error: Consensus failed");
+    }
 }

@@ -53,6 +53,12 @@ impl IdentityManager {
     }
 }
 
+impl Default for IdentityManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

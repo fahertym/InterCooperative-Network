@@ -4,7 +4,7 @@ mod identity_manager;
 pub use did::DecentralizedIdentity;
 pub use identity_manager::IdentityManager;
 
-use icn_common::{IcnError, IcnResult};
+use icn_common::IcnResult;
 use std::collections::HashMap;
 use ed25519_dalek::Signature;
 
@@ -41,6 +41,12 @@ impl IdentityService {
 
     pub fn list_identities(&self) -> Vec<&DecentralizedIdentity> {
         self.manager.list_identities()
+    }
+}
+
+impl Default for IdentityService {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

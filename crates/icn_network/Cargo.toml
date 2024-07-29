@@ -5,12 +5,10 @@ edition = "2021"
 
 [dependencies]
 icn_common = { path = "../icn_common" }
+icn_blockchain = { path = "../icn_blockchain" }
 serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 thiserror = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 
-# If you still need `tokio` for dev-specific dependencies, you can keep it here as well
-#[dev-dependencies]
-#tokio = { version = "1.0", features = ["full"] }

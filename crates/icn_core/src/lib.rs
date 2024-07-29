@@ -1,30 +1,32 @@
-use icn_common::{Config, Transaction, Proposal, CurrencyType, ProposalStatus, NetworkStats, IcnResult, IcnError, Vote};
+use icn_common::{Config, Transaction, CurrencyType, ProposalStatus as CommonProposalStatus, NetworkStats, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
-use icn_governance::Governance;
+use icn_governance::{GovernanceSystem, Proposal, ProposalStatus};
 use icn_identity::{IdentityService, DecentralizedIdentity};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
+use ed25519_dalek::Signature;
 
 pub struct IcnNode {
     config: Config,
     blockchain: Arc<RwLock<Blockchain>>,
     consensus: Arc<RwLock<PoCConsensus>>,
     currency_system: Arc<RwLock<CurrencySystem>>,
-    governance: Arc<RwLock<Governance>>,
+    governance: Arc<RwLock<GovernanceSystem>>,
     identity_service: Arc<RwLock<IdentityService>>,
 }
 
 impl IcnNode {
     pub fn new(config: Config) -> IcnResult<Self> {
+        let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
         Ok(Self {
             config,
             blockchain: Arc::new(RwLock::new(Blockchain::new())),
-            consensus: Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?)),
+            consensus,
             currency_system: Arc::new(RwLock::new(CurrencySystem::new())),
-            governance: Arc::new(RwLock::new(Governance::new())),
+            governance: Arc::new(RwLock::new(GovernanceSystem::new())),
             identity_service: Arc::new(RwLock::new(IdentityService::new())),
         })
     }
@@ -46,7 +48,7 @@ impl IcnNode {
     }
 
     pub async fn get_identity(&self, id: &str) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.read().await.get_identity(id).cloned()
+        self.identity_service.read().await.get_identity(id).cloned().unwrap_or_else(|| Err(IcnError::CustomError("Identity not found".to_string())))
     }
 
     pub async fn update_identity_attributes(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
@@ -71,12 +73,17 @@ impl IcnNode {
         self.governance.write().await.create_proposal(proposal)
     }
 
-    pub async fn vote_on_proposal(&self, vote: Vote) -> IcnResult<()> {
-        self.governance.write().await.vote_on_proposal(vote)
+    pub async fn vote_on_proposal(&self, proposal_id: &str, voter: String, in_favor: bool, weight: f64) -> IcnResult<()> {
+        self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor, weight)
     }
 
-    pub async fn close_proposal(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
-        self.governance.write().await.close_proposal(proposal_id)
+    pub async fn close_proposal(&self, proposal_id: &str) -> IcnResult<CommonProposalStatus> {
+        let status = self.governance.write().await.finalize_proposal(proposal_id)?;
+        match status {
+            ProposalStatus::Active => Ok(CommonProposalStatus::Active),
+            ProposalStatus::Passed => Ok(CommonProposalStatus::Passed),
+            ProposalStatus::Rejected => Ok(CommonProposalStatus::Rejected),
+        }
     }
 
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
@@ -107,18 +114,18 @@ impl IcnNode {
     }
 
     pub async fn get_blockchain(&self) -> IcnResult<Vec<icn_blockchain::Block>> {
-        self.blockchain.read().await.get_chain().cloned()
+        Ok(self.blockchain.read().await.get_chain().clone())
     }
 
     pub async fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        Ok(self.governance.read().await.list_active_proposals())
+        Ok(self.governance.read().await.list_active_proposals().into_iter().cloned().collect())
     }
 
     pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Proposal> {
-        self.governance.read().await.get_proposal(proposal_id).cloned()
+        self.governance.read().await.get_proposal(proposal_id).cloned().unwrap_or_else(|| Err(IcnError::CustomError("Proposal not found".to_string())))
     }
 
-    pub async fn verify_signature(&self, id: &str, message: &[u8], signature: &ed25519_dalek::Signature) -> IcnResult<bool> {
+    pub async fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
         self.identity_service.read().await.verify_signature(id, message, signature)
     }
 }
@@ -128,6 +135,7 @@ mod tests {
     use super::*;
     use icn_common::{ProposalType, ProposalCategory};
     use chrono::Utc;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_icn_node() {
@@ -175,20 +183,19 @@ mod tests {
 
         let proposal_id = node.create_proposal(proposal).await.unwrap();
 
-        let vote = Vote {
+        let vote = icn_governance::Vote {
             voter: identity.id.clone(),
             proposal_id: proposal_id.clone(),
             in_favor: true,
             weight: 1.0,
             timestamp: Utc::now().timestamp(),
-            zkp: None,
         };
 
-        node.vote_on_proposal(vote).await.unwrap();
+        node.vote_on_proposal(&vote.proposal_id, vote.voter.clone(), vote.in_favor, vote.weight).await.unwrap();
 
         // Test closing proposal
         let proposal_status = node.close_proposal(&proposal_id).await.unwrap();
-        assert_eq!(proposal_status, ProposalStatus::Passed);
+        assert_eq!(proposal_status, CommonProposalStatus::Passed);
 
         // Test balance check
         let balance = node.get_balance(&identity.id, &CurrencyType::BasicNeeds).await.unwrap();

@@ -1,4 +1,4 @@
-// File: icn_common/src/error.rs
+// File: crates/icn_common/src/error.rs
 
 use thiserror::Error;
 
@@ -48,7 +48,7 @@ pub enum IcnError {
     Config(String),
 
     #[error("Zero-Knowledge Proof error: {0}")]
-    ZKP(String),
+    Zkp(String),
 
     #[error("Unknown error: {0}")]
     Unknown(String),

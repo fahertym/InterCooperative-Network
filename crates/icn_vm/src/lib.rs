@@ -92,7 +92,7 @@ impl CoopVM {
         match instruction {
             Opcode::Push(value) => self.stack.push(value),
             Opcode::Pop => {
-                self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
+                self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))?;
             }
             Opcode::Add => self.binary_op(|a, b| a + b)?,
             Opcode::Sub => self.binary_op(|a, b| a - b)?,
@@ -120,11 +120,11 @@ impl CoopVM {
                 self.stack.push(Value::Bool(!a));
             }
             Opcode::Store(name) => {
-                let value = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
+                let value = self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))?;
                 self.memory.insert(name, value);
             }
             Opcode::Load(name) => {
-                let value = self.memory.get(&name).ok_or_else(|| IcnError::VM("Variable not found".into()))?.clone();
+                let value = self.memory.get(&name).ok_or_else(|| IcnError::Vm("Variable not found".into()))?.clone();
                 self.stack.push(value);
             }
             Opcode::JumpIf(target) => {
@@ -136,7 +136,7 @@ impl CoopVM {
             Opcode::Jump(target) => {
                 self.pc = target - 1; // -1 because pc will be incremented after this
             }
-            Opcode::Call(_) => return Err(IcnError::VM("Function calls not implemented".into())),
+            Opcode::Call(_) => return Err(IcnError::Vm("Function calls not implemented".into())),
             Opcode::Return => return Ok(()),
             Opcode::NetNodeConnect => println!("Executing NetNodeConnect"),
             Opcode::ChainBlockCreate => println!("Executing ChainBlockCreate"),
@@ -168,24 +168,24 @@ impl CoopVM {
     where
         F: Fn(&Value, &Value) -> bool,
     {
-        let b = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
-        let a = self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))?;
+        let b = self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))?;
+        let a = self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))?;
         self.stack.push(Value::Bool(op(&a, &b)));
         Ok(())
     }
 
     fn pop_float(&mut self) -> IcnResult<f64> {
-        match self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))? {
+        match self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))? {
             Value::Float(f) => Ok(f),
             Value::Int(i) => Ok(i as f64),
-            _ => Err(IcnError::VM("Expected float value".into())),
+            _ => Err(IcnError::Vm("Expected float value".into())),
         }
     }
 
     fn pop_bool(&mut self) -> IcnResult<bool> {
-        match self.stack.pop().ok_or_else(|| IcnError::VM("Stack underflow".into()))? {
+        match self.stack.pop().ok_or_else(|| IcnError::Vm("Stack underflow".into()))? {
             Value::Bool(b) => Ok(b),
-            _ => Err(IcnError::VM("Expected boolean value".into())),
+            _ => Err(IcnError::Vm("Expected boolean value".into())),
         }
     }
 }

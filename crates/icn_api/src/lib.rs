@@ -1,5 +1,3 @@
-// File: icn_api/src/lib.rs
-
 use icn_core::IcnNode;
 use icn_common::{Transaction, Proposal, IcnResult, DecentralizedIdentity};
 use std::sync::Arc;
