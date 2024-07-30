@@ -1,7 +1,7 @@
 // File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
@@ -82,7 +82,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse().map_err(|_| IcnError::InvalidInput("Invalid amount".to_string()))?;
+    let amount: f64 = amount_str.trim().parse()?;
 
     print!("Currency type (BasicNeeds, Education, Environmental, Community): ");
     io::stdout().flush()?;
@@ -93,7 +93,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
+        _ => return Err(icn_common::IcnError::InvalidInput("Invalid currency type".to_string())),
     };
 
     let transaction = Transaction {
@@ -136,7 +136,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
         "Constitutional" => ProposalType::Constitutional,
         "EconomicAdjustment" => ProposalType::EconomicAdjustment,
         "NetworkUpgrade" => ProposalType::NetworkUpgrade,
-        _ => return Err(IcnError::InvalidInput("Invalid proposal type".to_string())),
+        _ => return Err(icn_common::IcnError::InvalidInput("Invalid proposal type".to_string())),
     };
 
     print!("Proposal category (Economic, Technical, Social): ");
@@ -147,7 +147,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
         "Economic" => ProposalCategory::Economic,
         "Technical" => ProposalCategory::Technical,
         "Social" => ProposalCategory::Social,
-        _ => return Err(IcnError::InvalidInput("Invalid proposal category".to_string())),
+        _ => return Err(icn_common::IcnError::InvalidInput("Invalid proposal category".to_string())),
     };
 
     let proposal = Proposal {
@@ -184,7 +184,7 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
+        _ => return Err(icn_common::IcnError::InvalidInput("Invalid currency type".to_string())),
     };
     
     let balance = node.get_balance(address.trim(), &currency_type).await?;
@@ -220,7 +220,7 @@ async fn allocate_resource(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: u64 = amount_str.trim().parse().map_err(|_| IcnError::InvalidInput("Invalid amount".to_string()))?;
+    let amount: u64 = amount_str.trim().parse()?;
 
     node.allocate_resource(resource_type.trim(), amount).await?;
     println!("Resource allocated successfully");

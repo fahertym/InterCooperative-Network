@@ -83,6 +83,22 @@ impl IcnNode {
         self.governance.write().await.create_proposal(proposal)
     }
 
+    pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currency_system.read().await.get_balance(address, currency_type)
+    }
+
+    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<String> {
+        self.identity_service.write().await.create_identity(attributes)
+    }
+
+    pub async fn allocate_resource(&self, resource_type: &str, amount: u64) -> IcnResult<()> {
+        self.sharding_manager.write().await.allocate_resource(resource_type, amount)
+    }
+
+    pub async fn get_network_stats(&self) -> IcnResult<NetworkStats> {
+        self.network_manager.read().await.get_stats()
+    }
+
     pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Option<Proposal>> {
         self.governance.read().await.get_proposal(proposal_id)
     }
@@ -99,16 +115,8 @@ impl IcnNode {
         self.governance.write().await.finalize_proposal(proposal_id)
     }
 
-    pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        self.currency_system.read().await.get_balance(address, currency_type)
-    }
-
     pub async fn mint_currency(&self, address: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
         self.currency_system.write().await.mint(address, currency_type, amount)
-    }
-
-    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<String> {
-        self.identity_service.write().await.create_identity(attributes)
     }
 
     pub async fn get_identity(&self, id: &str) -> IcnResult<HashMap<String, String>> {
@@ -127,14 +135,6 @@ impl IcnNode {
         Ok(self.blockchain.read().await.get_chain().clone())
     }
 
-    pub async fn get_network_stats(&self) -> IcnResult<icn_network::NetworkStats> {
-        self.network_manager.read().await.get_stats()
-    }
-
-    pub async fn allocate_resource(&self, resource_type: &str, amount: u64) -> IcnResult<()> {
-        self.sharding_manager.write().await.allocate_resource(resource_type, amount)
-    }
-
     pub async fn get_shard_count(&self) -> u64 {
         self.config.shard_count
     }
@@ -151,7 +151,7 @@ impl IcnNode {
         self.config.network_port
     }
 
-    // New helper methods
+    // Helper methods
 
     pub async fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let mut total_balance = 0.0;
