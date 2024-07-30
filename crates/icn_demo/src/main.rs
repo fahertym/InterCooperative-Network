@@ -1,4 +1,4 @@
-// File: icn_demo/src/main.rs
+// File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
 use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
@@ -6,7 +6,6 @@ use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
 use uuid::Uuid;
-use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -150,7 +149,7 @@ async fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error
     let mut name = String::new();
     io::stdin().read_line(&mut name)?;
     
-    let mut attributes = HashMap::new();
+    let mut attributes = std::collections::HashMap::new();
     attributes.insert("name".to_string(), name.trim().to_string());
     
     let identity_id = node.create_identity(attributes).await?;
