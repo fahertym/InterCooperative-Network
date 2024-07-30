@@ -3,10 +3,10 @@
 use icn_blockchain::Block;
 use icn_common::{IcnResult, IcnError, Transaction};
 use std::collections::HashMap;
-use log::info;
 use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct BlockWrapper(pub Block);
 
 struct Validator {
@@ -129,6 +129,9 @@ impl PoCConsensus {
             return Ok(false);
         }
 
+        // Here you would typically check the balance of the sender
+        // and verify the transaction signature
+        // For simplicity, we'll assume all transactions are valid for now
         Ok(true)
     }
 
@@ -169,6 +172,8 @@ mod tests {
             transactions: vec![],
             previous_hash: previous_hash.to_string(),
             hash: format!("test_hash_{}", index),
+            nonce: 0,
+            difficulty: 1,
         }
     }
 
@@ -209,5 +214,26 @@ mod tests {
         consensus.add_validator("validator1".to_string(), 0.8).unwrap();
         assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
         assert_eq!(consensus.validators["validator1"].reputation, 0.9);
+    }
+
+    #[test]
+    fn test_consensus_threshold() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
+        consensus.add_validator("validator3".to_string(), 0.6).unwrap();
+
+        let genesis_block = create_test_block(0, "0");
+        consensus.add_block_to_chain(genesis_block).unwrap();
+
+        let new_block = create_test_block(1, "test_hash_0");
+        assert!(consensus.process_new_block(new_block).is_ok());
+
+        // The total reputation is 2.1, and the quorum is 0.51 * 2.1 = 1.071
+        // The threshold is 0.66 * 1.071 = 0.70686
+        // So if validators with total reputation > 0.70686 approve, the block should be added
+
+        let blockchain = consensus.get_blockchain().unwrap();
+        assert_eq!(blockchain.len(), 2);
     }
 }

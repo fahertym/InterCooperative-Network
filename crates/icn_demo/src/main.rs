@@ -1,28 +1,75 @@
-async fn create_identity(node: &IcnNode) -> IcnResult<()> {
-    println!("Creating a new identity...");
-    
-    print!("Enter name: ");
-    io::stdout().flush()?;
-    let mut name = String::new();
-    io::stdin().read_line(&mut name)?;
-    
-    let mut attributes = HashMap::new();
-    attributes.insert("name".to_string(), name.trim().to_string());
-    
-    let identity = node.create_identity(attributes).await?;
-    println!("Identity created successfully. ID: {}", identity.id);
+// File: crates/icn_demo/src/main.rs
+
+use icn_core::{IcnNode, Config};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use std::io::{self, Write};
+use chrono::{Duration, Utc};
+use log::{info, warn, error};
+use uuid::Uuid;
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
+    let config = Config {
+        shard_count: 4,
+        consensus_threshold: 0.66,
+        consensus_quorum: 0.51,
+        network_port: 8080,
+    };
+
+    info!("Starting InterCooperative Network demo...");
+    let node = IcnNode::new(config).await?;
+    node.start().await?;
+
+    info!("Node started successfully. Type 'help' for available commands.");
+
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        match input {
+            "help" => print_help(),
+            "exit" => break,
+            "transaction" => process_transaction(&node).await?,
+            "proposal" => create_proposal(&node).await?,
+            "balance" => check_balance(&node).await?,
+            "identity" => create_identity(&node).await?,
+            _ => println!("Unknown command. Type 'help' for available commands."),
+        }
+    }
+
+    info!("Stopping node...");
+    node.stop().await?;
+    info!("Node stopped. Goodbye!");
+
     Ok(())
 }
 
-async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
-    println!("Processing a new transaction...");
+fn print_help() {
+    println!("Available commands:");
+    println!("  help        - Show this help message");
+    println!("  transaction - Create a new transaction");
+    println!("  proposal    - Create a new proposal");
+    println!("  balance     - Check account balance");
+    println!("  identity    - Create a new identity");
+    println!("  exit        - Exit the application");
+}
+
+async fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Creating a new transaction...");
     
-    print!("From (identity ID): ");
+    print!("From: ");
     io::stdout().flush()?;
     let mut from = String::new();
     io::stdin().read_line(&mut from)?;
     
-    print!("To (identity ID): ");
+    print!("To: ");
     io::stdout().flush()?;
     let mut to = String::new();
     io::stdin().read_line(&mut to)?;
@@ -31,7 +78,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse().map_err(|_| icn_common::IcnError::CustomError("Invalid amount".to_string()))?;
+    let amount: f64 = amount_str.trim().parse()?;
 
     let transaction = Transaction {
         from: from.trim().to_string(),
@@ -39,7 +86,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
         amount,
         currency_type: CurrencyType::BasicNeeds,
         timestamp: Utc::now().timestamp(),
-        signature: None, // In a real scenario, this should be signed
+        signature: None,
     };
 
     node.process_transaction(transaction).await?;
@@ -47,7 +94,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
+async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating a new proposal...");
     
     print!("Title: ");
@@ -60,7 +107,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     let mut description = String::new();
     io::stdin().read_line(&mut description)?;
     
-    print!("Proposer (identity ID): ");
+    print!("Proposer: ");
     io::stdout().flush()?;
     let mut proposer = String::new();
     io::stdin().read_line(&mut proposer)?;
@@ -84,34 +131,8 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn vote_on_proposal(node: &IcnNode) -> IcnResult<()> {
-    println!("Voting on a proposal...");
-    
-    print!("Proposal ID: ");
-    io::stdout().flush()?;
-    let mut proposal_id = String::new();
-    io::stdin().read_line(&mut proposal_id)?;
-    
-    print!("Voter (identity ID): ");
-    io::stdout().flush()?;
-    let mut voter = String::new();
-    io::stdin().read_line(&mut voter)?;
-    
-    print!("In favor? (yes/no): ");
-    io::stdout().flush()?;
-    let mut in_favor_str = String::new();
-    io::stdin().read_line(&mut in_favor_str)?;
-    let in_favor = in_favor_str.trim().to_lowercase() == "yes";
-
-    node.vote_on_proposal(&proposal_id.trim(), voter.trim().to_string(), in_favor, 1.0).await?;
-    println!("Vote recorded successfully");
-    Ok(())
-}
-
-async fn check_balance(node: &IcnNode) -> IcnResult<()> {
-    println!("Checking balance...");
-    
-    print!("Identity ID: ");
+async fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    print!("Enter address: ");
     io::stdout().flush()?;
     let mut address = String::new();
     io::stdin().read_line(&mut address)?;
@@ -121,32 +142,18 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn mint_currency(node: &IcnNode) -> IcnResult<()> {
-    println!("Minting new currency...");
+async fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Creating a new identity...");
     
-    print!("Identity ID: ");
+    print!("Enter name: ");
     io::stdout().flush()?;
-    let mut address = String::new();
-    io::stdin().read_line(&mut address)?;
+    let mut name = String::new();
+    io::stdin().read_line(&mut name)?;
     
-    print!("Amount: ");
-    io::stdout().flush()?;
-    let mut amount_str = String::new();
-    io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse().map_err(|_| icn_common::IcnError::CustomError("Invalid amount".to_string()))?;
-
-    node.mint_currency(address.trim(), &CurrencyType::BasicNeeds, amount).await?;
-    println!("Currency minted successfully");
-    Ok(())
-}
-
-async fn get_network_stats(node: &IcnNode) -> IcnResult<()> {
-    println!("Fetching network statistics...");
+    let mut attributes = HashMap::new();
+    attributes.insert("name".to_string(), name.trim().to_string());
     
-    let stats = node.get_network_stats().await?;
-    println!("Network Statistics:");
-    println!("  Node count: {}", stats.node_count);
-    println!("  Total transactions: {}", stats.total_transactions);
-    println!("  Active proposals: {}", stats.active_proposals);
+    let identity_id = node.create_identity(attributes).await?;
+    println!("Identity created successfully. ID: {}", identity_id);
     Ok(())
 }

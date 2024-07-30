@@ -1,15 +1,15 @@
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
-use icn_common::{Config, Transaction, CurrencyType, ProposalStatus as CommonProposalStatus, NetworkStats, IcnResult, IcnError};
+use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
-use icn_governance::{GovernanceSystem, Proposal, ProposalStatus};
-use icn_identity::{IdentityService, DecentralizedIdentity};
+use icn_governance::GovernanceSystem;
+use icn_identity::IdentityService;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
-use ed25519_dalek::Signature;
+use chrono::{DateTime, Utc};
 
 pub struct IcnNode {
     config: Config,
@@ -22,14 +22,19 @@ pub struct IcnNode {
 
 impl IcnNode {
     pub async fn new(config: Config) -> IcnResult<Self> {
+        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
         let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
+        let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
+        let governance = Arc::new(RwLock::new(GovernanceSystem::new()));
+        let identity_service = Arc::new(RwLock::new(IdentityService::new()));
+
         Ok(Self {
             config,
-            blockchain: Arc::new(RwLock::new(Blockchain::new())),
+            blockchain,
             consensus,
-            currency_system: Arc::new(RwLock::new(CurrencySystem::new())),
-            governance: Arc::new(RwLock::new(GovernanceSystem::new())),
-            identity_service: Arc::new(RwLock::new(IdentityService::new())),
+            currency_system,
+            governance,
+            identity_service,
         })
     }
 
@@ -41,23 +46,6 @@ impl IcnNode {
     pub async fn stop(&self) -> IcnResult<()> {
         self.consensus.read().await.stop()?;
         Ok(())
-    }
-
-    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.write().await.create_identity(attributes)
-    }
-
-    pub async fn get_identity(&self, id: &str) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.read().await.get_identity(id)
-            .ok_or_else(|| IcnError::Identity("Identity not found".to_string()))
-    }
-
-    pub async fn update_identity_attributes(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        self.identity_service.write().await.update_attributes(id, attributes)
-    }
-
-    pub async fn update_identity_reputation(&self, id: &str, change: f64) -> IcnResult<()> {
-        self.identity_service.write().await.update_reputation(id, change)
     }
 
     pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
@@ -78,14 +66,8 @@ impl IcnNode {
         self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor, weight)
     }
 
-    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<CommonProposalStatus> {
-        let status = self.governance.write().await.finalize_proposal(proposal_id)?;
-        match status {
-            ProposalStatus::Active => Ok(CommonProposalStatus::Active),
-            ProposalStatus::Passed => Ok(CommonProposalStatus::Passed),
-            ProposalStatus::Rejected => Ok(CommonProposalStatus::Rejected),
-            ProposalStatus::Executed => Ok(CommonProposalStatus::Executed),
-        }
+    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        self.governance.write().await.finalize_proposal(proposal_id)
     }
 
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
@@ -96,49 +78,26 @@ impl IcnNode {
         self.currency_system.write().await.mint(address, currency_type, amount)
     }
 
-    pub async fn get_network_stats(&self) -> IcnResult<NetworkStats> {
-        let blockchain = self.blockchain.read().await;
-        let governance = self.governance.read().await;
-
-        Ok(NetworkStats {
-            node_count: 1, // For simplicity, we're assuming a single node in this demo
-            total_transactions: blockchain.get_transaction_count(),
-            active_proposals: governance.list_active_proposals().len(),
-        })
+    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<String> {
+        self.identity_service.write().await.create_identity(attributes)
     }
 
-    pub async fn validate_block(&self, block: &icn_blockchain::Block) -> IcnResult<bool> {
-        self.consensus.read().await.validate_block(block)
+    pub async fn get_identity(&self, id: &str) -> IcnResult<HashMap<String, String>> {
+        self.identity_service.read().await.get_identity(id)
     }
 
-    pub async fn process_new_block(&self, block: icn_blockchain::Block) -> IcnResult<()> {
-        self.consensus.write().await.process_new_block(block)
+    pub async fn update_identity(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        self.identity_service.write().await.update_identity(id, attributes)
     }
 
     pub async fn get_blockchain(&self) -> IcnResult<Vec<icn_blockchain::Block>> {
         Ok(self.blockchain.read().await.get_chain().clone())
-    }
-
-    pub async fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        Ok(self.governance.read().await.list_active_proposals())
-    }
-
-    pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Proposal> {
-        self.governance.read().await.get_proposal(proposal_id)
-            .ok_or_else(|| IcnError::Governance("Proposal not found".to_string()))
-    }
-
-    pub async fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
-        self.identity_service.read().await.verify_signature(id, message, signature)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::{ProposalType, ProposalCategory};
-    use chrono::Utc;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_icn_node() {
@@ -154,19 +113,19 @@ mod tests {
         // Test identity creation
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        let identity = node.create_identity(attributes).await.unwrap();
+        let identity_id = node.create_identity(attributes).await.unwrap();
 
         // Test transaction processing
         let transaction = Transaction {
-            from: identity.id.clone(),
+            from: identity_id.clone(),
             to: "Bob".to_string(),
             amount: 100.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            signature: None, // In a real scenario, this should be signed
+            signature: None,
         };
 
-        node.mint_currency(&identity.id, &CurrencyType::BasicNeeds, 1000.0).await.unwrap();
+        node.mint_currency(&identity_id, &CurrencyType::BasicNeeds, 1000.0).await.unwrap();
         node.process_transaction(transaction).await.unwrap();
 
         // Test proposal creation and voting
@@ -174,7 +133,7 @@ mod tests {
             id: "test_proposal".to_string(),
             title: "Test Proposal".to_string(),
             description: "This is a test proposal".to_string(),
-            proposer: identity.id.clone(),
+            proposer: identity_id.clone(),
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + chrono::Duration::days(7),
             status: ProposalStatus::Active,
@@ -186,52 +145,32 @@ mod tests {
 
         let proposal_id = node.create_proposal(proposal).await.unwrap();
 
-        node.vote_on_proposal(&proposal_id, identity.id.clone(), true, 1.0).await.unwrap();
+        node.vote_on_proposal(&proposal_id, identity_id.clone(), true, 1.0).await.unwrap();
 
         // Test closing proposal
         let proposal_status = node.finalize_proposal(&proposal_id).await.unwrap();
-        assert_eq!(proposal_status, CommonProposalStatus::Passed);
+        assert_eq!(proposal_status, ProposalStatus::Passed);
 
         // Test balance check
-        let balance = node.get_balance(&identity.id, &CurrencyType::BasicNeeds).await.unwrap();
+        let balance = node.get_balance(&identity_id, &CurrencyType::BasicNeeds).await.unwrap();
         assert_eq!(balance, 900.0); // 1000 minted - 100 transferred
 
-        // Test network stats
-        let stats = node.get_network_stats().await.unwrap();
-        assert_eq!(stats.node_count, 1);
-        assert_eq!(stats.total_transactions, 1);
-        assert_eq!(stats.active_proposals, 0); // The proposal was closed
-
-        // Test blockchain
+        // Test get blockchain
         let blockchain = node.get_blockchain().await.unwrap();
-        assert_eq!(blockchain.len(), 1); // Genesis block
+        assert_eq!(blockchain.len(), 2); // Genesis block + 1 transaction block
 
-        // Test active proposals
-        let active_proposals = node.list_active_proposals().await.unwrap();
-        assert_eq!(active_proposals.len(), 0);
+        // Test get identity
+        let identity = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(identity.get("name"), Some(&"Alice".to_string()));
 
-        // Test get proposal
-        let retrieved_proposal = node.get_proposal(&proposal_id).await.unwrap();
-        assert_eq!(retrieved_proposal.id, proposal_id);
-
-        // Test signature verification
-        let message = b"Test message";
-        let keypair = ed25519_dalek::Keypair::generate(&mut rand::rngs::OsRng);
-        let signature = keypair.sign(message);
-        let verify_result = node.verify_signature(&identity.id, message, &signature).await.unwrap();
-        assert!(!verify_result); // Should be false as we used a different keypair
-
-        // Test update identity attributes
+        // Test update identity
         let mut new_attributes = HashMap::new();
         new_attributes.insert("age".to_string(), "30".to_string());
-        node.update_identity_attributes(&identity.id, new_attributes).await.unwrap();
+        node.update_identity(&identity_id, new_attributes).await.unwrap();
 
-        let updated_identity = node.get_identity(&identity.id).await.unwrap();
-        assert_eq!(updated_identity.attributes.get("age"), Some(&"30".to_string()));
+        let updated_identity = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(updated_identity.get("age"), Some(&"30".to_string()));
 
-        // Test update identity reputation
-        node.update_identity_reputation(&identity.id, 0.5).await.unwrap();
-        let updated_identity = node.get_identity(&identity.id).await.unwrap();
-        assert_eq!(updated_identity.reputation, 1.5);
+        assert!(node.stop().await.is_ok());
     }
 }

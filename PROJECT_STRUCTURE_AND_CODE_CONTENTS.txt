@@ -782,11 +782,6 @@ use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 
-pub struct Blockchain {
-    pub chain: Vec<Block>,
-    pending_transactions: Vec<Transaction>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
@@ -794,104 +789,114 @@ pub struct Block {
     pub transactions: Vec<Transaction>,
     pub previous_hash: String,
     pub hash: String,
+    pub nonce: u64,
+    pub difficulty: u32,
 }
 
 impl Block {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String, difficulty: u32) -> Self {
+        let mut block = Block {
+            index,
+            timestamp: Utc::now().timestamp(),
+            transactions,
+            previous_hash,
+            hash: String::new(),
+            nonce: 0,
+            difficulty,
+        };
+        block.hash = block.calculate_hash();
+        block
+    }
+
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.index.to_string());
         hasher.update(self.timestamp.to_string());
         hasher.update(serde_json::to_string(&self.transactions).unwrap());
         hasher.update(&self.previous_hash);
+        hasher.update(self.nonce.to_string());
         format!("{:x}", hasher.finalize())
+    }
+
+    pub fn mine(&mut self) {
+        let target = (1 << (256 - self.difficulty)) - 1;
+        while self.hash.parse::<u128>().unwrap_or(u128::MAX) > target as u128 {
+            self.nonce += 1;
+            self.hash = self.calculate_hash();
+        }
     }
 }
 
-impl PartialEq for Block {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-            && self.timestamp == other.timestamp
-            && self.transactions == other.transactions
-            && self.previous_hash == other.previous_hash
-            && self.hash == other.hash
-    }
+pub struct Blockchain {
+    pub chain: Vec<Block>,
+    pending_transactions: Vec<Transaction>,
+    difficulty: u32,
 }
 
 impl Blockchain {
     pub fn new() -> Self {
-        let genesis_block = Block {
-            index: 0,
-            timestamp: Utc::now().timestamp(),
-            transactions: Vec::new(),
-            previous_hash: String::from("0"),
-            hash: String::from("genesis_hash"),
-        };
-
+        let genesis_block = Block::new(0, Vec::new(), String::from("0"), 4);
         Blockchain {
             chain: vec![genesis_block],
             pending_transactions: Vec::new(),
+            difficulty: 4,
         }
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
+        // Basic transaction validation
+        if transaction.amount <= 0.0 {
+            return Err(IcnError::Blockchain("Invalid transaction amount".into()));
+        }
         self.pending_transactions.push(transaction);
         Ok(())
     }
 
-    pub fn create_block(&mut self) -> IcnResult<Block> {
-        let previous_block = self.chain.last()
-            .ok_or_else(|| IcnError::Blockchain("Empty blockchain".into()))?;
-
-        let mut new_block = Block {
-            index: self.chain.len() as u64,
+    pub fn mine_pending_transactions(&mut self, miner_address: &str) -> IcnResult<()> {
+        let reward_transaction = Transaction {
+            from: String::from("Network"),
+            to: miner_address.to_string(),
+            amount: 1.0, // Mining reward
+            currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            transactions: std::mem::take(&mut self.pending_transactions),
-            previous_hash: previous_block.hash.clone(),
-            hash: String::new(),
+            signature: None,
         };
+        self.pending_transactions.push(reward_transaction);
 
-        new_block.hash = new_block.calculate_hash();
-        self.chain.push(new_block.clone());
-        Ok(new_block)
+        let mut new_block = Block::new(
+            self.chain.len() as u64,
+            self.pending_transactions.clone(),
+            self.get_latest_block().hash.clone(),
+            self.difficulty,
+        );
+        new_block.mine();
+
+        self.chain.push(new_block);
+        self.pending_transactions.clear();
+        Ok(())
     }
 
-    pub fn validate_chain(&self) -> bool {
+    pub fn get_latest_block(&self) -> &Block {
+        self.chain.last().unwrap()
+    }
+
+    pub fn is_chain_valid(&self) -> bool {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
 
-            if current_block.previous_hash != previous_block.hash {
+            if current_block.hash != current_block.calculate_hash() {
                 return false;
             }
 
-            if current_block.hash != current_block.calculate_hash() {
+            if current_block.previous_hash != previous_block.hash {
                 return false;
             }
         }
         true
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block> {
-        self.chain.last()
-    }
-
-    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
-        self.chain.get(index as usize)
-    }
-
-    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
-        self.chain.iter().find(|block| block.hash == hash)
-    }
-
-    pub fn get_pending_transactions(&self) -> &[Transaction] {
-        &self.pending_transactions
-    }
-
-    pub fn clear_pending_transactions(&mut self) {
-        self.pending_transactions.clear();
-    }
-
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> f64 {
         let mut balance = 0.0;
         for block in &self.chain {
             for transaction in &block.transactions {
@@ -905,75 +910,27 @@ impl Blockchain {
                 }
             }
         }
-        Ok(balance)
+        balance
     }
 
-    pub fn get_transaction_count(&self) -> usize {
-        self.chain.iter().map(|block| block.transactions.len()).sum()
+    pub fn adjust_difficulty(&mut self) {
+        // Adjust difficulty every 10 blocks
+        if self.chain.len() % 10 == 0 {
+            let last_ten_blocks = &self.chain[self.chain.len() - 10..];
+            let average_time = last_ten_blocks.windows(2)
+                .map(|w| w[1].timestamp - w[0].timestamp)
+                .sum::<i64>() / 9;
+
+            if average_time < 30 {
+                self.difficulty += 1;
+            } else if average_time > 60 && self.difficulty > 1 {
+                self.difficulty -= 1;
+            }
+        }
     }
 
     pub fn get_chain(&self) -> &Vec<Block> {
         &self.chain
-    }
-}
-
-impl Default for Blockchain {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct TransactionValidator;
-
-impl TransactionValidator {
-    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        if Self::is_double_spend(transaction, blockchain)? {
-            return Err(IcnError::Blockchain("Double spend detected".to_string()));
-        }
-
-        if !Self::validate_currency_and_amount(transaction) {
-            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
-        }
-
-        if !Self::check_sufficient_balance(transaction, blockchain)? {
-            return Err(IcnError::Currency("Insufficient balance".to_string()));
-        }
-
-        if !Self::validate_signature(transaction)? {
-            return Err(IcnError::Identity("Invalid signature".to_string()));
-        }
-
-        Ok(())
-    }
-
-    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
-        for block in &blockchain.chain {
-            for tx in &block.transactions {
-                if tx.from == transaction.from && 
-                   tx.to == transaction.to && 
-                   tx.amount == transaction.amount && 
-                   tx.currency_type == transaction.currency_type &&
-                   tx.timestamp == transaction.timestamp {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    fn validate_currency_and_amount(transaction: &Transaction) -> bool {
-        transaction.amount > 0.0
-    }
-
-    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
-        let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
-        Ok(balance >= transaction.amount)
-    }
-
-    fn validate_signature(_transaction: &Transaction) -> IcnResult<bool> {
-        // In a real implementation, this would verify the transaction signature
-        // For now, we'll assume all transactions are valid
-        Ok(true)
     }
 }
 
@@ -996,12 +953,12 @@ mod tests {
             to: "Bob".to_string(),
             amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
+            timestamp: Utc::now().timestamp(),
             signature: None,
         };
 
         blockchain.add_transaction(transaction).unwrap();
-        assert!(blockchain.create_block().is_ok());
+        blockchain.mine_pending_transactions("Miner").unwrap();
         assert_eq!(blockchain.chain.len(), 2);
     }
 
@@ -1013,20 +970,102 @@ mod tests {
             to: "Bob".to_string(),
             amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
+            timestamp: Utc::now().timestamp(),
             signature: None,
         };
 
         blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block().unwrap();
-        assert!(blockchain.validate_chain());
+        blockchain.mine_pending_transactions("Miner").unwrap();
+        assert!(blockchain.is_chain_valid());
 
         // Tamper with a block to test invalid chain
         blockchain.chain[1].transactions[0].amount = 100.0;
-        assert!(!blockchain.validate_chain());
+        assert!(!blockchain.is_chain_valid());
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
+
+    #[test]
+    fn test_get_balance() {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+        let transaction2 = Transaction {
+            from: "Bob".to_string(),
+            to: "Alice".to_string(),
+            amount: 30.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.add_transaction(transaction1).unwrap();
+        blockchain.add_transaction(transaction2).unwrap();
+        blockchain.mine_pending_transactions("Miner").unwrap();
+
+        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds), -20.0);
+        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds), 20.0);
+        assert_eq!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds), 1.0);
+    }
+
+    #[test]
+    fn test_adjust_difficulty() {
+        let mut blockchain = Blockchain::new();
+        let initial_difficulty = blockchain.difficulty;
+
+        // Mine 10 blocks quickly
+        for _ in 0..10 {
+            blockchain.add_transaction(Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 1.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: Utc::now().timestamp(),
+                signature: None,
+            }).unwrap();
+            blockchain.mine_pending_transactions("Miner").unwrap();
+        }
+
+        assert!(blockchain.difficulty > initial_difficulty, "Difficulty should increase after mining blocks quickly");
+
+        // Reset difficulty
+        blockchain.difficulty = initial_difficulty;
+
+        // Mine 10 blocks slowly
+        for i in 0..10 {
+            blockchain.add_transaction(Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 1.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: Utc::now().timestamp() + i * 100, // Simulate slower block creation
+                signature: None,
+            }).unwrap();
+            blockchain.mine_pending_transactions("Miner").unwrap();
+        }
+
+        assert!(blockchain.difficulty < initial_difficulty, "Difficulty should decrease after mining blocks slowly");
+    }
+
+    #[test]
+    fn test_invalid_transaction() {
+        let mut blockchain = Blockchain::new();
+        let invalid_transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: -50.0, // Invalid negative amount
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(blockchain.add_transaction(invalid_transaction).is_err(), "Should not allow invalid transactions");
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
 // File: icn_blockchain/src/transaction_validator.rs
@@ -1792,10 +1831,10 @@ mod tests {
 use icn_blockchain::Block;
 use icn_common::{IcnResult, IcnError, Transaction};
 use std::collections::HashMap;
-use log::info;
 use std::sync::{Arc, RwLock};
+use log::{info, error};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct BlockWrapper(pub Block);
 
 struct Validator {
@@ -1918,6 +1957,9 @@ impl PoCConsensus {
             return Ok(false);
         }
 
+        // Here you would typically check the balance of the sender
+        // and verify the transaction signature
+        // For simplicity, we'll assume all transactions are valid for now
         Ok(true)
     }
 
@@ -1958,6 +2000,8 @@ mod tests {
             transactions: vec![],
             previous_hash: previous_hash.to_string(),
             hash: format!("test_hash_{}", index),
+            nonce: 0,
+            difficulty: 1,
         }
     }
 
@@ -1999,8 +2043,28 @@ mod tests {
         assert!(consensus.update_validator_reputation("validator1", 0.9).is_ok());
         assert_eq!(consensus.validators["validator1"].reputation, 0.9);
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+
+    #[test]
+    fn test_consensus_threshold() {
+        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
+        consensus.add_validator("validator3".to_string(), 0.6).unwrap();
+
+        let genesis_block = create_test_block(0, "0");
+        consensus.add_block_to_chain(genesis_block).unwrap();
+
+        let new_block = create_test_block(1, "test_hash_0");
+        assert!(consensus.process_new_block(new_block).is_ok());
+
+        // The total reputation is 2.1, and the quorum is 0.51 * 2.1 = 1.071
+        // The threshold is 0.66 * 1.071 = 0.70686
+        // So if validators with total reputation > 0.70686 approve, the block should be added
+
+        let blockchain = consensus.get_blockchain().unwrap();
+        assert_eq!(blockchain.len(), 2);
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs =====
 use icn_utils::{error::IcnError, IcnResult};
@@ -2226,18 +2290,18 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
-use icn_common::{Config, Transaction, CurrencyType, ProposalStatus as CommonProposalStatus, NetworkStats, IcnResult, IcnError};
+use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
-use icn_governance::{GovernanceSystem, Proposal, ProposalStatus};
-use icn_identity::{IdentityService, DecentralizedIdentity};
+use icn_governance::GovernanceSystem;
+use icn_identity::IdentityService;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
-use ed25519_dalek::Signature;
+use chrono::{DateTime, Utc};
 
 pub struct IcnNode {
     config: Config,
@@ -2250,14 +2314,19 @@ pub struct IcnNode {
 
 impl IcnNode {
     pub async fn new(config: Config) -> IcnResult<Self> {
+        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
         let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
+        let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
+        let governance = Arc::new(RwLock::new(GovernanceSystem::new()));
+        let identity_service = Arc::new(RwLock::new(IdentityService::new()));
+
         Ok(Self {
             config,
-            blockchain: Arc::new(RwLock::new(Blockchain::new())),
+            blockchain,
             consensus,
-            currency_system: Arc::new(RwLock::new(CurrencySystem::new())),
-            governance: Arc::new(RwLock::new(GovernanceSystem::new())),
-            identity_service: Arc::new(RwLock::new(IdentityService::new())),
+            currency_system,
+            governance,
+            identity_service,
         })
     }
 
@@ -2269,23 +2338,6 @@ impl IcnNode {
     pub async fn stop(&self) -> IcnResult<()> {
         self.consensus.read().await.stop()?;
         Ok(())
-    }
-
-    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.write().await.create_identity(attributes)
-    }
-
-    pub async fn get_identity(&self, id: &str) -> IcnResult<DecentralizedIdentity> {
-        self.identity_service.read().await.get_identity(id)
-            .ok_or_else(|| IcnError::Identity("Identity not found".to_string()))
-    }
-
-    pub async fn update_identity_attributes(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        self.identity_service.write().await.update_attributes(id, attributes)
-    }
-
-    pub async fn update_identity_reputation(&self, id: &str, change: f64) -> IcnResult<()> {
-        self.identity_service.write().await.update_reputation(id, change)
     }
 
     pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
@@ -2306,14 +2358,8 @@ impl IcnNode {
         self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor, weight)
     }
 
-    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<CommonProposalStatus> {
-        let status = self.governance.write().await.finalize_proposal(proposal_id)?;
-        match status {
-            ProposalStatus::Active => Ok(CommonProposalStatus::Active),
-            ProposalStatus::Passed => Ok(CommonProposalStatus::Passed),
-            ProposalStatus::Rejected => Ok(CommonProposalStatus::Rejected),
-            ProposalStatus::Executed => Ok(CommonProposalStatus::Executed),
-        }
+    pub async fn finalize_proposal(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        self.governance.write().await.finalize_proposal(proposal_id)
     }
 
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
@@ -2324,49 +2370,26 @@ impl IcnNode {
         self.currency_system.write().await.mint(address, currency_type, amount)
     }
 
-    pub async fn get_network_stats(&self) -> IcnResult<NetworkStats> {
-        let blockchain = self.blockchain.read().await;
-        let governance = self.governance.read().await;
-
-        Ok(NetworkStats {
-            node_count: 1, // For simplicity, we're assuming a single node in this demo
-            total_transactions: blockchain.get_transaction_count(),
-            active_proposals: governance.list_active_proposals().len(),
-        })
+    pub async fn create_identity(&self, attributes: HashMap<String, String>) -> IcnResult<String> {
+        self.identity_service.write().await.create_identity(attributes)
     }
 
-    pub async fn validate_block(&self, block: &icn_blockchain::Block) -> IcnResult<bool> {
-        self.consensus.read().await.validate_block(block)
+    pub async fn get_identity(&self, id: &str) -> IcnResult<HashMap<String, String>> {
+        self.identity_service.read().await.get_identity(id)
     }
 
-    pub async fn process_new_block(&self, block: icn_blockchain::Block) -> IcnResult<()> {
-        self.consensus.write().await.process_new_block(block)
+    pub async fn update_identity(&self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        self.identity_service.write().await.update_identity(id, attributes)
     }
 
     pub async fn get_blockchain(&self) -> IcnResult<Vec<icn_blockchain::Block>> {
         Ok(self.blockchain.read().await.get_chain().clone())
-    }
-
-    pub async fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
-        Ok(self.governance.read().await.list_active_proposals())
-    }
-
-    pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Proposal> {
-        self.governance.read().await.get_proposal(proposal_id)
-            .ok_or_else(|| IcnError::Governance("Proposal not found".to_string()))
-    }
-
-    pub async fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
-        self.identity_service.read().await.verify_signature(id, message, signature)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::{ProposalType, ProposalCategory};
-    use chrono::Utc;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_icn_node() {
@@ -2382,19 +2405,19 @@ mod tests {
         // Test identity creation
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
-        let identity = node.create_identity(attributes).await.unwrap();
+        let identity_id = node.create_identity(attributes).await.unwrap();
 
         // Test transaction processing
         let transaction = Transaction {
-            from: identity.id.clone(),
+            from: identity_id.clone(),
             to: "Bob".to_string(),
             amount: 100.0,
             currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            signature: None, // In a real scenario, this should be signed
+            signature: None,
         };
 
-        node.mint_currency(&identity.id, &CurrencyType::BasicNeeds, 1000.0).await.unwrap();
+        node.mint_currency(&identity_id, &CurrencyType::BasicNeeds, 1000.0).await.unwrap();
         node.process_transaction(transaction).await.unwrap();
 
         // Test proposal creation and voting
@@ -2402,7 +2425,7 @@ mod tests {
             id: "test_proposal".to_string(),
             title: "Test Proposal".to_string(),
             description: "This is a test proposal".to_string(),
-            proposer: identity.id.clone(),
+            proposer: identity_id.clone(),
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + chrono::Duration::days(7),
             status: ProposalStatus::Active,
@@ -2414,53 +2437,33 @@ mod tests {
 
         let proposal_id = node.create_proposal(proposal).await.unwrap();
 
-        node.vote_on_proposal(&proposal_id, identity.id.clone(), true, 1.0).await.unwrap();
+        node.vote_on_proposal(&proposal_id, identity_id.clone(), true, 1.0).await.unwrap();
 
         // Test closing proposal
         let proposal_status = node.finalize_proposal(&proposal_id).await.unwrap();
-        assert_eq!(proposal_status, CommonProposalStatus::Passed);
+        assert_eq!(proposal_status, ProposalStatus::Passed);
 
         // Test balance check
-        let balance = node.get_balance(&identity.id, &CurrencyType::BasicNeeds).await.unwrap();
+        let balance = node.get_balance(&identity_id, &CurrencyType::BasicNeeds).await.unwrap();
         assert_eq!(balance, 900.0); // 1000 minted - 100 transferred
 
-        // Test network stats
-        let stats = node.get_network_stats().await.unwrap();
-        assert_eq!(stats.node_count, 1);
-        assert_eq!(stats.total_transactions, 1);
-        assert_eq!(stats.active_proposals, 0); // The proposal was closed
-
-        // Test blockchain
+        // Test get blockchain
         let blockchain = node.get_blockchain().await.unwrap();
-        assert_eq!(blockchain.len(), 1); // Genesis block
+        assert_eq!(blockchain.len(), 2); // Genesis block + 1 transaction block
 
-        // Test active proposals
-        let active_proposals = node.list_active_proposals().await.unwrap();
-        assert_eq!(active_proposals.len(), 0);
+        // Test get identity
+        let identity = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(identity.get("name"), Some(&"Alice".to_string()));
 
-        // Test get proposal
-        let retrieved_proposal = node.get_proposal(&proposal_id).await.unwrap();
-        assert_eq!(retrieved_proposal.id, proposal_id);
-
-        // Test signature verification
-        let message = b"Test message";
-        let keypair = ed25519_dalek::Keypair::generate(&mut rand::rngs::OsRng);
-        let signature = keypair.sign(message);
-        let verify_result = node.verify_signature(&identity.id, message, &signature).await.unwrap();
-        assert!(!verify_result); // Should be false as we used a different keypair
-
-        // Test update identity attributes
+        // Test update identity
         let mut new_attributes = HashMap::new();
         new_attributes.insert("age".to_string(), "30".to_string());
-        node.update_identity_attributes(&identity.id, new_attributes).await.unwrap();
+        node.update_identity(&identity_id, new_attributes).await.unwrap();
 
-        let updated_identity = node.get_identity(&identity.id).await.unwrap();
-        assert_eq!(updated_identity.attributes.get("age"), Some(&"30".to_string()));
+        let updated_identity = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(updated_identity.get("age"), Some(&"30".to_string()));
 
-        // Test update identity reputation
-        node.update_identity_reputation(&identity.id, 0.5).await.unwrap();
-        let updated_identity = node.get_identity(&identity.id).await.unwrap();
-        assert_eq!(updated_identity.reputation, 1.5);
+        assert!(node.stop().await.is_ok());
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
 
@@ -4043,31 +4046,78 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_demo/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs =====
-async fn create_identity(node: &IcnNode) -> IcnResult<()> {
-    println!("Creating a new identity...");
-    
-    print!("Enter name: ");
-    io::stdout().flush()?;
-    let mut name = String::new();
-    io::stdin().read_line(&mut name)?;
-    
-    let mut attributes = HashMap::new();
-    attributes.insert("name".to_string(), name.trim().to_string());
-    
-    let identity = node.create_identity(attributes).await?;
-    println!("Identity created successfully. ID: {}", identity.id);
+// File: crates/icn_demo/src/main.rs
+
+use icn_core::{IcnNode, Config};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
+use std::io::{self, Write};
+use chrono::{Duration, Utc};
+use log::{info, warn, error};
+use uuid::Uuid;
+use std::collections::HashMap;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
+    let config = Config {
+        shard_count: 4,
+        consensus_threshold: 0.66,
+        consensus_quorum: 0.51,
+        network_port: 8080,
+    };
+
+    info!("Starting InterCooperative Network demo...");
+    let node = IcnNode::new(config).await?;
+    node.start().await?;
+
+    info!("Node started successfully. Type 'help' for available commands.");
+
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+
+        match input {
+            "help" => print_help(),
+            "exit" => break,
+            "transaction" => process_transaction(&node).await?,
+            "proposal" => create_proposal(&node).await?,
+            "balance" => check_balance(&node).await?,
+            "identity" => create_identity(&node).await?,
+            _ => println!("Unknown command. Type 'help' for available commands."),
+        }
+    }
+
+    info!("Stopping node...");
+    node.stop().await?;
+    info!("Node stopped. Goodbye!");
+
     Ok(())
 }
 
-async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
-    println!("Processing a new transaction...");
+fn print_help() {
+    println!("Available commands:");
+    println!("  help        - Show this help message");
+    println!("  transaction - Create a new transaction");
+    println!("  proposal    - Create a new proposal");
+    println!("  balance     - Check account balance");
+    println!("  identity    - Create a new identity");
+    println!("  exit        - Exit the application");
+}
+
+async fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Creating a new transaction...");
     
-    print!("From (identity ID): ");
+    print!("From: ");
     io::stdout().flush()?;
     let mut from = String::new();
     io::stdin().read_line(&mut from)?;
     
-    print!("To (identity ID): ");
+    print!("To: ");
     io::stdout().flush()?;
     let mut to = String::new();
     io::stdin().read_line(&mut to)?;
@@ -4076,7 +4126,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse().map_err(|_| icn_common::IcnError::CustomError("Invalid amount".to_string()))?;
+    let amount: f64 = amount_str.trim().parse()?;
 
     let transaction = Transaction {
         from: from.trim().to_string(),
@@ -4084,7 +4134,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
         amount,
         currency_type: CurrencyType::BasicNeeds,
         timestamp: Utc::now().timestamp(),
-        signature: None, // In a real scenario, this should be signed
+        signature: None,
     };
 
     node.process_transaction(transaction).await?;
@@ -4092,7 +4142,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
+async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating a new proposal...");
     
     print!("Title: ");
@@ -4105,7 +4155,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     let mut description = String::new();
     io::stdin().read_line(&mut description)?;
     
-    print!("Proposer (identity ID): ");
+    print!("Proposer: ");
     io::stdout().flush()?;
     let mut proposer = String::new();
     io::stdin().read_line(&mut proposer)?;
@@ -4129,34 +4179,8 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn vote_on_proposal(node: &IcnNode) -> IcnResult<()> {
-    println!("Voting on a proposal...");
-    
-    print!("Proposal ID: ");
-    io::stdout().flush()?;
-    let mut proposal_id = String::new();
-    io::stdin().read_line(&mut proposal_id)?;
-    
-    print!("Voter (identity ID): ");
-    io::stdout().flush()?;
-    let mut voter = String::new();
-    io::stdin().read_line(&mut voter)?;
-    
-    print!("In favor? (yes/no): ");
-    io::stdout().flush()?;
-    let mut in_favor_str = String::new();
-    io::stdin().read_line(&mut in_favor_str)?;
-    let in_favor = in_favor_str.trim().to_lowercase() == "yes";
-
-    node.vote_on_proposal(&proposal_id.trim(), voter.trim().to_string(), in_favor, 1.0).await?;
-    println!("Vote recorded successfully");
-    Ok(())
-}
-
-async fn check_balance(node: &IcnNode) -> IcnResult<()> {
-    println!("Checking balance...");
-    
-    print!("Identity ID: ");
+async fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    print!("Enter address: ");
     io::stdout().flush()?;
     let mut address = String::new();
     io::stdin().read_line(&mut address)?;
@@ -4166,33 +4190,19 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn mint_currency(node: &IcnNode) -> IcnResult<()> {
-    println!("Minting new currency...");
+async fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Creating a new identity...");
     
-    print!("Identity ID: ");
+    print!("Enter name: ");
     io::stdout().flush()?;
-    let mut address = String::new();
-    io::stdin().read_line(&mut address)?;
+    let mut name = String::new();
+    io::stdin().read_line(&mut name)?;
     
-    print!("Amount: ");
-    io::stdout().flush()?;
-    let mut amount_str = String::new();
-    io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse().map_err(|_| icn_common::IcnError::CustomError("Invalid amount".to_string()))?;
-
-    node.mint_currency(address.trim(), &CurrencyType::BasicNeeds, amount).await?;
-    println!("Currency minted successfully");
-    Ok(())
-}
-
-async fn get_network_stats(node: &IcnNode) -> IcnResult<()> {
-    println!("Fetching network statistics...");
+    let mut attributes = HashMap::new();
+    attributes.insert("name".to_string(), name.trim().to_string());
     
-    let stats = node.get_network_stats().await?;
-    println!("Network Statistics:");
-    println!("  Node count: {}", stats.node_count);
-    println!("  Total transactions: {}", stats.total_transactions);
-    println!("  Active proposals: {}", stats.active_proposals);
+    let identity_id = node.create_identity(attributes).await?;
+    println!("Identity created successfully. ID: {}", identity_id);
     Ok(())
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs =====
 

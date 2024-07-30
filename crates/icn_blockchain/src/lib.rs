@@ -5,11 +5,6 @@ use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 
-pub struct Blockchain {
-    pub chain: Vec<Block>,
-    pending_transactions: Vec<Transaction>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub index: u64,
@@ -17,104 +12,114 @@ pub struct Block {
     pub transactions: Vec<Transaction>,
     pub previous_hash: String,
     pub hash: String,
+    pub nonce: u64,
+    pub difficulty: u32,
 }
 
 impl Block {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String, difficulty: u32) -> Self {
+        let mut block = Block {
+            index,
+            timestamp: Utc::now().timestamp(),
+            transactions,
+            previous_hash,
+            hash: String::new(),
+            nonce: 0,
+            difficulty,
+        };
+        block.hash = block.calculate_hash();
+        block
+    }
+
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.index.to_string());
         hasher.update(self.timestamp.to_string());
         hasher.update(serde_json::to_string(&self.transactions).unwrap());
         hasher.update(&self.previous_hash);
+        hasher.update(self.nonce.to_string());
         format!("{:x}", hasher.finalize())
+    }
+
+    pub fn mine(&mut self) {
+        let target = (1 << (256 - self.difficulty)) - 1;
+        while self.hash.parse::<u128>().unwrap_or(u128::MAX) > target as u128 {
+            self.nonce += 1;
+            self.hash = self.calculate_hash();
+        }
     }
 }
 
-impl PartialEq for Block {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-            && self.timestamp == other.timestamp
-            && self.transactions == other.transactions
-            && self.previous_hash == other.previous_hash
-            && self.hash == other.hash
-    }
+pub struct Blockchain {
+    pub chain: Vec<Block>,
+    pending_transactions: Vec<Transaction>,
+    difficulty: u32,
 }
 
 impl Blockchain {
     pub fn new() -> Self {
-        let genesis_block = Block {
-            index: 0,
-            timestamp: Utc::now().timestamp(),
-            transactions: Vec::new(),
-            previous_hash: String::from("0"),
-            hash: String::from("genesis_hash"),
-        };
-
+        let genesis_block = Block::new(0, Vec::new(), String::from("0"), 4);
         Blockchain {
             chain: vec![genesis_block],
             pending_transactions: Vec::new(),
+            difficulty: 4,
         }
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
+        // Basic transaction validation
+        if transaction.amount <= 0.0 {
+            return Err(IcnError::Blockchain("Invalid transaction amount".into()));
+        }
         self.pending_transactions.push(transaction);
         Ok(())
     }
 
-    pub fn create_block(&mut self) -> IcnResult<Block> {
-        let previous_block = self.chain.last()
-            .ok_or_else(|| IcnError::Blockchain("Empty blockchain".into()))?;
-
-        let mut new_block = Block {
-            index: self.chain.len() as u64,
+    pub fn mine_pending_transactions(&mut self, miner_address: &str) -> IcnResult<()> {
+        let reward_transaction = Transaction {
+            from: String::from("Network"),
+            to: miner_address.to_string(),
+            amount: 1.0, // Mining reward
+            currency_type: CurrencyType::BasicNeeds,
             timestamp: Utc::now().timestamp(),
-            transactions: std::mem::take(&mut self.pending_transactions),
-            previous_hash: previous_block.hash.clone(),
-            hash: String::new(),
+            signature: None,
         };
+        self.pending_transactions.push(reward_transaction);
 
-        new_block.hash = new_block.calculate_hash();
-        self.chain.push(new_block.clone());
-        Ok(new_block)
+        let mut new_block = Block::new(
+            self.chain.len() as u64,
+            self.pending_transactions.clone(),
+            self.get_latest_block().hash.clone(),
+            self.difficulty,
+        );
+        new_block.mine();
+
+        self.chain.push(new_block);
+        self.pending_transactions.clear();
+        Ok(())
     }
 
-    pub fn validate_chain(&self) -> bool {
+    pub fn get_latest_block(&self) -> &Block {
+        self.chain.last().unwrap()
+    }
+
+    pub fn is_chain_valid(&self) -> bool {
         for i in 1..self.chain.len() {
             let current_block = &self.chain[i];
             let previous_block = &self.chain[i - 1];
 
-            if current_block.previous_hash != previous_block.hash {
+            if current_block.hash != current_block.calculate_hash() {
                 return false;
             }
 
-            if current_block.hash != current_block.calculate_hash() {
+            if current_block.previous_hash != previous_block.hash {
                 return false;
             }
         }
         true
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block> {
-        self.chain.last()
-    }
-
-    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
-        self.chain.get(index as usize)
-    }
-
-    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
-        self.chain.iter().find(|block| block.hash == hash)
-    }
-
-    pub fn get_pending_transactions(&self) -> &[Transaction] {
-        &self.pending_transactions
-    }
-
-    pub fn clear_pending_transactions(&mut self) {
-        self.pending_transactions.clear();
-    }
-
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> f64 {
         let mut balance = 0.0;
         for block in &self.chain {
             for transaction in &block.transactions {
@@ -128,75 +133,27 @@ impl Blockchain {
                 }
             }
         }
-        Ok(balance)
+        balance
     }
 
-    pub fn get_transaction_count(&self) -> usize {
-        self.chain.iter().map(|block| block.transactions.len()).sum()
+    pub fn adjust_difficulty(&mut self) {
+        // Adjust difficulty every 10 blocks
+        if self.chain.len() % 10 == 0 {
+            let last_ten_blocks = &self.chain[self.chain.len() - 10..];
+            let average_time = last_ten_blocks.windows(2)
+                .map(|w| w[1].timestamp - w[0].timestamp)
+                .sum::<i64>() / 9;
+
+            if average_time < 30 {
+                self.difficulty += 1;
+            } else if average_time > 60 && self.difficulty > 1 {
+                self.difficulty -= 1;
+            }
+        }
     }
 
     pub fn get_chain(&self) -> &Vec<Block> {
         &self.chain
-    }
-}
-
-impl Default for Blockchain {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct TransactionValidator;
-
-impl TransactionValidator {
-    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        if Self::is_double_spend(transaction, blockchain)? {
-            return Err(IcnError::Blockchain("Double spend detected".to_string()));
-        }
-
-        if !Self::validate_currency_and_amount(transaction) {
-            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
-        }
-
-        if !Self::check_sufficient_balance(transaction, blockchain)? {
-            return Err(IcnError::Currency("Insufficient balance".to_string()));
-        }
-
-        if !Self::validate_signature(transaction)? {
-            return Err(IcnError::Identity("Invalid signature".to_string()));
-        }
-
-        Ok(())
-    }
-
-    fn is_double_spend(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
-        for block in &blockchain.chain {
-            for tx in &block.transactions {
-                if tx.from == transaction.from && 
-                   tx.to == transaction.to && 
-                   tx.amount == transaction.amount && 
-                   tx.currency_type == transaction.currency_type &&
-                   tx.timestamp == transaction.timestamp {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    fn validate_currency_and_amount(transaction: &Transaction) -> bool {
-        transaction.amount > 0.0
-    }
-
-    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
-        let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
-        Ok(balance >= transaction.amount)
-    }
-
-    fn validate_signature(_transaction: &Transaction) -> IcnResult<bool> {
-        // In a real implementation, this would verify the transaction signature
-        // For now, we'll assume all transactions are valid
-        Ok(true)
     }
 }
 
@@ -219,12 +176,12 @@ mod tests {
             to: "Bob".to_string(),
             amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
+            timestamp: Utc::now().timestamp(),
             signature: None,
         };
 
         blockchain.add_transaction(transaction).unwrap();
-        assert!(blockchain.create_block().is_ok());
+        blockchain.mine_pending_transactions("Miner").unwrap();
         assert_eq!(blockchain.chain.len(), 2);
     }
 
@@ -236,16 +193,99 @@ mod tests {
             to: "Bob".to_string(),
             amount: 50.0,
             currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
+            timestamp: Utc::now().timestamp(),
             signature: None,
         };
 
         blockchain.add_transaction(transaction).unwrap();
-        blockchain.create_block().unwrap();
-        assert!(blockchain.validate_chain());
+        blockchain.mine_pending_transactions("Miner").unwrap();
+        assert!(blockchain.is_chain_valid());
 
         // Tamper with a block to test invalid chain
         blockchain.chain[1].transactions[0].amount = 100.0;
-        assert!(!blockchain.validate_chain());
+        assert!(!blockchain.is_chain_valid());
+    }
+
+    #[test]
+    fn test_get_balance() {
+        let mut blockchain = Blockchain::new();
+        let transaction1 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+        let transaction2 = Transaction {
+            from: "Bob".to_string(),
+            to: "Alice".to_string(),
+            amount: 30.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.add_transaction(transaction1).unwrap();
+        blockchain.add_transaction(transaction2).unwrap();
+        blockchain.mine_pending_transactions("Miner").unwrap();
+
+        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds), -20.0);
+        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds), 20.0);
+        assert_eq!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds), 1.0);
+    }
+
+    #[test]
+    fn test_adjust_difficulty() {
+        let mut blockchain = Blockchain::new();
+        let initial_difficulty = blockchain.difficulty;
+
+        // Mine 10 blocks quickly
+        for _ in 0..10 {
+            blockchain.add_transaction(Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 1.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: Utc::now().timestamp(),
+                signature: None,
+            }).unwrap();
+            blockchain.mine_pending_transactions("Miner").unwrap();
+        }
+
+        assert!(blockchain.difficulty > initial_difficulty, "Difficulty should increase after mining blocks quickly");
+
+        // Reset difficulty
+        blockchain.difficulty = initial_difficulty;
+
+        // Mine 10 blocks slowly
+        for i in 0..10 {
+            blockchain.add_transaction(Transaction {
+                from: "Alice".to_string(),
+                to: "Bob".to_string(),
+                amount: 1.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: Utc::now().timestamp() + i * 100, // Simulate slower block creation
+                signature: None,
+            }).unwrap();
+            blockchain.mine_pending_transactions("Miner").unwrap();
+        }
+
+        assert!(blockchain.difficulty < initial_difficulty, "Difficulty should decrease after mining blocks slowly");
+    }
+
+    #[test]
+    fn test_invalid_transaction() {
+        let mut blockchain = Blockchain::new();
+        let invalid_transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: -50.0, // Invalid negative amount
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(blockchain.add_transaction(invalid_transaction).is_err(), "Should not allow invalid transactions");
     }
 }
