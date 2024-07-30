@@ -1,7 +1,7 @@
-// File: icn_demo/src/main.rs
+// File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common::{Transaction, Proposal, CurrencyType, ProposalStatus, ProposalType, ProposalCategory};
+use icn_common::{Transaction, Proposal, CurrencyType, ProposalStatus, ProposalType, ProposalCategory, IcnResult};
 use tokio;
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
@@ -10,7 +10,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> IcnResult<()> {
     env_logger::init();
 
     let config = Config {
@@ -74,7 +74,7 @@ fn print_help() {
     println!("  exit               - Exit the application");
 }
 
-async fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn create_identity(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new identity...");
     
     print!("Enter name: ");
@@ -90,7 +90,7 @@ async fn create_identity(node: &IcnNode) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-async fn mint_currency(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn mint_currency(node: &IcnNode) -> IcnResult<()> {
     println!("Minting currency...");
     
     print!("Enter address: ");
@@ -108,7 +108,7 @@ async fn mint_currency(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>>
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err("Invalid currency type".into()),
+        _ => return Err(IcnError::Currency("Invalid currency type".into())),
     };
 
     print!("Enter amount: ");
@@ -122,7 +122,7 @@ async fn mint_currency(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-async fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new transaction...");
     
     print!("From: ");
@@ -150,7 +150,7 @@ async fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::E
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err("Invalid currency type".into()),
+        _ => return Err(IcnError::Currency("Invalid currency type".into())),
     };
 
     let transaction = Transaction {
@@ -167,7 +167,7 @@ async fn process_transaction(node: &IcnNode) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new proposal...");
     
     print!("Title: ");
@@ -185,6 +185,28 @@ async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error
     let mut proposer = String::new();
     io::stdin().read_line(&mut proposer)?;
 
+    print!("Proposal type (Constitutional, EconomicAdjustment, NetworkUpgrade): ");
+    io::stdout().flush()?;
+    let mut proposal_type_str = String::new();
+    io::stdin().read_line(&mut proposal_type_str)?;
+    let proposal_type = match proposal_type_str.trim() {
+        "Constitutional" => ProposalType::Constitutional,
+        "EconomicAdjustment" => ProposalType::EconomicAdjustment,
+        "NetworkUpgrade" => ProposalType::NetworkUpgrade,
+        _ => return Err(IcnError::Governance("Invalid proposal type".into())),
+    };
+
+    print!("Proposal category (Economic, Technical, Social): ");
+    io::stdout().flush()?;
+    let mut category_str = String::new();
+    io::stdin().read_line(&mut category_str)?;
+    let category = match category_str.trim() {
+        "Economic" => ProposalCategory::Economic,
+        "Technical" => ProposalCategory::Technical,
+        "Social" => ProposalCategory::Social,
+        _ => return Err(IcnError::Governance("Invalid proposal category".into())),
+    };
+
     let proposal = Proposal {
         id: Uuid::new_v4().to_string(),
         title: title.trim().to_string(),
@@ -193,8 +215,8 @@ async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
         status: ProposalStatus::Active,
-        proposal_type: ProposalType::Constitutional,
-        category: ProposalCategory::Economic,
+        proposal_type,
+        category,
         required_quorum: 0.66,
         execution_timestamp: None,
     };
@@ -204,7 +226,7 @@ async fn create_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-async fn vote_on_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn vote_on_proposal(node: &IcnNode) -> IcnResult<()> {
     println!("Voting on a proposal...");
 
     print!("Proposal ID: ");
@@ -234,7 +256,7 @@ async fn vote_on_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-async fn finalize_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn finalize_proposal(node: &IcnNode) -> IcnResult<()> {
     println!("Finalizing a proposal...");
 
     print!("Proposal ID: ");
@@ -247,7 +269,7 @@ async fn finalize_proposal(node: &IcnNode) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-async fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn check_balance(node: &IcnNode) -> IcnResult<()> {
     print!("Enter address: ");
     io::stdout().flush()?;
     let mut address = String::new();
@@ -262,7 +284,7 @@ async fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>>
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err("Invalid currency type".into()),
+        _ => return Err(IcnError::Currency("Invalid currency type".into())),
     };
     
     let balance = node.get_balance(address.trim(), &currency_type).await?;
@@ -270,7 +292,7 @@ async fn check_balance(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
-async fn print_blockchain(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn print_blockchain(node: &IcnNode) -> IcnResult<()> {
     let blockchain = node.get_blockchain().await?;
     println!("Current Blockchain:");
     for (i, block) in blockchain.iter().enumerate() {
@@ -279,7 +301,7 @@ async fn print_blockchain(node: &IcnNode) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-async fn print_network_stats(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn print_network_stats(node: &IcnNode) -> IcnResult<()> {
     let stats = node.get_network_stats().await?;
     println!("Network Statistics:");
     println!("  Connected Peers: {}", stats.connected_peers);
@@ -288,7 +310,7 @@ async fn print_network_stats(node: &IcnNode) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn allocate_resource(node: &IcnNode) -> Result<(), Box<dyn std::error::Error>> {
+async fn allocate_resource(node: &IcnNode) -> IcnResult<()> {
     println!("Allocating a resource...");
 
     print!("Enter resource type: ");
