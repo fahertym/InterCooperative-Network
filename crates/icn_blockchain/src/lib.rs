@@ -1,6 +1,6 @@
 // File: icn_blockchain/src/lib.rs
 
-use icn_common::{Transaction, IcnResult, IcnError, CurrencyType};
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
@@ -151,10 +151,6 @@ impl Blockchain {
             }
         }
     }
-
-    pub fn get_chain(&self) -> &Vec<Block> {
-        &self.chain
-    }
 }
 
 #[cfg(test)]
@@ -253,6 +249,7 @@ mod tests {
             blockchain.mine_pending_transactions("Miner").unwrap();
         }
 
+        blockchain.adjust_difficulty();
         assert!(blockchain.difficulty > initial_difficulty, "Difficulty should increase after mining blocks quickly");
 
         // Reset difficulty
@@ -271,6 +268,7 @@ mod tests {
             blockchain.mine_pending_transactions("Miner").unwrap();
         }
 
+        blockchain.adjust_difficulty();
         assert!(blockchain.difficulty < initial_difficulty, "Difficulty should decrease after mining blocks slowly");
     }
 
