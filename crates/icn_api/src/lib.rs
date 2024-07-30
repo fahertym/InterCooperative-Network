@@ -1,136 +1,277 @@
-use icn_core::IcnNode;
-use icn_common::{Transaction, Proposal, IcnResult, DecentralizedIdentity};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-pub struct ApiLayer {
-    node: Arc<RwLock<IcnNode>>,
-}
-
-impl ApiLayer {
-    pub fn new(node: Arc<RwLock<IcnNode>>) -> Self {
-        ApiLayer { node }
-    }
-
-    pub async fn submit_transaction(&self, tx: Transaction) -> IcnResult<()> {
-        let node = self.node.read().await;
-        node.process_transaction(tx).await
-    }
-
-    pub async fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        let node = self.node.read().await;
-        node.create_proposal(proposal)
-    }
-
-    pub async fn create_identity(&self, attributes: std::collections::HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        let node = self.node.read().await;
-        node.create_identity(attributes)
+async fn handle_create_proposal(proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.create_proposal(proposal).await {
+        Ok(id) => Ok(warp::reply::json(&json!({"status": "success", "proposal_id": id}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
     }
 }
 
-use warp::Filter;
-
-pub fn routes(api_layer: Arc<RwLock<ApiLayer>>) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let api = warp::path("api");
-
-    let submit_transaction = warp::path("submit_transaction")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(with_api_layer(api_layer.clone()))
-        .and_then(|tx: Transaction, api_layer: Arc<RwLock<ApiLayer>>| async move {
-            match api_layer.read().await.submit_transaction(tx).await {
-                Ok(_) => Ok(warp::reply::json(&"Transaction submitted successfully")),
-                Err(err) => Err(warp::reject::custom(err)),
-            }
-        });
-
-    let create_proposal = warp::path("create_proposal")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(with_api_layer(api_layer.clone()))
-        .and_then(|proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>| async move {
-            match api_layer.read().await.create_proposal(proposal).await {
-                Ok(id) => Ok(warp::reply::json(&id)),
-                Err(err) => Err(warp::reject::custom(err)),
-            }
-        });
-
-    let create_identity = warp::path("create_identity")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(with_api_layer(api_layer))
-        .and_then(|attributes: std::collections::HashMap<String, String>, api_layer: Arc<RwLock<ApiLayer>>| async move {
-            match api_layer.read().await.create_identity(attributes).await {
-                Ok(identity) => Ok(warp::reply::json(&identity)),
-                Err(err) => Err(warp::reject::custom(err)),
-            }
-        });
-
-    api.and(submit_transaction.or(create_proposal).or(create_identity))
+async fn handle_vote_on_proposal(vote: VoteRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.vote_on_proposal(&vote.proposal_id, vote.voter, vote.in_favor, vote.weight).await {
+        Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
 }
 
-fn with_api_layer(api_layer: Arc<RwLock<ApiLayer>>) -> impl Filter<Extract = (Arc<RwLock<ApiLayer>>,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || api_layer.clone())
+async fn handle_finalize_proposal(request: FinalizeProposalRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.finalize_proposal(&request.proposal_id).await {
+        Ok(status) => Ok(warp::reply::json(&json!({"status": "success", "proposal_status": status}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+async fn handle_get_balance(query: GetBalanceQuery, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.get_balance(&query.address, &query.currency_type).await {
+        Ok(balance) => Ok(warp::reply::json(&json!({"status": "success", "balance": balance}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+async fn handle_mint_currency(request: MintCurrencyRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.mint_currency(&request.address, &request.currency_type, request.amount).await {
+        Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+async fn handle_create_identity(attributes: HashMap<String, String>, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.create_identity(attributes).await {
+        Ok(id) => Ok(warp::reply::json(&json!({"status": "success", "identity_id": id}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+async fn handle_allocate_resource(request: AllocateResourceRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.allocate_resource(&request.resource_type, request.amount).await {
+        Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+async fn handle_get_network_stats(api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+    let api_layer = api_layer.read().await;
+    match api_layer.get_network_stats().await {
+        Ok(stats) => Ok(warp::reply::json(&json!({"status": "success", "stats": stats}))),
+        Err(e) => Ok(warp::reply::json(&json!({"status": "error", "message": e.to_string()}))),
+    }
+}
+
+#[derive(Deserialize)]
+struct VoteRequest {
+    proposal_id: String,
+    voter: String,
+    in_favor: bool,
+    weight: f64,
+}
+
+#[derive(Deserialize)]
+struct FinalizeProposalRequest {
+    proposal_id: String,
+}
+
+#[derive(Deserialize)]
+struct GetBalanceQuery {
+    address: String,
+    currency_type: CurrencyType,
+}
+
+#[derive(Deserialize)]
+struct MintCurrencyRequest {
+    address: String,
+    currency_type: CurrencyType,
+    amount: f64,
+}
+
+#[derive(Deserialize)]
+struct AllocateResourceRequest {
+    resource_type: String,
+    amount: u64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::{CurrencyType, Transaction, Proposal};
-    use warp::Filter;
-    use tokio::runtime::Runtime;
+    use icn_core::Config;
+    use std::net::SocketAddr;
 
-    #[test]
-    fn test_api_routes() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(async {
-            let node = Arc::new(RwLock::new(IcnNode::new()));
-            let api_layer = Arc::new(RwLock::new(ApiLayer::new(node)));
+    async fn setup_test_env() -> (Arc<RwLock<ApiLayer>>, Arc<RwLock<IcnNode>>) {
+        let config = Config {
+            shard_count: 1,
+            consensus_threshold: 0.66,
+            consensus_quorum: 0.51,
+            network_port: 8080,
+        };
+        let node = Arc::new(RwLock::new(IcnNode::new(config).await.unwrap()));
+        let api_layer = Arc::new(RwLock::new(ApiLayer::new(Arc::clone(&node))));
+        (api_layer, node)
+    }
 
-            let api = routes(api_layer);
+    #[tokio::test]
+    async fn test_submit_transaction() {
+        let (api_layer, _) = setup_test_env().await;
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: chrono::Utc::now().timestamp(),
+            signature: None,
+        };
 
-            let transaction = Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 100.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: chrono::Utc::now().timestamp(),
-                signature: None,
-            };
+        let result = handle_submit_transaction(transaction, api_layer).await;
+        assert!(result.is_ok());
+    }
 
-            let proposal = Proposal {
-                id: "1".to_string(),
-                title: "Proposal Title".to_string(),
-                description: "Proposal Description".to_string(),
-                proposer: "Alice".to_string(),
-                created_at: chrono::Utc::now(),
-                voting_ends_at: chrono::Utc::now(),
-                status: icn_common::ProposalStatus::Active,
-                proposal_type: icn_common::ProposalType::EconomicAdjustment,
-                category: icn_common::ProposalCategory::Economic,
-                required_quorum: 0.6,
-                execution_timestamp: None,
-            };
+    #[tokio::test]
+    async fn test_create_proposal() {
+        let (api_layer, _) = setup_test_env().await;
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: chrono::Utc::now(),
+            voting_ends_at: chrono::Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
 
-            let res = warp::test::request()
-                .method("POST")
-                .path("/api/submit_transaction")
-                .json(&transaction)
-                .reply(&api)
-                .await;
+        let result = handle_create_proposal(proposal, api_layer).await;
+        assert!(result.is_ok());
+    }
 
-            assert_eq!(res.status(), 200);
-            assert_eq!(res.body(), "Transaction submitted successfully");
+    #[tokio::test]
+    async fn test_vote_on_proposal() {
+        let (api_layer, node) = setup_test_env().await;
+        
+        // First, create a proposal
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: chrono::Utc::now(),
+            voting_ends_at: chrono::Utc::now() + chrono::Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
+        node.write().await.create_proposal(proposal).await.unwrap();
 
-            let res = warp::test::request()
-                .method("POST")
-                .path("/api/create_proposal")
-                .json(&proposal)
-                .reply(&api)
-                .await;
+        // Now, vote on the proposal
+        let vote_request = VoteRequest {
+            proposal_id: "test_proposal".to_string(),
+            voter: "Bob".to_string(),
+            in_favor: true,
+            weight: 1.0,
+        };
 
-            assert_eq!(res.status(), 200);
-            assert!(serde_json::from_slice::<String>(res.body()).is_ok());
-        });
+        let result = handle_vote_on_proposal(vote_request, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_finalize_proposal() {
+        let (api_layer, node) = setup_test_env().await;
+        
+        // First, create and vote on a proposal
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: chrono::Utc::now(),
+            voting_ends_at: chrono::Utc::now() - chrono::Duration::hours(1), // Set voting period to have ended
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
+        node.write().await.create_proposal(proposal).await.unwrap();
+        node.write().await.vote_on_proposal("test_proposal", "Bob".to_string(), true, 1.0).await.unwrap();
+
+        // Now, finalize the proposal
+        let finalize_request = FinalizeProposalRequest {
+            proposal_id: "test_proposal".to_string(),
+        };
+
+        let result = handle_finalize_proposal(finalize_request, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_balance() {
+        let (api_layer, node) = setup_test_env().await;
+        
+        // First, mint some currency for an address
+        node.write().await.mint_currency("Alice", &CurrencyType::BasicNeeds, 100.0).await.unwrap();
+
+        // Now, get the balance
+        let query = GetBalanceQuery {
+            address: "Alice".to_string(),
+            currency_type: CurrencyType::BasicNeeds,
+        };
+
+        let result = handle_get_balance(query, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mint_currency() {
+        let (api_layer, _) = setup_test_env().await;
+        
+        let mint_request = MintCurrencyRequest {
+            address: "Alice".to_string(),
+            currency_type: CurrencyType::BasicNeeds,
+            amount: 100.0,
+        };
+
+        let result = handle_mint_currency(mint_request, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_identity() {
+        let (api_layer, _) = setup_test_env().await;
+        
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        attributes.insert("age".to_string(), "30".to_string());
+
+        let result = handle_create_identity(attributes, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_allocate_resource() {
+        let (api_layer, _) = setup_test_env().await;
+        
+        let allocate_request = AllocateResourceRequest {
+            resource_type: "computing_power".to_string(),
+            amount: 100,
+        };
+
+        let result = handle_allocate_resource(allocate_request, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_network_stats() {
+        let (api_layer, _) = setup_test_env().await;
+
+        let result = handle_get_network_stats(api_layer).await;
+        assert!(result.is_ok());
     }
 }

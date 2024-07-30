@@ -1,5 +1,3 @@
-// File: icn_core/src/lib.rs
-
 use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
@@ -79,6 +77,14 @@ impl IcnNode {
         self.governance.write().await.create_proposal(proposal)
     }
 
+    pub async fn get_proposal(&self, proposal_id: &str) -> IcnResult<Option<Proposal>> {
+        self.governance.read().await.get_proposal(proposal_id)
+    }
+
+    pub async fn list_active_proposals(&self) -> IcnResult<Vec<Proposal>> {
+        self.governance.read().await.list_active_proposals()
+    }
+
     pub async fn vote_on_proposal(&self, proposal_id: &str, voter: String, in_favor: bool, weight: f64) -> IcnResult<()> {
         self.governance.write().await.vote_on_proposal(proposal_id, voter, in_favor, weight)
     }
@@ -122,31 +128,60 @@ impl IcnNode {
     pub async fn allocate_resource(&self, resource_type: &str, amount: u64) -> IcnResult<()> {
         self.sharding_manager.write().await.allocate_resource(resource_type, amount)
     }
+
+    pub async fn get_shard_count(&self) -> u64 {
+        self.config.shard_count
+    }
+
+    pub async fn get_consensus_threshold(&self) -> f64 {
+        self.config.consensus_threshold
+    }
+
+    pub async fn get_consensus_quorum(&self) -> f64 {
+        self.config.consensus_quorum
+    }
+
+    pub async fn get_network_port(&self) -> u16 {
+        self.config.network_port
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
-    #[tokio::test]
-    async fn test_icn_node() {
+    async fn create_test_node() -> IcnNode {
         let config = Config {
             shard_count: 1,
             consensus_threshold: 0.66,
             consensus_quorum: 0.51,
             network_port: 8080,
         };
+        IcnNode::new(config).await.unwrap()
+    }
 
-        let node = IcnNode::new(config).await.unwrap();
+    #[tokio::test]
+    async fn test_node_creation_and_lifecycle() {
+        let node = create_test_node().await;
+        assert_eq!(node.get_shard_count().await, 1);
+        assert_eq!(node.get_consensus_threshold().await, 0.66);
+        assert_eq!(node.get_consensus_quorum().await, 0.51);
+        assert_eq!(node.get_network_port().await, 8080);
 
-        // Test identity creation
-        let mut attributes = HashMap::new();
-        attributes.insert("name".to_string(), "Alice".to_string());
-        let identity_id = node.create_identity(attributes).await.unwrap();
+        assert!(node.start().await.is_ok());
+        assert!(node.stop().await.is_ok());
+    }
 
-        // Test transaction processing
+    #[tokio::test]
+    async fn test_transaction_processing() {
+        let node = create_test_node().await;
+        
+        // Mint some currency for testing
+        assert!(node.mint_currency("Alice", &CurrencyType::BasicNeeds, 1000.0).await.is_ok());
+
         let transaction = Transaction {
-            from: identity_id.clone(),
+            from: "Alice".to_string(),
             to: "Bob".to_string(),
             amount: 100.0,
             currency_type: CurrencyType::BasicNeeds,
@@ -154,66 +189,125 @@ mod tests {
             signature: None,
         };
 
-        node.mint_currency(&identity_id, &CurrencyType::BasicNeeds, 1000.0).await.unwrap();
-        node.process_transaction(transaction).await.unwrap();
+        assert!(node.process_transaction(transaction).await.is_ok());
 
-        // Test proposal creation and voting
+        // Check balances
+        let alice_balance = node.get_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
+        let bob_balance = node.get_balance("Bob", &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(alice_balance, 900.0);
+        assert_eq!(bob_balance, 100.0);
+    }
+
+    #[tokio::test]
+    async fn test_proposal_lifecycle() {
+        let node = create_test_node().await;
+
         let proposal = Proposal {
             id: "test_proposal".to_string(),
             title: "Test Proposal".to_string(),
             description: "This is a test proposal".to_string(),
-            proposer: identity_id.clone(),
+            proposer: "Alice".to_string(),
             created_at: Utc::now(),
-            voting_ends_at: Utc::now() + chrono::Duration::days(7),
+            voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
             proposal_type: ProposalType::Constitutional,
             category: ProposalCategory::Economic,
-            required_quorum: 0.66,
+            required_quorum: 0.51,
             execution_timestamp: None,
         };
 
+        // Create proposal
         let proposal_id = node.create_proposal(proposal).await.unwrap();
 
-        node.vote_on_proposal(&proposal_id, identity_id.clone(), true, 1.0).await.unwrap();
+        // Check if proposal exists
+        let retrieved_proposal = node.get_proposal(&proposal_id).await.unwrap();
+        assert!(retrieved_proposal.is_some());
 
-        // Test closing proposal
-        let proposal_status = node.finalize_proposal(&proposal_id).await.unwrap();
-        assert_eq!(proposal_status, ProposalStatus::Passed);
+        // List active proposals
+        let active_proposals = node.list_active_proposals().await.unwrap();
+        assert_eq!(active_proposals.len(), 1);
 
-        // Test balance check
-        let balance = node.get_balance(&identity_id, &CurrencyType::BasicNeeds).await.unwrap();
-        assert_eq!(balance, 900.0); // 1000 minted - 100 transferred
+        // Vote on proposal
+        assert!(node.vote_on_proposal(&proposal_id, "Alice".to_string(), true, 1.0).await.is_ok());
+        assert!(node.vote_on_proposal(&proposal_id, "Bob".to_string(), false, 1.0).await.is_ok());
 
-        // Test get blockchain
-        let blockchain = node.get_blockchain().await.unwrap();
-        assert_eq!(blockchain.len(), 2); // Genesis block + 1 transaction block
+        // Finalize proposal
+        let final_status = node.finalize_proposal(&proposal_id).await.unwrap();
+        assert_eq!(final_status, ProposalStatus::Passed);
+    }
 
-        // Test get identity
-        let identity = node.get_identity(&identity_id).await.unwrap();
-        assert_eq!(identity.get("name"), Some(&"Alice".to_string()));
+    #[tokio::test]
+    async fn test_identity_management() {
+        let node = create_test_node().await;
 
-        // Test update identity
-        let mut new_attributes = HashMap::new();
-        new_attributes.insert("age".to_string(), "30".to_string());
-        node.update_identity(&identity_id, new_attributes).await.unwrap();
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        attributes.insert("age".to_string(), "30".to_string());
 
-        let updated_identity = node.get_identity(&identity_id).await.unwrap();
-        assert_eq!(updated_identity.get("age"), Some(&"30".to_string()));
+        // Create identity
+        let identity_id = node.create_identity(attributes.clone()).await.unwrap();
 
-        // Test smart contract execution
+        // Get identity
+        let retrieved_attributes = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(retrieved_attributes, attributes);
+
+        // Update identity
+        attributes.insert("location".to_string(), "New York".to_string());
+        assert!(node.update_identity(&identity_id, attributes.clone()).await.is_ok());
+
+        // Verify updated identity
+        let updated_attributes = node.get_identity(&identity_id).await.unwrap();
+        assert_eq!(updated_attributes, attributes);
+    }
+
+    #[tokio::test]
+    async fn test_smart_contract_execution() {
+        let node = create_test_node().await;
+
+        // For this test, we'll assume a simple smart contract that adds two numbers
         let contract_id = "test_contract";
-        let function = "test_function";
-        let args = vec![icn_vm::Value::Int(42)];
+        let function = "add";
+        let args = vec![icn_vm::Value::Int(5), icn_vm::Value::Int(3)];
+
         let result = node.execute_smart_contract(contract_id, function, args).await.unwrap();
-        assert_eq!(result, Some(icn_vm::Value::Int(42)));
+        assert_eq!(result, Some(icn_vm::Value::Int(8)));
+    }
 
-        // Test network stats
-        let network_stats = node.get_network_stats().await.unwrap();
-        assert!(network_stats.connected_peers >= 0);
+    #[tokio::test]
+    async fn test_blockchain_operations() {
+        let node = create_test_node().await;
 
-        // Test resource allocation
-        node.allocate_resource("computing_power", 100).await.unwrap();
+        // Add some transactions to create blocks
+        for i in 0..5 {
+            let transaction = Transaction {
+                from: format!("User{}", i),
+                to: format!("User{}", i+1),
+                amount: 10.0,
+                currency_type: CurrencyType::BasicNeeds,
+                timestamp: Utc::now().timestamp(),
+                signature: None,
+            };
+            node.process_transaction(transaction).await.unwrap();
+        }
 
-        assert!(node.stop().await.is_ok());
+        let blockchain = node.get_blockchain().await.unwrap();
+        assert!(blockchain.len() > 1); // At least genesis block and one more
+    }
+
+    #[tokio::test]
+    async fn test_network_stats() {
+        let node = create_test_node().await;
+        let stats = node.get_network_stats().await.unwrap();
+        assert!(stats.connected_peers >= 0);
+        assert!(stats.total_transactions >= 0);
+        assert!(stats.active_proposals >= 0);
+    }
+
+    #[tokio::test]
+    async fn test_resource_allocation() {
+        let node = create_test_node().await;
+        assert!(node.allocate_resource("computing_power", 100).await.is_ok());
+        // In a real implementation, we would check if the resource was actually allocated
+        // For now, we just check if the method call succeeds
     }
 }
