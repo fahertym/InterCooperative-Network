@@ -1,4 +1,4 @@
-// File: crates/icn_core/src/lib.rs
+// File: icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
@@ -39,12 +39,12 @@ impl IcnNode {
     }
 
     pub async fn start(&self) -> IcnResult<()> {
-        self.consensus.read().await.start()?;
+        self.consensus.write().await.start()?;
         Ok(())
     }
 
     pub async fn stop(&self) -> IcnResult<()> {
-        self.consensus.read().await.stop()?;
+        self.consensus.write().await.stop()?;
         Ok(())
     }
 

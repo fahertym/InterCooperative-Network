@@ -1,4 +1,4 @@
-// File: crates/icn_blockchain/src/lib.rs
+// File: icn_blockchain/src/lib.rs
 
 use icn_common::{Transaction, IcnResult, IcnError, CurrencyType};
 use chrono::Utc;

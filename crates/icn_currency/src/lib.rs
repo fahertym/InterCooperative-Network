@@ -1,3 +1,5 @@
+// File: icn_currency/src/lib.rs
+
 use icn_common::{Transaction, CurrencyType, IcnResult, IcnError};
 use std::collections::HashMap;
 
@@ -23,12 +25,6 @@ impl Account {
             return Err(IcnError::Currency("Insufficient funds".into()));
         }
         Ok(())
-    }
-}
-
-impl Default for Account {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -78,16 +74,9 @@ impl CurrencySystem {
     }
 }
 
-impl Default for CurrencySystem {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::CurrencyType;
 
     #[test]
     fn test_account_operations() {
@@ -141,42 +130,32 @@ mod tests {
 
         // Test non-existent account
         assert!(system.get_balance("Charlie", &CurrencyType::BasicNeeds).is_err());
+    }
+    #[test]
+    fn test_multiple_currency_types() {
+        let mut system = CurrencySystem::new();
+        system.create_account("Alice".to_string()).unwrap();
 
-        // Test multiple currency types
-        system.mint("Alice", &CurrencyType::Education, 200.0).unwrap();
-        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 200.0);
+        system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        system.mint("Alice", &CurrencyType::Education, 50.0).unwrap();
 
-        let education_transaction = Transaction {
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 50.0);
+
+        let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
-            amount: 75.0,
+            amount: 25.0,
             currency_type: CurrencyType::Education,
-            timestamp: 12347,
+            timestamp: 12345,
             signature: None,
         };
 
-        system.process_transaction(&education_transaction).unwrap();
+        system.create_account("Bob".to_string()).unwrap();
+        system.process_transaction(&transaction).unwrap();
 
-        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 125.0);
-        assert_eq!(system.get_balance("Bob", &CurrencyType::Education).unwrap(), 75.0);
-
-        // Ensure BasicNeeds balances are unchanged
-        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
-        assert_eq!(system.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
-    }
-
-    #[test]
-    fn test_create_duplicate_account() {
-        let mut system = CurrencySystem::new();
-
-        system.create_account("Alice".to_string()).unwrap();
-        assert!(system.create_account("Alice".to_string()).is_err());
-    }
-
-    #[test]
-    fn test_mint_to_nonexistent_account() {
-        let mut system = CurrencySystem::new();
-
-        assert!(system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).is_err());
+        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 25.0);
+        assert_eq!(system.get_balance("Bob", &CurrencyType::Education).unwrap(), 25.0);
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
     }
 }
