@@ -2364,6 +2364,8 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
+// File: crates/icn_core/src/lib.rs
+
 use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
@@ -2373,6 +2375,7 @@ use icn_identity::IdentityService;
 use icn_network::NetworkManager;
 use icn_sharding::ShardingManager;
 use icn_vm::SmartContractExecutor;
+use icn_reputation::ReputationSystem;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
@@ -2388,6 +2391,7 @@ pub struct IcnNode {
     network_manager: Arc<RwLock<NetworkManager>>,
     sharding_manager: Arc<RwLock<ShardingManager>>,
     smart_contract_executor: Arc<RwLock<SmartContractExecutor>>,
+    reputation_manager: Arc<RwLock<ReputationSystem>>,
 }
 
 impl IcnNode {
@@ -2400,6 +2404,7 @@ impl IcnNode {
         let network_manager = Arc::new(RwLock::new(NetworkManager::new(config.network_port)));
         let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
         let smart_contract_executor = Arc::new(RwLock::new(SmartContractExecutor::new()));
+        let reputation_manager = Arc::new(RwLock::new(ReputationSystem::new(0.01, 0.0, 100.0)));
 
         Ok(Self {
             config,
@@ -2411,6 +2416,7 @@ impl IcnNode {
             network_manager,
             sharding_manager,
             smart_contract_executor,
+            reputation_manager,
         })
     }
 
@@ -2509,6 +2515,44 @@ impl IcnNode {
 
     pub async fn get_network_port(&self) -> u16 {
         self.config.network_port
+    }
+
+    // New helper methods
+
+    pub async fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        let mut total_balance = 0.0;
+        for shard_id in 0..self.config.shard_count {
+            total_balance += self.sharding_manager.read().await.get_shard_balance(shard_id, address, currency_type)?;
+        }
+        Ok(total_balance)
+    }
+
+    pub async fn list_active_proposals_with_status(&self) -> IcnResult<Vec<(Proposal, f64)>> {
+        let proposals = self.governance.read().await.list_active_proposals()?;
+        let mut proposals_with_status = Vec::new();
+        
+        for proposal in proposals {
+            let votes = self.governance.read().await.get_votes(&proposal.id)?;
+            let total_votes: f64 = votes.iter().map(|v| v.weight).sum();
+            let votes_in_favor: f64 = votes.iter().filter(|v| v.in_favor).map(|v| v.weight).sum();
+            let status = if total_votes > 0.0 { votes_in_favor / total_votes } else { 0.0 };
+            proposals_with_status.push((proposal, status));
+        }
+        
+        Ok(proposals_with_status)
+    }
+
+    pub async fn check_sufficient_balance(&self, address: &str, amount: f64, currency_type: &CurrencyType) -> IcnResult<bool> {
+        let balance = self.get_total_balance(address, currency_type).await?;
+        Ok(balance >= amount)
+    }
+
+    pub async fn get_reputation_score(&self, address: &str) -> IcnResult<f64> {
+        self.reputation_manager.read().await.get_score(address)
+    }
+
+    pub async fn update_reputation_score(&self, address: &str, change: f64) -> IcnResult<()> {
+        self.reputation_manager.write().await.update_score(address, change)
     }
 }
 
@@ -2624,6 +2668,44 @@ mod tests {
         // Verify updated identity
         let updated_attributes = node.get_identity(&identity_id).await.unwrap();
         assert_eq!(updated_attributes, attributes);
+    }
+
+    #[tokio::test]
+    async fn test_helper_functions() {
+        let node = create_test_node().await;
+        
+        // Test get_total_balance
+        node.mint_currency("Alice", &CurrencyType::BasicNeeds, 100.0).await.unwrap();
+        let balance = node.get_total_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(balance, 100.0);
+
+        // Test list_active_proposals_with_status
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
+        node.create_proposal(proposal).await.unwrap();
+        let proposals_with_status = node.list_active_proposals_with_status().await.unwrap();
+        assert_eq!(proposals_with_status.len(), 1);
+        assert!(proposals_with_status[0].1 == 0.0); // No votes yet, so status should be 0.0
+
+        // Test check_sufficient_balance
+        assert!(node.check_sufficient_balance("Alice", 50.0, &CurrencyType::BasicNeeds).await.unwrap());
+        assert!(!node.check_sufficient_balance("Alice", 150.0, &CurrencyType::BasicNeeds).await.unwrap());
+
+        // Test reputation functions
+        node.update_reputation_score("Alice", 5.0).await.unwrap();
+        let score = node.get_reputation_score("Alice").await.unwrap();
+        assert_eq!(score, 5.0);
     }
 
     #[tokio::test]
@@ -4239,8 +4321,7 @@ uuid = { version = "1.0", features = ["v4"] }===== END OF /home/matt/InterCooper
 // File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common::{Transaction, Proposal, CurrencyType, ProposalStatus, ProposalType, ProposalCategory, IcnResult};
-use tokio;
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
@@ -4275,16 +4356,12 @@ async fn main() -> IcnResult<()> {
         match input {
             "help" => print_help(),
             "exit" => break,
-            "create_identity" => create_identity(&node).await?,
-            "mint_currency" => mint_currency(&node).await?,
             "transaction" => process_transaction(&node).await?,
             "proposal" => create_proposal(&node).await?,
-            "vote" => vote_on_proposal(&node).await?,
-            "finalize_proposal" => finalize_proposal(&node).await?,
             "balance" => check_balance(&node).await?,
-            "blockchain" => print_blockchain(&node).await?,
-            "network_stats" => print_network_stats(&node).await?,
-            "allocate_resource" => allocate_resource(&node).await?,
+            "identity" => create_identity(&node).await?,
+            "allocate" => allocate_resource(&node).await?,
+            "network" => get_network_stats(&node).await?,
             _ => println!("Unknown command. Type 'help' for available commands."),
         }
     }
@@ -4298,66 +4375,14 @@ async fn main() -> IcnResult<()> {
 
 fn print_help() {
     println!("Available commands:");
-    println!("  help               - Show this help message");
-    println!("  create_identity    - Create a new identity");
-    println!("  mint_currency      - Mint currency for an address");
-    println!("  transaction        - Create a new transaction");
-    println!("  proposal           - Create a new proposal");
-    println!("  vote               - Vote on a proposal");
-    println!("  finalize_proposal  - Finalize a proposal");
-    println!("  balance            - Check account balance");
-    println!("  blockchain         - Print the current blockchain");
-    println!("  network_stats      - Get network statistics");
-    println!("  allocate_resource  - Allocate a resource");
-    println!("  exit               - Exit the application");
-}
-
-async fn create_identity(node: &IcnNode) -> IcnResult<()> {
-    println!("Creating a new identity...");
-    
-    print!("Enter name: ");
-    io::stdout().flush()?;
-    let mut name = String::new();
-    io::stdin().read_line(&mut name)?;
-    
-    let mut attributes = HashMap::new();
-    attributes.insert("name".to_string(), name.trim().to_string());
-    
-    let identity_id = node.create_identity(attributes).await?;
-    println!("Identity created successfully. ID: {}", identity_id);
-    Ok(())
-}
-
-async fn mint_currency(node: &IcnNode) -> IcnResult<()> {
-    println!("Minting currency...");
-    
-    print!("Enter address: ");
-    io::stdout().flush()?;
-    let mut address = String::new();
-    io::stdin().read_line(&mut address)?;
-    let address = address.trim();
-
-    print!("Enter currency type (BasicNeeds, Education, Environmental, Community): ");
-    io::stdout().flush()?;
-    let mut currency_type_str = String::new();
-    io::stdin().read_line(&mut currency_type_str)?;
-    let currency_type = match currency_type_str.trim() {
-        "BasicNeeds" => CurrencyType::BasicNeeds,
-        "Education" => CurrencyType::Education,
-        "Environmental" => CurrencyType::Environmental,
-        "Community" => CurrencyType::Community,
-        _ => return Err(IcnError::Currency("Invalid currency type".into())),
-    };
-
-    print!("Enter amount: ");
-    io::stdout().flush()?;
-    let mut amount_str = String::new();
-    io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse()?;
-
-    node.mint_currency(address, &currency_type, amount).await?;
-    println!("Currency minted successfully");
-    Ok(())
+    println!("  help        - Show this help message");
+    println!("  transaction - Create a new transaction");
+    println!("  proposal    - Create a new proposal");
+    println!("  balance     - Check account balance");
+    println!("  identity    - Create a new identity");
+    println!("  allocate    - Allocate a resource");
+    println!("  network     - Get network statistics");
+    println!("  exit        - Exit the application");
 }
 
 async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
@@ -4377,7 +4402,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse()?;
+    let amount: f64 = amount_str.trim().parse().map_err(|_| IcnError::InvalidInput("Invalid amount".to_string()))?;
 
     print!("Currency type (BasicNeeds, Education, Environmental, Community): ");
     io::stdout().flush()?;
@@ -4388,7 +4413,7 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err(IcnError::Currency("Invalid currency type".into())),
+        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
     };
 
     let transaction = Transaction {
@@ -4431,7 +4456,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
         "Constitutional" => ProposalType::Constitutional,
         "EconomicAdjustment" => ProposalType::EconomicAdjustment,
         "NetworkUpgrade" => ProposalType::NetworkUpgrade,
-        _ => return Err(IcnError::Governance("Invalid proposal type".into())),
+        _ => return Err(IcnError::InvalidInput("Invalid proposal type".to_string())),
     };
 
     print!("Proposal category (Economic, Technical, Social): ");
@@ -4442,7 +4467,7 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
         "Economic" => ProposalCategory::Economic,
         "Technical" => ProposalCategory::Technical,
         "Social" => ProposalCategory::Social,
-        _ => return Err(IcnError::Governance("Invalid proposal category".into())),
+        _ => return Err(IcnError::InvalidInput("Invalid proposal category".to_string())),
     };
 
     let proposal = Proposal {
@@ -4464,49 +4489,6 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn vote_on_proposal(node: &IcnNode) -> IcnResult<()> {
-    println!("Voting on a proposal...");
-
-    print!("Proposal ID: ");
-    io::stdout().flush()?;
-    let mut proposal_id = String::new();
-    io::stdin().read_line(&mut proposal_id)?;
-
-    print!("Voter: ");
-    io::stdout().flush()?;
-    let mut voter = String::new();
-    io::stdin().read_line(&mut voter)?;
-
-    print!("In favor? (yes/no): ");
-    io::stdout().flush()?;
-    let mut in_favor_str = String::new();
-    io::stdin().read_line(&mut in_favor_str)?;
-    let in_favor = in_favor_str.trim().to_lowercase() == "yes";
-
-    print!("Weight: ");
-    io::stdout().flush()?;
-    let mut weight_str = String::new();
-    io::stdin().read_line(&mut weight_str)?;
-    let weight: f64 = weight_str.trim().parse()?;
-
-    node.vote_on_proposal(proposal_id.trim(), voter.trim().to_string(), in_favor, weight).await?;
-    println!("Vote recorded successfully");
-    Ok(())
-}
-
-async fn finalize_proposal(node: &IcnNode) -> IcnResult<()> {
-    println!("Finalizing a proposal...");
-
-    print!("Proposal ID: ");
-    io::stdout().flush()?;
-    let mut proposal_id = String::new();
-    io::stdin().read_line(&mut proposal_id)?;
-
-    let status = node.finalize_proposal(proposal_id.trim()).await?;
-    println!("Proposal finalized. Final status: {:?}", status);
-    Ok(())
-}
-
 async fn check_balance(node: &IcnNode) -> IcnResult<()> {
     print!("Enter address: ");
     io::stdout().flush()?;
@@ -4522,7 +4504,7 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
         "Education" => CurrencyType::Education,
         "Environmental" => CurrencyType::Environmental,
         "Community" => CurrencyType::Community,
-        _ => return Err(IcnError::Currency("Invalid currency type".into())),
+        _ => return Err(IcnError::InvalidInput("Invalid currency type".to_string())),
     };
     
     let balance = node.get_balance(address.trim(), &currency_type).await?;
@@ -4530,21 +4512,19 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
     Ok(())
 }
 
-async fn print_blockchain(node: &IcnNode) -> IcnResult<()> {
-    let blockchain = node.get_blockchain().await?;
-    println!("Current Blockchain:");
-    for (i, block) in blockchain.iter().enumerate() {
-        println!("Block {}: {:?}", i, block);
-    }
-    Ok(())
-}
-
-async fn print_network_stats(node: &IcnNode) -> IcnResult<()> {
-    let stats = node.get_network_stats().await?;
-    println!("Network Statistics:");
-    println!("  Connected Peers: {}", stats.connected_peers);
-    println!("  Total Transactions: {}", stats.total_transactions);
-    println!("  Active Proposals: {}", stats.active_proposals);
+async fn create_identity(node: &IcnNode) -> IcnResult<()> {
+    println!("Creating a new identity...");
+    
+    print!("Enter name: ");
+    io::stdout().flush()?;
+    let mut name = String::new();
+    io::stdin().read_line(&mut name)?;
+    
+    let mut attributes = HashMap::new();
+    attributes.insert("name".to_string(), name.trim().to_string());
+    
+    let identity_id = node.create_identity(attributes).await?;
+    println!("Identity created successfully. ID: {}", identity_id);
     Ok(())
 }
 
@@ -4560,10 +4540,19 @@ async fn allocate_resource(node: &IcnNode) -> IcnResult<()> {
     io::stdout().flush()?;
     let mut amount_str = String::new();
     io::stdin().read_line(&mut amount_str)?;
-    let amount: u64 = amount_str.trim().parse()?;
+    let amount: u64 = amount_str.trim().parse().map_err(|_| IcnError::InvalidInput("Invalid amount".to_string()))?;
 
     node.allocate_resource(resource_type.trim(), amount).await?;
     println!("Resource allocated successfully");
+    Ok(())
+}
+
+async fn get_network_stats(node: &IcnNode) -> IcnResult<()> {
+    let stats = node.get_network_stats().await?;
+    println!("Network Statistics:");
+    println!("  Connected Peers: {}", stats.connected_peers);
+    println!("  Total Transactions: {}", stats.total_transactions);
+    println!("  Active Proposals: {}", stats.active_proposals);
     Ok(())
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs =====
 

@@ -1,3 +1,5 @@
+// File: crates/icn_core/src/lib.rs
+
 use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
@@ -7,6 +9,7 @@ use icn_identity::IdentityService;
 use icn_network::NetworkManager;
 use icn_sharding::ShardingManager;
 use icn_vm::SmartContractExecutor;
+use icn_reputation::ReputationSystem;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
@@ -22,6 +25,7 @@ pub struct IcnNode {
     network_manager: Arc<RwLock<NetworkManager>>,
     sharding_manager: Arc<RwLock<ShardingManager>>,
     smart_contract_executor: Arc<RwLock<SmartContractExecutor>>,
+    reputation_manager: Arc<RwLock<ReputationSystem>>,
 }
 
 impl IcnNode {
@@ -34,6 +38,7 @@ impl IcnNode {
         let network_manager = Arc::new(RwLock::new(NetworkManager::new(config.network_port)));
         let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
         let smart_contract_executor = Arc::new(RwLock::new(SmartContractExecutor::new()));
+        let reputation_manager = Arc::new(RwLock::new(ReputationSystem::new(0.01, 0.0, 100.0)));
 
         Ok(Self {
             config,
@@ -45,6 +50,7 @@ impl IcnNode {
             network_manager,
             sharding_manager,
             smart_contract_executor,
+            reputation_manager,
         })
     }
 
@@ -143,6 +149,44 @@ impl IcnNode {
 
     pub async fn get_network_port(&self) -> u16 {
         self.config.network_port
+    }
+
+    // New helper methods
+
+    pub async fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        let mut total_balance = 0.0;
+        for shard_id in 0..self.config.shard_count {
+            total_balance += self.sharding_manager.read().await.get_shard_balance(shard_id, address, currency_type)?;
+        }
+        Ok(total_balance)
+    }
+
+    pub async fn list_active_proposals_with_status(&self) -> IcnResult<Vec<(Proposal, f64)>> {
+        let proposals = self.governance.read().await.list_active_proposals()?;
+        let mut proposals_with_status = Vec::new();
+        
+        for proposal in proposals {
+            let votes = self.governance.read().await.get_votes(&proposal.id)?;
+            let total_votes: f64 = votes.iter().map(|v| v.weight).sum();
+            let votes_in_favor: f64 = votes.iter().filter(|v| v.in_favor).map(|v| v.weight).sum();
+            let status = if total_votes > 0.0 { votes_in_favor / total_votes } else { 0.0 };
+            proposals_with_status.push((proposal, status));
+        }
+        
+        Ok(proposals_with_status)
+    }
+
+    pub async fn check_sufficient_balance(&self, address: &str, amount: f64, currency_type: &CurrencyType) -> IcnResult<bool> {
+        let balance = self.get_total_balance(address, currency_type).await?;
+        Ok(balance >= amount)
+    }
+
+    pub async fn get_reputation_score(&self, address: &str) -> IcnResult<f64> {
+        self.reputation_manager.read().await.get_score(address)
+    }
+
+    pub async fn update_reputation_score(&self, address: &str, change: f64) -> IcnResult<()> {
+        self.reputation_manager.write().await.update_score(address, change)
     }
 }
 
@@ -258,6 +302,44 @@ mod tests {
         // Verify updated identity
         let updated_attributes = node.get_identity(&identity_id).await.unwrap();
         assert_eq!(updated_attributes, attributes);
+    }
+
+    #[tokio::test]
+    async fn test_helper_functions() {
+        let node = create_test_node().await;
+        
+        // Test get_total_balance
+        node.mint_currency("Alice", &CurrencyType::BasicNeeds, 100.0).await.unwrap();
+        let balance = node.get_total_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(balance, 100.0);
+
+        // Test list_active_proposals_with_status
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
+        node.create_proposal(proposal).await.unwrap();
+        let proposals_with_status = node.list_active_proposals_with_status().await.unwrap();
+        assert_eq!(proposals_with_status.len(), 1);
+        assert!(proposals_with_status[0].1 == 0.0); // No votes yet, so status should be 0.0
+
+        // Test check_sufficient_balance
+        assert!(node.check_sufficient_balance("Alice", 50.0, &CurrencyType::BasicNeeds).await.unwrap());
+        assert!(!node.check_sufficient_balance("Alice", 150.0, &CurrencyType::BasicNeeds).await.unwrap());
+
+        // Test reputation functions
+        node.update_reputation_score("Alice", 5.0).await.unwrap();
+        let score = node.get_reputation_score("Alice").await.unwrap();
+        assert_eq!(score, 5.0);
     }
 
     #[tokio::test]
