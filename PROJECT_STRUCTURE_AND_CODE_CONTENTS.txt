@@ -2224,7 +2224,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-// File: crates/icn_core/src/lib.rs
+// File: icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use icn_blockchain::Blockchain;
@@ -4002,7 +4002,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }===== END OF /home/matt/InterCooperative-Network/crates/icn_demo/Cargo.toml =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_demo/src/main.rs =====
-// File: crates/icn_demo/src/main.rs
+// File: icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
 use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus};
