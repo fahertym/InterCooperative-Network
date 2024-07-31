@@ -260,7 +260,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_proposal_lifecycle() {
-        let node = create_test_node().await;
+        let node = create_test_node(// Finalize proposal
+            let final_status = node.finalize_).await;
 
         let proposal = Proposal {
             id: "test_proposal".to_string(),
