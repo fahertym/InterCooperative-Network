@@ -28,7 +28,7 @@ pub struct IcnNode {
 
 impl IcnNode {
     pub async fn new(config: Config) -> IcnResult<Self> {
-        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
+        let blockchain = Arc::new(RwLock::new(Blockchain::new(config.difficulty)));
         let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
         let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
         let governance = Arc::new(RwLock::new(GovernanceSystem::new()));
@@ -128,7 +128,7 @@ impl IcnNode {
     }
 
     pub async fn get_blockchain(&self) -> IcnResult<Vec<icn_blockchain::Block>> {
-        Ok(self.blockchain.read().await.get_chain().clone())
+        Ok(self.blockchain.read().await.chain.clone())
     }
 
     pub async fn get_shard_count(&self) -> u64 {
@@ -217,6 +217,7 @@ mod tests {
             consensus_threshold: 0.66,
             consensus_quorum: 0.51,
             network_port: 8080,
+            difficulty: 2,
         };
         IcnNode::new(config).await.unwrap()
     }
@@ -260,8 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proposal_lifecycle() {
-        let node = create_test_node(// Finalize proposal
-            let final_status = node.finalize_).await;
+        let node = create_test_node().await;
 
         let proposal = Proposal {
             id: "test_proposal".to_string(),
@@ -271,8 +271,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
+            proposal_type: icn_governance::ProposalType::Constitutional,
+            category: icn_governance::ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };
@@ -390,8 +390,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
+            proposal_type: icn_governance::ProposalType::Constitutional,
+            category: icn_governance::ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };

@@ -919,6 +919,7 @@ impl Blockchain {
 
 use chrono::{DateTime, Utc};
 use icn_common::{IcnResult, IcnError, CurrencyType};
+use icn_currency::CurrencySystem;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -1016,7 +1017,7 @@ pub struct Blockchain {
     pub chain: Vec<Block>,
     pub pending_transactions: Vec<Transaction>,
     pub difficulty: usize,
-    balances: HashMap<String, HashMap<CurrencyType, f64>>,
+    currency_system: CurrencySystem,
 }
 
 impl Blockchain {
@@ -1025,7 +1026,7 @@ impl Blockchain {
             chain: Vec::new(),
             pending_transactions: Vec::new(),
             difficulty,
-            balances: HashMap::new(),
+            currency_system: CurrencySystem::new(),
         };
         blockchain.create_genesis_block();
         blockchain
@@ -1116,7 +1117,7 @@ impl Blockchain {
             return Ok(true); // Allow mining rewards
         }
 
-        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+        let sender_balance = self.currency_system.get_balance(&transaction.from, &transaction.currency_type)?;
         if sender_balance < transaction.amount {
             return Ok(false);
         }
@@ -1134,28 +1135,13 @@ impl Blockchain {
 
     fn update_balances(&mut self) -> IcnResult<()> {
         for transaction in &self.get_latest_block().transactions {
-            let from_balance = self.balances
-                .entry(transaction.from.clone())
-                .or_insert_with(HashMap::new)
-                .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
-            *from_balance -= transaction.amount;
-
-            let to_balance = self.balances
-                .entry(transaction.to.clone())
-                .or_insert_with(HashMap::new)
-                .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
-            *to_balance += transaction.amount;
+            self.currency_system.process_transaction(transaction)?;
         }
         Ok(())
     }
 
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        Ok(*self.balances
-            .get(address)
-            .and_then(|balances| balances.get(currency_type))
-            .unwrap_or(&0.0))
+        self.currency_system.get_balance(address, currency_type)
     }
 
     pub fn get_transactions(&self, address: &str) -> Vec<&Transaction> {
@@ -1199,9 +1185,7 @@ mod tests {
         };
 
         // Add initial balance for Alice
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction).is_ok());
         assert_eq!(blockchain.pending_transactions.len(), 1);
@@ -1228,9 +1212,7 @@ mod tests {
             signature: None,
         };
 
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction).is_ok());
         assert!(blockchain.mine_pending_transactions("Miner").is_ok());
@@ -1262,12 +1244,8 @@ mod tests {
             signature: None,
         };
 
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
-        blockchain.balances.entry("Bob".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 50.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        blockchain.currency_system.mint("Bob", &CurrencyType::BasicNeeds, 50.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction1).is_ok());
         assert!(blockchain.add_transaction(transaction2).is_ok());
@@ -2583,7 +2561,7 @@ pub struct IcnNode {
 
 impl IcnNode {
     pub async fn new(config: Config) -> IcnResult<Self> {
-        let blockchain = Arc::new(RwLock::new(Blockchain::new()));
+        let blockchain = Arc::new(RwLock::new(Blockchain::new(config.difficulty)));
         let consensus = Arc::new(RwLock::new(PoCConsensus::new(config.consensus_threshold, config.consensus_quorum)?));
         let currency_system = Arc::new(RwLock::new(CurrencySystem::new()));
         let governance = Arc::new(RwLock::new(GovernanceSystem::new()));
@@ -2683,7 +2661,7 @@ impl IcnNode {
     }
 
     pub async fn get_blockchain(&self) -> IcnResult<Vec<icn_blockchain::Block>> {
-        Ok(self.blockchain.read().await.get_chain().clone())
+        Ok(self.blockchain.read().await.chain.clone())
     }
 
     pub async fn get_shard_count(&self) -> u64 {
@@ -2772,6 +2750,7 @@ mod tests {
             consensus_threshold: 0.66,
             consensus_quorum: 0.51,
             network_port: 8080,
+            difficulty: 2,
         };
         IcnNode::new(config).await.unwrap()
     }
@@ -2815,8 +2794,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proposal_lifecycle() {
-        let node = create_test_node(// Finalize proposal
-            let final_status = node.finalize_).await;
+        let node = create_test_node().await;
 
         let proposal = Proposal {
             id: "test_proposal".to_string(),
@@ -2826,8 +2804,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
+            proposal_type: icn_governance::ProposalType::Constitutional,
+            category: icn_governance::ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };
@@ -2945,8 +2923,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
+            proposal_type: icn_governance::ProposalType::Constitutional,
+            category: icn_governance::ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };

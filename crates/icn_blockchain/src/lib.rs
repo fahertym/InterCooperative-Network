@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use icn_common::{IcnResult, IcnError, CurrencyType};
+use icn_currency::CurrencySystem;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -99,7 +100,7 @@ pub struct Blockchain {
     pub chain: Vec<Block>,
     pub pending_transactions: Vec<Transaction>,
     pub difficulty: usize,
-    balances: HashMap<String, HashMap<CurrencyType, f64>>,
+    currency_system: CurrencySystem,
 }
 
 impl Blockchain {
@@ -108,7 +109,7 @@ impl Blockchain {
             chain: Vec::new(),
             pending_transactions: Vec::new(),
             difficulty,
-            balances: HashMap::new(),
+            currency_system: CurrencySystem::new(),
         };
         blockchain.create_genesis_block();
         blockchain
@@ -199,7 +200,7 @@ impl Blockchain {
             return Ok(true); // Allow mining rewards
         }
 
-        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+        let sender_balance = self.currency_system.get_balance(&transaction.from, &transaction.currency_type)?;
         if sender_balance < transaction.amount {
             return Ok(false);
         }
@@ -217,28 +218,13 @@ impl Blockchain {
 
     fn update_balances(&mut self) -> IcnResult<()> {
         for transaction in &self.get_latest_block().transactions {
-            let from_balance = self.balances
-                .entry(transaction.from.clone())
-                .or_insert_with(HashMap::new)
-                .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
-            *from_balance -= transaction.amount;
-
-            let to_balance = self.balances
-                .entry(transaction.to.clone())
-                .or_insert_with(HashMap::new)
-                .entry(transaction.currency_type.clone())
-                .or_insert(0.0);
-            *to_balance += transaction.amount;
+            self.currency_system.process_transaction(transaction)?;
         }
         Ok(())
     }
 
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        Ok(*self.balances
-            .get(address)
-            .and_then(|balances| balances.get(currency_type))
-            .unwrap_or(&0.0))
+        self.currency_system.get_balance(address, currency_type)
     }
 
     pub fn get_transactions(&self, address: &str) -> Vec<&Transaction> {
@@ -282,9 +268,7 @@ mod tests {
         };
 
         // Add initial balance for Alice
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction).is_ok());
         assert_eq!(blockchain.pending_transactions.len(), 1);
@@ -311,9 +295,7 @@ mod tests {
             signature: None,
         };
 
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction).is_ok());
         assert!(blockchain.mine_pending_transactions("Miner").is_ok());
@@ -345,12 +327,8 @@ mod tests {
             signature: None,
         };
 
-        blockchain.balances.entry("Alice".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 100.0);
-        blockchain.balances.entry("Bob".to_string())
-            .or_insert_with(HashMap::new)
-            .insert(CurrencyType::BasicNeeds, 50.0);
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        blockchain.currency_system.mint("Bob", &CurrencyType::BasicNeeds, 50.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction1).is_ok());
         assert!(blockchain.add_transaction(transaction2).is_ok());
