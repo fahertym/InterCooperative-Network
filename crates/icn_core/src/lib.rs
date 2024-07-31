@@ -1,4 +1,4 @@
-// File: crates/icn_core/src/lib.rs
+// File: icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
@@ -9,6 +9,7 @@ use icn_identity::IdentityService;
 use icn_network::NetworkManager;
 use icn_sharding::ShardingManager;
 use icn_vm::SmartContractExecutor;
+use icn_zkp::ZKPManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
@@ -24,6 +25,7 @@ pub struct IcnNode {
     network_manager: Arc<RwLock<NetworkManager>>,
     sharding_manager: Arc<RwLock<ShardingManager>>,
     smart_contract_executor: Arc<RwLock<SmartContractExecutor>>,
+    zkp_manager: Arc<RwLock<ZKPManager>>,
 }
 
 impl IcnNode {
@@ -36,6 +38,7 @@ impl IcnNode {
         let network_manager = Arc::new(RwLock::new(NetworkManager::new(config.network_port)));
         let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
         let smart_contract_executor = Arc::new(RwLock::new(SmartContractExecutor::new()));
+        let zkp_manager = Arc::new(RwLock::new(ZKPManager::new(64))); // Assuming 64-bit range proofs
 
         Ok(Self {
             config,
@@ -47,6 +50,7 @@ impl IcnNode {
             network_manager,
             sharding_manager,
             smart_contract_executor,
+            zkp_manager,
         })
     }
 
@@ -203,6 +207,19 @@ impl IcnNode {
 
     pub async fn delete_smart_contract(&self, contract_id: &str) -> IcnResult<()> {
         self.smart_contract_executor.write().await.delete_contract(contract_id)
+    }
+
+    pub async fn create_zkp(&self, transaction: &Transaction) -> IcnResult<(Vec<u8>, Vec<u8>)> {
+        let zkp_manager = self.zkp_manager.read().await;
+        let (proof, committed_values) = zkp_manager.create_proof(transaction)?;
+        Ok((proof.to_bytes(), serde_json::to_vec(&committed_values)?))
+    }
+
+    pub async fn verify_zkp(&self, proof: &[u8], committed_values: &[u8]) -> IcnResult<bool> {
+        let zkp_manager = self.zkp_manager.read().await;
+        let proof = bulletproofs::RangeProof::from_bytes(proof)?;
+        let committed_values: Vec<curve25519_dalek::scalar::Scalar> = serde_json::from_slice(committed_values)?;
+        zkp_manager.verify_proof(&proof, &committed_values)
     }
 }
 
@@ -455,5 +472,33 @@ mod tests {
         // Verify deletion
         let deleted_code = node.get_smart_contract(&contract_id).await.unwrap();
         assert_eq!(deleted_code, None);
+    }
+
+    #[tokio::test]
+    async fn test_zkp_operations() {
+        let node = create_test_node().await;
+
+        // Create a transaction
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        // Create a ZKP for the transaction
+        let (proof, committed_values) = node.create_zkp(&transaction).await.unwrap();
+
+        // Verify the ZKP
+        let is_valid = node.verify_zkp(&proof, &committed_values).await.unwrap();
+        assert!(is_valid);
+
+        // Test with tampered data
+        let mut tampered_values = committed_values.clone();
+        tampered_values[0] ^= 1; // Flip a bit
+        let is_invalid = node.verify_zkp(&proof, &tampered_values).await.unwrap();
+        assert!(!is_invalid);
     }
 }
