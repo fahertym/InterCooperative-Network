@@ -230,7 +230,7 @@ async fn allocate_resource(node: &IcnNode) -> IcnResult<()> {
 async fn get_network_stats(node: &IcnNode) -> IcnResult<()> {
     let stats = node.get_network_stats().await?;
     println!("Network Statistics:");
-    println!("  Connected Peers: {}", stats.connected_peers);
+    println!("  Connected Peers: {}", stats.node_count);
     println!("  Total Transactions: {}", stats.total_transactions);
     println!("  Active Proposals: {}", stats.active_proposals);
     Ok(())
