@@ -917,10 +917,11 @@ impl Blockchain {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 // File: icn_blockchain/src/lib.rs
 
-use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use chrono::Utc;
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -930,19 +931,17 @@ pub struct Block {
     pub previous_hash: String,
     pub hash: String,
     pub nonce: u64,
-    pub difficulty: u32,
 }
 
 impl Block {
-    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String, difficulty: u32) -> Self {
+    pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: &str) -> Self {
         let mut block = Block {
             index,
             timestamp: Utc::now().timestamp(),
             transactions,
-            previous_hash,
+            previous_hash: previous_hash.to_string(),
             hash: String::new(),
             nonce: 0,
-            difficulty,
         };
         block.hash = block.calculate_hash();
         block
@@ -951,16 +950,16 @@ impl Block {
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.index.to_string());
-        hasher.update(self.timestamp.to_string());
+        hasher.update(&self.timestamp.to_string());
         hasher.update(serde_json::to_string(&self.transactions).unwrap());
         hasher.update(&self.previous_hash);
-        hasher.update(self.nonce.to_string());
+        hasher.update(&self.nonce.to_string());
         format!("{:x}", hasher.finalize())
     }
 
-    pub fn mine(&mut self) {
-        let target = (1 << (256 - self.difficulty)) - 1;
-        while self.hash.parse::<u128>().unwrap_or(u128::MAX) > target as u128 {
+    pub fn mine(&mut self, difficulty: usize) {
+        let target = vec![0; difficulty];
+        while &self.hash[..difficulty] != &target[..] {
             self.nonce += 1;
             self.hash = self.calculate_hash();
         }
@@ -969,32 +968,40 @@ impl Block {
 
 pub struct Blockchain {
     pub chain: Vec<Block>,
-    pending_transactions: Vec<Transaction>,
-    difficulty: u32,
+    pub pending_transactions: Vec<Transaction>,
+    pub difficulty: usize,
+    balances: HashMap<String, HashMap<CurrencyType, f64>>,
 }
 
 impl Blockchain {
-    pub fn new() -> Self {
-        let genesis_block = Block::new(0, Vec::new(), String::from("0"), 4);
-        Blockchain {
-            chain: vec![genesis_block],
+    pub fn new(difficulty: usize) -> Self {
+        let mut blockchain = Blockchain {
+            chain: Vec::new(),
             pending_transactions: Vec::new(),
-            difficulty: 4,
-        }
+            difficulty,
+            balances: HashMap::new(),
+        };
+        blockchain.create_genesis_block();
+        blockchain
+    }
+
+    fn create_genesis_block(&mut self) {
+        let genesis_block = Block::new(0, Vec::new(), "0");
+        self.chain.push(genesis_block);
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> IcnResult<()> {
-        // Basic transaction validation
-        if transaction.amount <= 0.0 {
-            return Err(IcnError::Blockchain("Invalid transaction amount".into()));
+        if self.validate_transaction(&transaction)? {
+            self.pending_transactions.push(transaction);
+            Ok(())
+        } else {
+            Err(IcnError::Blockchain("Invalid transaction".into()))
         }
-        self.pending_transactions.push(transaction);
-        Ok(())
     }
 
     pub fn mine_pending_transactions(&mut self, miner_address: &str) -> IcnResult<()> {
         let reward_transaction = Transaction {
-            from: String::from("Network"),
+            from: "Network".to_string(),
             to: miner_address.to_string(),
             amount: 1.0, // Mining reward
             currency_type: CurrencyType::BasicNeeds,
@@ -1003,16 +1010,21 @@ impl Blockchain {
         };
         self.pending_transactions.push(reward_transaction);
 
-        let mut new_block = Block::new(
+        let new_block = Block::new(
             self.chain.len() as u64,
             self.pending_transactions.clone(),
-            self.get_latest_block().hash.clone(),
-            self.difficulty,
+            &self.get_latest_block().hash,
         );
-        new_block.mine();
+        self.add_block(new_block)?;
 
-        self.chain.push(new_block);
         self.pending_transactions.clear();
+        Ok(())
+    }
+
+    fn add_block(&mut self, mut block: Block) -> IcnResult<()> {
+        block.mine(self.difficulty);
+        self.chain.push(block);
+        self.update_balances()?;
         Ok(())
     }
 
@@ -1036,37 +1048,45 @@ impl Blockchain {
         true
     }
 
-    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> f64 {
-        let mut balance = 0.0;
-        for block in &self.chain {
-            for transaction in &block.transactions {
-                if transaction.currency_type == *currency_type {
-                    if transaction.from == address {
-                        balance -= transaction.amount;
-                    }
-                    if transaction.to == address {
-                        balance += transaction.amount;
-                    }
-                }
-            }
+    fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        if transaction.from == "Network" {
+            return Ok(true); // Allow mining rewards
         }
-        balance
+
+        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type)?;
+        if sender_balance < transaction.amount {
+            return Ok(false);
+        }
+
+        // Additional validation logic can be added here (e.g., signature verification)
+
+        Ok(true)
     }
 
-    pub fn adjust_difficulty(&mut self) {
-        // Adjust difficulty every 10 blocks
-        if self.chain.len() % 10 == 0 {
-            let last_ten_blocks = &self.chain[self.chain.len() - 10..];
-            let average_time = last_ten_blocks.windows(2)
-                .map(|w| w[1].timestamp - w[0].timestamp)
-                .sum::<i64>() / 9;
+    fn update_balances(&mut self) -> IcnResult<()> {
+        for transaction in &self.get_latest_block().transactions {
+            let from_balance = self.balances
+                .entry(transaction.from.clone())
+                .or_insert_with(HashMap::new)
+                .entry(transaction.currency_type.clone())
+                .or_insert(0.0);
+            *from_balance -= transaction.amount;
 
-            if average_time < 30 {
-                self.difficulty += 1;
-            } else if average_time > 60 && self.difficulty > 1 {
-                self.difficulty -= 1;
-            }
+            let to_balance = self.balances
+                .entry(transaction.to.clone())
+                .or_insert_with(HashMap::new)
+                .entry(transaction.currency_type.clone())
+                .or_insert(0.0);
+            *to_balance += transaction.amount;
         }
+        Ok(())
+    }
+
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        Ok(*self.balances
+            .get(address)
+            .and_then(|balances| balances.get(currency_type))
+            .unwrap_or(&0.0))
     }
 }
 
@@ -1076,14 +1096,14 @@ mod tests {
 
     #[test]
     fn test_blockchain_creation() {
-        let blockchain = Blockchain::new();
+        let blockchain = Blockchain::new(2);
         assert_eq!(blockchain.chain.len(), 1);
         assert_eq!(blockchain.chain[0].index, 0);
     }
 
     #[test]
-    fn test_add_block() {
-        let mut blockchain = Blockchain::new();
+    fn test_add_transaction_and_mine() {
+        let mut blockchain = Blockchain::new(2);
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
@@ -1093,14 +1113,27 @@ mod tests {
             signature: None,
         };
 
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.mine_pending_transactions("Miner").unwrap();
+        // Add initial balance for Alice
+        blockchain.balances.entry("Alice".to_string())
+            .or_insert_with(HashMap::new)
+            .insert(CurrencyType::BasicNeeds, 100.0);
+
+        assert!(blockchain.add_transaction(transaction).is_ok());
+        assert_eq!(blockchain.pending_transactions.len(), 1);
+
+        assert!(blockchain.mine_pending_transactions("Miner").is_ok());
         assert_eq!(blockchain.chain.len(), 2);
+        assert_eq!(blockchain.pending_transactions.len(), 0);
+
+        // Check balances after mining
+        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds).unwrap(), 1.0);
     }
 
     #[test]
     fn test_blockchain_validity() {
-        let mut blockchain = Blockchain::new();
+        let mut blockchain = Blockchain::new(2);
         let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
@@ -1110,8 +1143,13 @@ mod tests {
             signature: None,
         };
 
-        blockchain.add_transaction(transaction).unwrap();
-        blockchain.mine_pending_transactions("Miner").unwrap();
+        blockchain.balances.entry("Alice".to_string())
+            .or_insert_with(HashMap::new)
+            .insert(CurrencyType::BasicNeeds, 100.0);
+
+        assert!(blockchain.add_transaction(transaction).is_ok());
+        assert!(blockchain.mine_pending_transactions("Miner").is_ok());
+
         assert!(blockchain.is_chain_valid());
 
         // Tamper with a block to test invalid chain
@@ -1120,9 +1158,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_balance() {
-        let mut blockchain = Blockchain::new();
-        let transaction1 = Transaction {
+    fn test_insufficient_balance() {
+        let mut blockchain = Blockchain::new(2);
+        let transaction = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
             amount: 50.0,
@@ -1130,78 +1168,9 @@ mod tests {
             timestamp: Utc::now().timestamp(),
             signature: None,
         };
-        let transaction2 = Transaction {
-            from: "Bob".to_string(),
-            to: "Alice".to_string(),
-            amount: 30.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
 
-        blockchain.add_transaction(transaction1).unwrap();
-        blockchain.add_transaction(transaction2).unwrap();
-        blockchain.mine_pending_transactions("Miner").unwrap();
-
-        assert_eq!(blockchain.get_balance("Alice", &CurrencyType::BasicNeeds), -20.0);
-        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds), 20.0);
-        assert_eq!(blockchain.get_balance("Miner", &CurrencyType::BasicNeeds), 1.0);
-    }
-
-    #[test]
-    fn test_adjust_difficulty() {
-        let mut blockchain = Blockchain::new();
-        let initial_difficulty = blockchain.difficulty;
-
-        // Mine 10 blocks quickly
-        for _ in 0..10 {
-            blockchain.add_transaction(Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 1.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp(),
-                signature: None,
-            }).unwrap();
-            blockchain.mine_pending_transactions("Miner").unwrap();
-        }
-
-        blockchain.adjust_difficulty();
-        assert!(blockchain.difficulty > initial_difficulty, "Difficulty should increase after mining blocks quickly");
-
-        // Reset difficulty
-        blockchain.difficulty = initial_difficulty;
-
-        // Mine 10 blocks slowly
-        for i in 0..10 {
-            blockchain.add_transaction(Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 1.0,
-                currency_type: CurrencyType::BasicNeeds,
-                timestamp: Utc::now().timestamp() + i * 100, // Simulate slower block creation
-                signature: None,
-            }).unwrap();
-            blockchain.mine_pending_transactions("Miner").unwrap();
-        }
-
-        blockchain.adjust_difficulty();
-        assert!(blockchain.difficulty < initial_difficulty, "Difficulty should decrease after mining blocks slowly");
-    }
-
-    #[test]
-    fn test_invalid_transaction() {
-        let mut blockchain = Blockchain::new();
-        let invalid_transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: -50.0, // Invalid negative amount
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
-
-        assert!(blockchain.add_transaction(invalid_transaction).is_err(), "Should not allow invalid transactions");
+        // Alice has no balance
+        assert!(blockchain.add_transaction(transaction).is_err());
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
@@ -3751,77 +3720,155 @@ mod tests {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
 // File: icn_currency/src/lib.rs
 
-use icn_common::{Transaction, CurrencyType, IcnResult, IcnError};
+use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::HashMap;
+use chrono::{DateTime, Utc};
 
-pub struct Account {
-    balances: HashMap<CurrencyType, f64>,
+#[derive(Debug, Clone)]
+pub struct Currency {
+    pub currency_type: CurrencyType,
+    pub total_supply: f64,
+    pub creation_date: DateTime<Utc>,
+    pub last_issuance: DateTime<Utc>,
+    pub issuance_rate: f64,
 }
 
-impl Account {
-    pub fn new() -> Self {
-        Account {
-            balances: HashMap::new(),
+impl Currency {
+    pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
+        let now = Utc::now();
+        Currency {
+            currency_type,
+            total_supply: initial_supply,
+            creation_date: now,
+            last_issuance: now,
+            issuance_rate,
         }
     }
 
-    pub fn get_balance(&self, currency_type: &CurrencyType) -> f64 {
-        *self.balances.get(currency_type).unwrap_or(&0.0)
+    pub fn mint(&mut self, amount: f64) -> IcnResult<()> {
+        if amount < 0.0 {
+            return Err(IcnError::Currency("Cannot mint negative amount".into()));
+        }
+        self.total_supply += amount;
+        self.last_issuance = Utc::now();
+        Ok(())
     }
 
-    pub fn update_balance(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
-        let balance = self.balances.entry(currency_type.clone()).or_insert(0.0);
-        *balance += amount;
-        if *balance < 0.0 {
-            return Err(IcnError::Currency("Insufficient funds".into()));
+    pub fn burn(&mut self, amount: f64) -> IcnResult<()> {
+        if amount < 0.0 {
+            return Err(IcnError::Currency("Cannot burn negative amount".into()));
         }
+        if amount > self.total_supply {
+            return Err(IcnError::Currency("Insufficient supply to burn".into()));
+        }
+        self.total_supply -= amount;
         Ok(())
     }
 }
 
 pub struct CurrencySystem {
-    accounts: HashMap<String, Account>,
+    pub currencies: HashMap<CurrencyType, Currency>,
+    balances: HashMap<String, HashMap<CurrencyType, f64>>,
 }
 
 impl CurrencySystem {
     pub fn new() -> Self {
         CurrencySystem {
-            accounts: HashMap::new(),
+            currencies: HashMap::new(),
+            balances: HashMap::new(),
         }
     }
 
-    pub fn create_account(&mut self, account_id: String) -> IcnResult<()> {
-        if self.accounts.contains_key(&account_id) {
-            return Err(IcnError::Currency("Account already exists".into()));
+    pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> IcnResult<()> {
+        if self.currencies.contains_key(&currency_type) {
+            return Err(IcnError::Currency("Currency already exists".into()));
         }
-        self.accounts.insert(account_id, Account::new());
+        let currency = Currency::new(currency_type.clone(), initial_supply, issuance_rate);
+        self.currencies.insert(currency_type, currency);
         Ok(())
     }
 
-    pub fn get_balance(&self, account_id: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
-        let account = self.accounts.get(account_id)
-            .ok_or_else(|| IcnError::Currency("Account not found".into()))?;
-        Ok(account.get_balance(currency_type))
+    pub fn mint(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let currency = self.currencies.get_mut(currency_type)
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
+        currency.mint(amount)
+    }
+
+    pub fn burn(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let currency = self.currencies.get_mut(currency_type)
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
+        currency.burn(amount)
     }
 
     pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
-        let from_account = self.accounts.get_mut(&transaction.from)
-            .ok_or_else(|| IcnError::Currency("Sender account not found".into()))?;
-        
-        from_account.update_balance(&transaction.currency_type, -transaction.amount)?;
+        self.transfer(
+            &transaction.from,
+            &transaction.to,
+            &transaction.currency_type,
+            transaction.amount,
+        )
+    }
 
-        let to_account = self.accounts.get_mut(&transaction.to)
-            .ok_or_else(|| IcnError::Currency("Recipient account not found".into()))?;
-        
-        to_account.update_balance(&transaction.currency_type, transaction.amount)?;
+    pub fn transfer(&mut self, from: &str, to: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        if amount < 0.0 {
+            return Err(IcnError::Currency("Cannot transfer negative amount".into()));
+        }
+
+        let from_balance = self.get_balance(from, currency_type)?;
+        if from_balance < amount {
+            return Err(IcnError::Currency("Insufficient balance".into()));
+        }
+
+        self.update_balance(from, currency_type, -amount)?;
+        self.update_balance(to, currency_type, amount)?;
 
         Ok(())
     }
 
-    pub fn mint(&mut self, account_id: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
-        let account = self.accounts.get_mut(account_id)
-            .ok_or_else(|| IcnError::Currency("Account not found".into()))?;
-        account.update_balance(currency_type, amount)
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        Ok(*self.balances
+            .get(address)
+            .and_then(|balances| balances.get(currency_type))
+            .unwrap_or(&0.0))
+    }
+
+    fn update_balance(&mut self, address: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
+        let balance = self.balances
+            .entry(address.to_string())
+            .or_insert_with(HashMap::new)
+            .entry(currency_type.clone())
+            .or_insert(0.0);
+        *balance += amount;
+        Ok(())
+    }
+
+    pub fn get_total_supply(&self, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currencies.get(currency_type)
+            .map(|currency| currency.total_supply)
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))
+    }
+
+    pub fn get_issuance_rate(&self, currency_type: &CurrencyType) -> IcnResult<f64> {
+        self.currencies.get(currency_type)
+            .map(|currency| currency.issuance_rate)
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))
+    }
+
+    pub fn update_issuance_rate(&mut self, currency_type: &CurrencyType, new_rate: f64) -> IcnResult<()> {
+        let currency = self.currencies.get_mut(currency_type)
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
+        currency.issuance_rate = new_rate;
+        Ok(())
+    }
+
+    pub fn list_currencies(&self) -> Vec<CurrencyType> {
+        self.currencies.keys().cloned().collect()
+    }
+
+    pub fn get_currency_info(&self, currency_type: &CurrencyType) -> IcnResult<Currency> {
+        self.currencies.get(currency_type)
+            .cloned()
+            .ok_or_else(|| IcnError::Currency("Currency not found".into()))
     }
 }
 
@@ -3830,87 +3877,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_account_operations() {
-        let mut account = Account::new();
-        assert_eq!(account.get_balance(&CurrencyType::BasicNeeds), 0.0);
-
-        account.update_balance(&CurrencyType::BasicNeeds, 100.0).unwrap();
-        assert_eq!(account.get_balance(&CurrencyType::BasicNeeds), 100.0);
-
-        account.update_balance(&CurrencyType::BasicNeeds, -50.0).unwrap();
-        assert_eq!(account.get_balance(&CurrencyType::BasicNeeds), 50.0);
-
-        assert!(account.update_balance(&CurrencyType::BasicNeeds, -100.0).is_err());
-    }
-
-    #[test]
     fn test_currency_system() {
         let mut system = CurrencySystem::new();
 
-        system.create_account("Alice".to_string()).unwrap();
-        system.create_account("Bob".to_string()).unwrap();
+        // Add currencies
+        assert!(system.add_currency(CurrencyType::BasicNeeds, 1000.0, 0.01).is_ok());
+        assert!(system.add_currency(CurrencyType::Education, 500.0, 0.005).is_ok());
 
-        system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
-        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        // Test minting
+        assert!(system.mint(&CurrencyType::BasicNeeds, 100.0).is_ok());
+        assert_eq!(system.get_total_supply(&CurrencyType::BasicNeeds).unwrap(), 1100.0);
 
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 50.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 12345,
-            signature: None,
-        };
+        // Test burning
+        assert!(system.burn(&CurrencyType::BasicNeeds, 50.0).is_ok());
+        assert_eq!(system.get_total_supply(&CurrencyType::BasicNeeds).unwrap(), 1050.0);
 
-        system.process_transaction(&transaction).unwrap();
-
+        // Test transfer
+        system.update_balance("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert!(system.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, 50.0).is_ok());
         assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
         assert_eq!(system.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
 
-        // Test insufficient funds
-        let invalid_transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 12346,
-            signature: None,
-        };
+        // Test insufficient balance
+        assert!(system.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, 100.0).is_err());
 
-        assert!(system.process_transaction(&invalid_transaction).is_err());
+        // Test get issuance rate
+        assert_eq!(system.get_issuance_rate(&CurrencyType::BasicNeeds).unwrap(), 0.01);
 
-        // Test non-existent account
-        assert!(system.get_balance("Charlie", &CurrencyType::BasicNeeds).is_err());
+        // Test update issuance rate
+        assert!(system.update_issuance_rate(&CurrencyType::BasicNeeds, 0.02).is_ok());
+        assert_eq!(system.get_issuance_rate(&CurrencyType::BasicNeeds).unwrap(), 0.02);
+
+        // Test list currencies
+        let currencies = system.list_currencies();
+        assert_eq!(currencies.len(), 2);
+        assert!(currencies.contains(&CurrencyType::BasicNeeds));
+        assert!(currencies.contains(&CurrencyType::Education));
+
+        // Test get currency info
+        let basic_needs_info = system.get_currency_info(&CurrencyType::BasicNeeds).unwrap();
+        assert_eq!(basic_needs_info.total_supply, 1050.0);
+        assert_eq!(basic_needs_info.issuance_rate, 0.02);
     }
-    #[test]
-    fn test_multiple_currency_types() {
-        let mut system = CurrencySystem::new();
-        system.create_account("Alice".to_string()).unwrap();
-
-        system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
-        system.mint("Alice", &CurrencyType::Education, 50.0).unwrap();
-
-        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
-        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 50.0);
-
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 25.0,
-            currency_type: CurrencyType::Education,
-            timestamp: 12345,
-            signature: None,
-        };
-
-        system.create_account("Bob".to_string()).unwrap();
-        system.process_transaction(&transaction).unwrap();
-
-        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 25.0);
-        assert_eq!(system.get_balance("Bob", &CurrencyType::Education).unwrap(), 25.0);
-        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 100.0);
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_currency/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_currency/src/wallet.rs =====
 use super::CurrencyType;
@@ -5124,19 +5133,12 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/governance.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
-// File: crates/icn_governance/src/lib.rs
+// File: icn_governance/src/lib.rs
 
+use icn_common::{IcnResult, IcnError};
 use chrono::{DateTime, Utc, Duration};
 use serde::{Serialize, Deserialize};
-use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ProposalCategory {
-    Constitutional,
-    Economic,
-    Technical,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ProposalStatus {
@@ -5151,6 +5153,13 @@ pub enum ProposalType {
     Constitutional,
     EconomicAdjustment,
     NetworkUpgrade,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalCategory {
+    Economic,
+    Technical,
+    Social,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5168,36 +5177,6 @@ pub struct Proposal {
     pub execution_timestamp: Option<DateTime<Utc>>,
 }
 
-impl Proposal {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: String,
-        title: String,
-        description: String,
-        proposer: String,
-        voting_period: Duration,
-        proposal_type: ProposalType,
-        category: ProposalCategory,
-        required_quorum: f64,
-        execution_timestamp: Option<DateTime<Utc>>,
-    ) -> Self {
-        let now = Utc::now();
-        Proposal {
-            id,
-            title,
-            description,
-            proposer,
-            created_at: now,
-            voting_ends_at: now + voting_period,
-            status: ProposalStatus::Active,
-            proposal_type,
-            category,
-            required_quorum,
-            execution_timestamp,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vote {
     pub voter: String,
@@ -5205,18 +5184,6 @@ pub struct Vote {
     pub in_favor: bool,
     pub weight: f64,
     pub timestamp: DateTime<Utc>,
-}
-
-impl Vote {
-    pub fn new(voter: String, proposal_id: String, in_favor: bool, weight: f64) -> Self {
-        Vote {
-            voter,
-            proposal_id,
-            in_favor,
-            weight,
-            timestamp: Utc::now(),
-        }
-    }
 }
 
 pub struct GovernanceSystem {
@@ -5242,8 +5209,9 @@ impl GovernanceSystem {
         Ok(proposal_id)
     }
 
-    pub fn get_proposal(&self, proposal_id: &str) -> Option<&Proposal> {
+    pub fn get_proposal(&self, proposal_id: &str) -> IcnResult<&Proposal> {
         self.proposals.get(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Proposal not found".into()))
     }
 
     pub fn vote_on_proposal(&mut self, proposal_id: &str, voter: String, in_favor: bool, weight: f64) -> IcnResult<()> {
@@ -5265,7 +5233,14 @@ impl GovernanceSystem {
             return Err(IcnError::Governance("Voter has already voted on this proposal".into()));
         }
 
-        votes.push(Vote::new(voter, proposal_id.to_string(), in_favor, weight));
+        votes.push(Vote {
+            voter,
+            proposal_id: proposal_id.to_string(),
+            in_favor,
+            weight,
+            timestamp: Utc::now(),
+        });
+
         Ok(())
     }
 
@@ -5313,13 +5288,20 @@ impl GovernanceSystem {
         }
 
         proposal.status = ProposalStatus::Executed;
+        proposal.execution_timestamp = Some(Utc::now());
         Ok(())
     }
-}
 
-impl Default for GovernanceSystem {
-    fn default() -> Self {
-        Self::new()
+    pub fn get_votes(&self, proposal_id: &str) -> IcnResult<&Vec<Vote>> {
+        self.votes.get(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Votes not found for proposal".into()))
+    }
+
+    pub fn get_proposal_result(&self, proposal_id: &str) -> IcnResult<(f64, f64)> {
+        let votes = self.get_votes(proposal_id)?;
+        let total_votes: f64 = votes.iter().map(|v| v.weight).sum();
+        let votes_in_favor: f64 = votes.iter().filter(|v| v.in_favor).map(|v| v.weight).sum();
+        Ok((votes_in_favor, total_votes))
     }
 }
 
@@ -5327,69 +5309,73 @@ impl Default for GovernanceSystem {
 mod tests {
     use super::*;
 
-    fn create_test_proposal(id: &str) -> Proposal {
-        Proposal::new(
-            id.to_string(),
-            "Test Proposal".to_string(),
-            "This is a test proposal".to_string(),
-            "Alice".to_string(),
-            Duration::days(7),
-            ProposalType::Constitutional,
-            ProposalCategory::Technical,
-            0.5,
-            None,
-        )
+    fn create_test_proposal() -> Proposal {
+        Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.5,
+            execution_timestamp: None,
+        }
     }
 
     #[test]
     fn test_create_proposal() {
         let mut gov_system = GovernanceSystem::new();
-        let proposal = create_test_proposal("prop1");
-        let proposal_id = gov_system.create_proposal(proposal).unwrap();
-        assert_eq!(proposal_id, "prop1");
-        assert!(gov_system.get_proposal("prop1").is_some());
+        let proposal = create_test_proposal();
+        let proposal_id = gov_system.create_proposal(proposal.clone()).unwrap();
+        assert_eq!(proposal_id, "test_proposal");
+        assert!(gov_system.get_proposal("test_proposal").is_ok());
     }
 
     #[test]
     fn test_vote_on_proposal() {
         let mut gov_system = GovernanceSystem::new();
-        let proposal = create_test_proposal("prop1");
+        let proposal = create_test_proposal();
         gov_system.create_proposal(proposal).unwrap();
 
-        assert!(gov_system.vote_on_proposal("prop1", "Alice".to_string(), true, 1.0).is_ok());
-        assert!(gov_system.vote_on_proposal("prop1", "Bob".to_string(), false, 1.0).is_ok());
+        assert!(gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), true, 1.0).is_ok());
+        assert!(gov_system.vote_on_proposal("test_proposal", "Bob".to_string(), false, 1.0).is_ok());
 
         // Test duplicate vote
-        assert!(gov_system.vote_on_proposal("prop1", "Alice".to_string(), false, 1.0).is_err());
+        assert!(gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), false, 1.0).is_err());
 
         // Test vote on non-existent proposal
-        assert!(gov_system.vote_on_proposal("prop2", "Charlie".to_string(), true, 1.0).is_err());
+        assert!(gov_system.vote_on_proposal("non_existent", "Charlie".to_string(), true, 1.0).is_err());
     }
 
     #[test]
     fn test_finalize_proposal() {
         let mut gov_system = GovernanceSystem::new();
-        let mut proposal = create_test_proposal("prop1");
+        let mut proposal = create_test_proposal();
         proposal.voting_ends_at = Utc::now() - Duration::hours(1); // Set voting period to have ended
         gov_system.create_proposal(proposal).unwrap();
 
-        gov_system.vote_on_proposal("prop1", "Alice".to_string(), true, 1.0).unwrap();
-        gov_system.vote_on_proposal("prop1", "Bob".to_string(), true, 1.0).unwrap();
-        gov_system.vote_on_proposal("prop1", "Charlie".to_string(), false, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), true, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Bob".to_string(), true, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Charlie".to_string(), false, 1.0).unwrap();
 
-        let result = gov_system.finalize_proposal("prop1").unwrap();
+        let result = gov_system.finalize_proposal("test_proposal").unwrap();
         assert_eq!(result, ProposalStatus::Passed);
 
         // Test finalizing an already finalized proposal
-        assert!(gov_system.finalize_proposal("prop1").is_err());
+        assert!(gov_system.finalize_proposal("test_proposal").is_err());
     }
 
     #[test]
     fn test_list_active_proposals() {
         let mut gov_system = GovernanceSystem::new();
-        let proposal1 = create_test_proposal("prop1");
-        let proposal2 = create_test_proposal("prop2");
-        let mut proposal3 = create_test_proposal("prop3");
+        let proposal1 = create_test_proposal();
+        let mut proposal2 = create_test_proposal();
+        proposal2.id = "test_proposal_2".to_string();
+        let mut proposal3 = create_test_proposal();
+        proposal3.id = "test_proposal_3".to_string();
         proposal3.status = ProposalStatus::Passed;
 
         gov_system.create_proposal(proposal1).unwrap();
@@ -5398,51 +5384,69 @@ mod tests {
 
         let active_proposals = gov_system.list_active_proposals();
         assert_eq!(active_proposals.len(), 2);
-        assert!(active_proposals.iter().any(|p| p.id == "prop1"));
-        assert!(active_proposals.iter().any(|p| p.id == "prop2"));
+        assert!(active_proposals.iter().any(|p| p.id == "test_proposal"));
+        assert!(active_proposals.iter().any(|p| p.id == "test_proposal_2"));
     }
 
     #[test]
     fn test_mark_as_executed() {
         let mut gov_system = GovernanceSystem::new();
-        let mut proposal = create_test_proposal("prop1");
+        let mut proposal = create_test_proposal();
         proposal.status = ProposalStatus::Passed;
         gov_system.create_proposal(proposal).unwrap();
 
-        assert!(gov_system.mark_as_executed("prop1").is_ok());
-        let executed_proposal = gov_system.get_proposal("prop1").unwrap();
+        assert!(gov_system.mark_as_executed("test_proposal").is_ok());
+        let executed_proposal = gov_system.get_proposal("test_proposal").unwrap();
         assert_eq!(executed_proposal.status, ProposalStatus::Executed);
+        assert!(executed_proposal.execution_timestamp.is_some());
 
         // Test marking a non-passed proposal as executed
-        let proposal2 = create_test_proposal("prop2");
+        let mut proposal2 = create_test_proposal();
+        proposal2.id = "test_proposal_2".to_string();
         gov_system.create_proposal(proposal2).unwrap();
-        assert!(gov_system.mark_as_executed("prop2").is_err());
+        assert!(gov_system.mark_as_executed("test_proposal_2").is_err());
     }
 
     #[test]
-    fn test_quorum_requirement() {
+    fn test_get_proposal_result() {
         let mut gov_system = GovernanceSystem::new();
-        let mut proposal = create_test_proposal("prop1");
-        proposal.required_quorum = 3.0;
+        let proposal = create_test_proposal();
+        gov_system.create_proposal(proposal).unwrap();
+
+        gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), true, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Bob".to_string(), true, 2.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Charlie".to_string(), false, 1.5).unwrap();
+
+        let (votes_in_favor, total_votes) = gov_system.get_proposal_result("test_proposal").unwrap();
+        assert_eq!(votes_in_favor, 3.0);
+        assert_eq!(total_votes, 4.5);
+    }
+
+    #[test]
+    fn test_proposal_quorum() {
+        let mut gov_system = GovernanceSystem::new();
+        let mut proposal = create_test_proposal();
+        proposal.required_quorum = 5.0;
         proposal.voting_ends_at = Utc::now() - Duration::hours(1);
         gov_system.create_proposal(proposal).unwrap();
 
-        gov_system.vote_on_proposal("prop1", "Alice".to_string(), true, 1.0).unwrap();
-        gov_system.vote_on_proposal("prop1", "Bob".to_string(), true, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), true, 2.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Bob".to_string(), true, 2.0).unwrap();
 
-        let result = gov_system.finalize_proposal("prop1").unwrap();
+        let result = gov_system.finalize_proposal("test_proposal").unwrap();
         assert_eq!(result, ProposalStatus::Rejected); // Rejected due to not meeting quorum
 
-        // Now test with meeting quorum
-        let mut proposal2 = create_test_proposal("prop2");
-        proposal2.required_quorum = 3.0;
+        // Test with meeting quorum
+        let mut proposal2 = create_test_proposal();
+        proposal2.id = "test_proposal_2".to_string();
+        proposal2.required_quorum = 5.0;
         proposal2.voting_ends_at = Utc::now() - Duration::hours(1);
         gov_system.create_proposal(proposal2).unwrap();
 
-        gov_system.vote_on_proposal("prop2", "Alice".to_string(), true, 1.5).unwrap();
-        gov_system.vote_on_proposal("prop2", "Bob".to_string(), true, 1.5).unwrap();
+        gov_system.vote_on_proposal("test_proposal_2", "Alice".to_string(), true, 3.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal_2", "Bob".to_string(), true, 3.0).unwrap();
 
-        let result2 = gov_system.finalize_proposal("prop2").unwrap();
+        let result2 = gov_system.finalize_proposal("test_proposal_2").unwrap();
         assert_eq!(result2, ProposalStatus::Passed); // Passed due to meeting quorum and majority
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
@@ -5719,101 +5723,223 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/identity_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
-mod did;
-mod identity_manager;
+// File: icn_identity/src/lib.rs
 
-pub use did::DecentralizedIdentity;
-pub use identity_manager::IdentityManager;
-
-use icn_common::IcnResult;
+use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
-use ed25519_dalek::Signature;
+use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier};
+use rand::rngs::OsRng;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DecentralizedIdentity {
+    pub id: String,
+    pub public_key: PublicKey,
+    pub created_at: DateTime<Utc>,
+    pub reputation: f64,
+    pub attributes: HashMap<String, String>,
+}
+
+impl DecentralizedIdentity {
+    pub fn new(attributes: HashMap<String, String>) -> (Self, Keypair) {
+        let mut csprng = OsRng {};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+        let public_key = keypair.public;
+        let id = format!("did:icn:{}", hex::encode(public_key.to_bytes()));
+
+        (
+            Self {
+                id,
+                public_key,
+                created_at: Utc::now(),
+                reputation: 1.0,
+                attributes,
+            },
+            keypair,
+        )
+    }
+
+    pub fn verify_signature(&self, message: &[u8], signature: &Signature) -> bool {
+        self.public_key.verify(message, signature).is_ok()
+    }
+}
 
 pub struct IdentityService {
-    manager: IdentityManager,
+    identities: HashMap<String, DecentralizedIdentity>,
 }
 
 impl IdentityService {
     pub fn new() -> Self {
         IdentityService {
-            manager: IdentityManager::new(),
+            identities: HashMap::new(),
         }
     }
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
-        self.manager.create_identity(attributes)
+        let (identity, _) = DecentralizedIdentity::new(attributes);
+        self.identities.insert(identity.id.clone(), identity.clone());
+        Ok(identity)
     }
 
     pub fn get_identity(&self, id: &str) -> IcnResult<&DecentralizedIdentity> {
-        self.manager.get_identity(id)
+        self.identities.get(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))
     }
 
     pub fn update_attributes(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
-        self.manager.update_attributes(id, attributes)
+        let identity = self.identities.get_mut(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+
+        identity.attributes.extend(attributes);
+        Ok(())
     }
 
     pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
-        self.manager.update_reputation(id, change)
+        let identity = self.identities.get_mut(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        identity.reputation += change;
+        Ok(())
     }
 
     pub fn verify_signature(&self, id: &str, message: &[u8], signature: &Signature) -> IcnResult<bool> {
-        self.manager.verify_signature(id, message, signature)
+        let identity = self.get_identity(id)?;
+        Ok(identity.verify_signature(message, signature))
     }
 
     pub fn list_identities(&self) -> Vec<&DecentralizedIdentity> {
-        self.manager.list_identities()
+        self.identities.values().collect()
     }
-}
 
-impl Default for IdentityService {
-    fn default() -> Self {
-        Self::new()
+    pub fn remove_identity(&mut self, id: &str) -> IcnResult<()> {
+        self.identities.remove(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        Ok(())
+    }
+
+    pub fn get_reputation(&self, id: &str) -> IcnResult<f64> {
+        let identity = self.get_identity(id)?;
+        Ok(identity.reputation)
+    }
+
+    pub fn get_attribute(&self, id: &str, attribute_key: &str) -> IcnResult<Option<String>> {
+        let identity = self.get_identity(id)?;
+        Ok(identity.attributes.get(attribute_key).cloned())
+    }
+
+    pub fn set_attribute(&mut self, id: &str, key: String, value: String) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        identity.attributes.insert(key, value);
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Keypair, Signer};
 
     #[test]
-    fn test_identity_service() {
+    fn test_identity_creation_and_retrieval() {
         let mut service = IdentityService::new();
-
-        // Create a new identity
+        
         let mut attributes = HashMap::new();
         attributes.insert("name".to_string(), "Alice".to_string());
+        attributes.insert("email".to_string(), "alice@example.com".to_string());
+        
+        let identity = service.create_identity(attributes.clone()).unwrap();
+        assert!(identity.id.starts_with("did:icn:"));
+        
+        let retrieved_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(retrieved_identity.attributes, attributes);
+    }
+
+    #[test]
+    fn test_update_attributes() {
+        let mut service = IdentityService::new();
+        
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        
         let identity = service.create_identity(attributes).unwrap();
-
-        // Verify the identity exists
-        assert!(service.get_identity(&identity.id).is_ok());
-
-        // Update attributes
+        
         let mut new_attributes = HashMap::new();
-        new_attributes.insert("age".to_string(), "30".to_string());
-        assert!(service.update_attributes(&identity.id, new_attributes).is_ok());
+        new_attributes.insert("email".to_string(), "alice@example.com".to_string());
+        
+        service.update_attributes(&identity.id, new_attributes).unwrap();
+        
+        let updated_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.attributes.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(updated_identity.attributes.get("email"), Some(&"alice@example.com".to_string()));
+    }
 
-        // Update reputation
-        assert!(service.update_reputation(&identity.id, 0.5).is_ok());
+    #[test]
+    fn test_update_reputation() {
+        let mut service = IdentityService::new();
+        
+        let attributes = HashMap::new();
+        let identity = service.create_identity(attributes).unwrap();
+        
+        service.update_reputation(&identity.id, 0.5).unwrap();
         let updated_identity = service.get_identity(&identity.id).unwrap();
         assert_eq!(updated_identity.reputation, 1.5);
-
-        // Test signature verification
-        let message = b"Hello, World!";
-        let mut csprng = rand::rngs::OsRng{};
-        let keypair = Keypair::generate(&mut csprng);
-        let signature = keypair.sign(message);
-
-        // This should fail because we're using a different keypair
-        assert!(!service.verify_signature(&identity.id, message, &signature).unwrap());
-
-        // List identities
-        let identities = service.list_identities();
-        assert_eq!(identities.len(), 1);
-        assert_eq!(identities[0].id, identity.id);
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
+
+    #[test]
+    fn test_signature_verification() {
+        let mut service = IdentityService::new();
+        
+        let attributes = HashMap::new();
+        let (identity, keypair) = DecentralizedIdentity::new(attributes);
+        service.identities.insert(identity.id.clone(), identity);
+        
+        let message = b"Hello, World!";
+        let signature = keypair.sign(message);
+        
+        assert!(service.verify_signature(&identity.id, message, &signature).unwrap());
+    }
+
+    #[test]
+    fn test_list_identities() {
+        let mut service = IdentityService::new();
+        
+        let attributes1 = HashMap::new();
+        let attributes2 = HashMap::new();
+        
+        service.create_identity(attributes1).unwrap();
+        service.create_identity(attributes2).unwrap();
+        
+        let identities = service.list_identities();
+        assert_eq!(identities.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_identity() {
+        let mut service = IdentityService::new();
+        
+        let attributes = HashMap::new();
+        let identity = service.create_identity(attributes).unwrap();
+        
+        assert!(service.remove_identity(&identity.id).is_ok());
+        assert!(service.get_identity(&identity.id).is_err());
+    }
+
+    #[test]
+    fn test_get_and_set_attribute() {
+        let mut service = IdentityService::new();
+        
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        
+        let identity = service.create_identity(attributes).unwrap();
+        
+        assert_eq!(service.get_attribute(&identity.id, "name").unwrap(), Some("Alice".to_string()));
+        assert_eq!(service.get_attribute(&identity.id, "email").unwrap(), None);
+        
+        service.set_attribute(&identity.id, "email".to_string(), "alice@example.com".to_string()).unwrap();
+        assert_eq!(service.get_attribute(&identity.id, "email").unwrap(), Some("alice@example.com".to_string()));
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_identity/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_incentives/Cargo.toml =====
 [package]
