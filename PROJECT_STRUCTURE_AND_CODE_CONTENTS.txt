@@ -915,7 +915,7 @@ impl Blockchain {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-// File: icn_blockchain/src/lib.rs
+// crates/icn_blockchain/src/lib.rs
 
 use chrono::Utc;
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
@@ -931,6 +931,7 @@ pub struct Block {
     pub previous_hash: String,
     pub hash: String,
     pub nonce: u64,
+    pub merkle_root: String,
 }
 
 impl Block {
@@ -942,7 +943,9 @@ impl Block {
             previous_hash: previous_hash.to_string(),
             hash: String::new(),
             nonce: 0,
+            merkle_root: String::new(),
         };
+        block.merkle_root = block.calculate_merkle_root();
         block.hash = block.calculate_hash();
         block
     }
@@ -951,10 +954,43 @@ impl Block {
         let mut hasher = Sha256::new();
         hasher.update(self.index.to_string());
         hasher.update(&self.timestamp.to_string());
-        hasher.update(serde_json::to_string(&self.transactions).unwrap());
+        hasher.update(&self.merkle_root);
         hasher.update(&self.previous_hash);
         hasher.update(&self.nonce.to_string());
         format!("{:x}", hasher.finalize())
+    }
+
+    pub fn calculate_merkle_root(&self) -> String {
+        let transaction_hashes: Vec<String> = self.transactions
+            .iter()
+            .map(|tx| {
+                let mut hasher = Sha256::new();
+                hasher.update(serde_json::to_string(tx).unwrap().as_bytes());
+                format!("{:x}", hasher.finalize())
+            })
+            .collect();
+
+        if transaction_hashes.is_empty() {
+            return String::from("0000000000000000000000000000000000000000000000000000000000000000");
+        }
+
+        let mut merkle_tree = transaction_hashes;
+        while merkle_tree.len() > 1 {
+            let mut new_level = Vec::new();
+            for chunk in merkle_tree.chunks(2) {
+                let mut hasher = Sha256::new();
+                hasher.update(chunk[0].as_bytes());
+                if chunk.len() > 1 {
+                    hasher.update(chunk[1].as_bytes());
+                } else {
+                    hasher.update(chunk[0].as_bytes());
+                }
+                new_level.push(format!("{:x}", hasher.finalize()));
+            }
+            merkle_tree = new_level;
+        }
+
+        merkle_tree[0].clone()
     }
 
     pub fn mine(&mut self, difficulty: usize) {
@@ -1044,6 +1080,23 @@ impl Blockchain {
             if current_block.previous_hash != previous_block.hash {
                 return false;
             }
+
+            if current_block.merkle_root != current_block.calculate_merkle_root() {
+                return false;
+            }
+
+            if !self.validate_block_transactions(current_block) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn validate_block_transactions(&self, block: &Block) -> bool {
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction).unwrap_or(false) {
+                return false;
+            }
         }
         true
     }
@@ -1087,6 +1140,22 @@ impl Blockchain {
             .get(address)
             .and_then(|balances| balances.get(currency_type))
             .unwrap_or(&0.0))
+    }
+
+    pub fn get_transactions(&self, address: &str) -> Vec<&Transaction> {
+        self.chain
+            .iter()
+            .flat_map(|block| block.transactions.iter())
+            .filter(|tx| tx.from == address || tx.to == address)
+            .collect()
+    }
+
+    pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
+        self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
+        self.chain.get(index as usize)
     }
 }
 
@@ -1158,9 +1227,9 @@ mod tests {
     }
 
     #[test]
-    fn test_insufficient_balance() {
+    fn test_get_transactions() {
         let mut blockchain = Blockchain::new(2);
-        let transaction = Transaction {
+        let transaction1 = Transaction {
             from: "Alice".to_string(),
             to: "Bob".to_string(),
             amount: 50.0,
@@ -1168,9 +1237,32 @@ mod tests {
             timestamp: Utc::now().timestamp(),
             signature: None,
         };
+        let transaction2 = Transaction {
+            from: "Bob".to_string(),
+            to: "Charlie".to_string(),
+            amount: 25.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
 
-        // Alice has no balance
-        assert!(blockchain.add_transaction(transaction).is_err());
+        blockchain.balances.entry("Alice".to_string())
+            .or_insert_with(HashMap::new)
+            .insert(CurrencyType::BasicNeeds, 100.0);
+        blockchain.balances.entry("Bob".to_string())
+            .or_insert_with(HashMap::new)
+            .insert(CurrencyType::BasicNeeds, 50.0);
+
+        assert!(blockchain.add_transaction(transaction1).is_ok());
+        assert!(blockchain.add_transaction(transaction2).is_ok());
+        assert!(blockchain.mine_pending_transactions("Miner").is_ok());
+
+        let alice_transactions = blockchain.get_transactions("Alice");
+        assert_eq!(alice_transactions.len(), 1);
+        assert_eq!(alice_transactions[0].from, "Alice");
+
+        let bob_transactions = blockchain.get_transactions("Bob");
+        assert_eq!(bob_transactions.len(), 2);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
