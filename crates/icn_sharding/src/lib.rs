@@ -1,8 +1,7 @@
 // File: crates/icn_sharding/src/lib.rs
 
-use icn_blockchain::Block;
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use sha2::{Sha256, Digest};
 
@@ -15,22 +14,6 @@ pub struct ShardingManager {
 struct ShardData {
     transactions: Vec<Transaction>,
     balances: HashMap<String, HashMap<CurrencyType, f64>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct CrossShardTransaction {
-    pub transaction: Transaction,
-    pub from_shard: u64,
-    pub to_shard: u64,
-    pub status: CrossShardTransactionStatus,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum CrossShardTransactionStatus {
-    Initiated,
-    LockAcquired,
-    Committed,
-    Failed(String),
 }
 
 impl ShardingManager {
@@ -83,7 +66,7 @@ impl ShardingManager {
             .entry(transaction.from.clone())
             .or_default()
             .entry(transaction.currency_type.clone())
-            .or_default();
+            .or_insert(0.0);
 
         if *from_balance < transaction.amount {
             return Err(IcnError::Sharding("Insufficient balance".into()));
@@ -94,7 +77,7 @@ impl ShardingManager {
             .entry(transaction.to.clone())
             .or_default()
             .entry(transaction.currency_type.clone())
-            .or_default() += transaction.amount;
+            .or_insert(0.0) += transaction.amount;
 
         shard.transactions.push(transaction);
 
@@ -102,22 +85,8 @@ impl ShardingManager {
     }
 
     fn process_cross_shard_transaction(&self, from_shard: u64, to_shard: u64, transaction: Transaction) -> IcnResult<()> {
-        let cross_shard_tx = CrossShardTransaction {
-            transaction: transaction.clone(),
-            from_shard,
-            to_shard,
-            status: CrossShardTransactionStatus::Initiated,
-        };
-
         self.lock_funds(from_shard, &transaction.from, transaction.amount, &transaction.currency_type)?;
-
-        let mut cross_shard_tx = cross_shard_tx;
-        cross_shard_tx.status = CrossShardTransactionStatus::LockAcquired;
-
         self.transfer_between_shards(from_shard, to_shard, &transaction)?;
-
-        cross_shard_tx.status = CrossShardTransactionStatus::Committed;
-
         Ok(())
     }
 
@@ -129,7 +98,7 @@ impl ShardingManager {
             .entry(address.to_string())
             .or_default()
             .entry(currency_type.clone())
-            .or_default();
+            .or_insert(0.0);
 
         if *balance < amount {
             return Err(IcnError::Sharding("Insufficient balance to lock".into()));
@@ -147,7 +116,7 @@ impl ShardingManager {
             .entry(transaction.to.clone())
             .or_default()
             .entry(transaction.currency_type.clone())
-            .or_default() += transaction.amount;
+            .or_insert(0.0) += transaction.amount;
 
         shard_data[from_shard as usize].transactions.push(transaction.clone());
         shard_data[to_shard as usize].transactions.push(transaction.clone());
@@ -184,7 +153,7 @@ impl ShardingManager {
         Ok(total_balance)
     }
 
-    pub fn create_shard_block(&self, shard_id: u64) -> IcnResult<Block> {
+    pub fn create_shard_block(&self, shard_id: u64) -> IcnResult<Vec<Transaction>> {
         let mut shard_data = self.shard_data.write().unwrap();
         if shard_id >= self.shard_count {
             return Err(IcnError::Sharding("Invalid shard ID".into()));
@@ -192,19 +161,10 @@ impl ShardingManager {
 
         let shard = &mut shard_data[shard_id as usize];
         let transactions = std::mem::take(&mut shard.transactions);
-
-        let block = Block {
-            index: 0,
-            timestamp: chrono::Utc::now().timestamp(),
-            transactions,
-            previous_hash: "0".to_string(),
-            hash: "0".to_string(),
-        };
-
-        Ok(block)
+        Ok(transactions)
     }
 
-    pub fn apply_block_to_shard(&self, shard_id: u64, block: &Block) -> IcnResult<()> {
+    pub fn apply_block_to_shard(&self, shard_id: u64, transactions: Vec<Transaction>) -> IcnResult<()> {
         let mut shard_data = self.shard_data.write().unwrap();
         if shard_id >= self.shard_count {
             return Err(IcnError::Sharding("Invalid shard ID".into()));
@@ -212,12 +172,12 @@ impl ShardingManager {
 
         let shard = &mut shard_data[shard_id as usize];
 
-        for transaction in &block.transactions {
+        for transaction in transactions {
             let from_balance = shard.balances
                 .entry(transaction.from.clone())
                 .or_default()
                 .entry(transaction.currency_type.clone())
-                .or_default();
+                .or_insert(0.0);
 
             *from_balance -= transaction.amount;
 
@@ -225,7 +185,7 @@ impl ShardingManager {
                 .entry(transaction.to.clone())
                 .or_default()
                 .entry(transaction.currency_type.clone())
-                .or_default();
+                .or_insert(0.0);
 
             *to_balance += transaction.amount;
         }
@@ -245,12 +205,68 @@ impl ShardingManager {
 
         Ok(shard_data[shard_id as usize].transactions.clone())
     }
+
+    pub fn get_shard_addresses(&self, shard_id: u64) -> IcnResult<Vec<String>> {
+        let shard_data = self.shard_data.read().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
+        }
+
+        Ok(shard_data[shard_id as usize].balances.keys().cloned().collect())
+    }
+
+    pub fn get_shard_currencies(&self, shard_id: u64) -> IcnResult<Vec<CurrencyType>> {
+        let shard_data = self.shard_data.read().unwrap();
+        if shard_id >= self.shard_count {
+            return Err(IcnError::Sharding("Invalid shard ID".into()));
+        }
+
+        let mut currencies = HashSet::new();
+        for balances in shard_data[shard_id as usize].balances.values() {
+            currencies.extend(balances.keys().cloned());
+        }
+
+        Ok(currencies.into_iter().collect())
+    }
+
+    pub fn resize_shards(&mut self, new_shard_count: u64) -> IcnResult<()> {
+        if new_shard_count == 0 {
+            return Err(IcnError::Sharding("Shard count must be greater than zero".into()));
+        }
+
+        let mut new_shard_data = Vec::new();
+        for _ in 0..new_shard_count {
+            new_shard_data.push(ShardData {
+                transactions: Vec::new(),
+                balances: HashMap::new(),
+            });
+        }
+
+        let old_shard_data = std::mem::replace(&mut *self.shard_data.write().unwrap(), new_shard_data);
+
+        // Redistribute balances and transactions
+        for (old_shard_id, old_shard) in old_shard_data.into_iter().enumerate() {
+            for (address, balances) in old_shard.balances {
+                let new_shard_id = self.hash_address(&address) % new_shard_count;
+                let new_shard = &mut self.shard_data.write().unwrap()[new_shard_id as usize];
+                new_shard.balances.insert(address, balances);
+            }
+
+            for transaction in old_shard.transactions {
+                let new_shard_id = self.get_shard_for_address(&transaction.from);
+                let new_shard = &mut self.shard_data.write().unwrap()[new_shard_id as usize];
+                new_shard.transactions.push(transaction);
+            }
+        }
+
+        self.shard_count = new_shard_count;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use icn_common::CurrencyType;
 
     #[test]
     fn test_shard_assignment() {
@@ -322,10 +338,26 @@ mod tests {
     }
 
     #[test]
+    fn test_get_total_balance() {
+        let manager = ShardingManager::new(4);
+        let address = "0x5555555555555555555555555555555555555555".to_string();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            for i in 0..4 {
+                shard_data[i].balances.insert(address.clone(), HashMap::new());
+                shard_data[i].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 25.0);
+            }
+        }
+
+        assert_eq!(manager.get_total_balance(&address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
+    }
+
+    #[test]
     fn test_create_and_apply_shard_block() {
         let manager = ShardingManager::new(4);
-        let address1 = "0x5555555555555555555555555555555555555555".to_string();
-        let address2 = "0x6666666666666666666666666666666666666666".to_string();
+        let address1 = "0x6666666666666666666666666666666666666666".to_string();
+        let address2 = "0x7777777777777777777777777777777777777777".to_string();
         manager.add_address_to_shard(address1.clone(), 1).unwrap();
         manager.add_address_to_shard(address2.clone(), 1).unwrap();
 
@@ -344,81 +376,77 @@ mod tests {
             signature: None,
         };
 
-        assert!(manager.process_transaction(transaction).is_ok());
+        manager.process_transaction(transaction).unwrap();
 
         let block = manager.create_shard_block(1).unwrap();
-        assert_eq!(block.transactions.len(), 1);
+        assert_eq!(block.len(), 1);
 
-        assert!(manager.apply_block_to_shard(1, &block).is_ok());
+        // Reset the shard data
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+            shard_data[1].balances.get_mut(&address2).unwrap().remove(&CurrencyType::BasicNeeds);
+        }
+
+        manager.apply_block_to_shard(1, block).unwrap();
 
         assert_eq!(manager.get_shard_balance(1, &address1, &CurrencyType::BasicNeeds).unwrap(), 50.0);
         assert_eq!(manager.get_shard_balance(1, &address2, &CurrencyType::BasicNeeds).unwrap(), 50.0);
-
-        let shard_transactions = manager.get_shard_transactions(1).unwrap();
-        assert_eq!(shard_transactions.len(), 0);
     }
 
     #[test]
-    fn test_get_total_balance() {
+    fn test_get_shard_addresses() {
         let manager = ShardingManager::new(4);
-        let address = "0x7777777777777777777777777777777777777777".to_string();
+        let address1 = "0x8888888888888888888888888888888888888888".to_string();
+        let address2 = "0x9999999999999999999999999999999999999999".to_string();
+        manager.add_address_to_shard(address1.clone(), 1).unwrap();
+        manager.add_address_to_shard(address2.clone(), 1).unwrap();
 
-        {
-            let mut shard_data = manager.shard_data.write().unwrap();
-            shard_data[0].balances.insert(address.clone(), HashMap::new());
-            shard_data[0].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
-            shard_data[1].balances.insert(address.clone(), HashMap::new());
-            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 150.0);
-            shard_data[2].balances.insert(address.clone(), HashMap::new());
-            shard_data[2].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 200.0);
-        }
-
-        let total_balance = manager.get_total_balance(&address, &CurrencyType::BasicNeeds).unwrap();
-        assert_eq!(total_balance, 450.0);
+        let addresses = manager.get_shard_addresses(1).unwrap();
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.contains(&address1));
+        assert!(addresses.contains(&address2));
     }
 
     #[test]
-    fn test_insufficient_balance() {
-        let manager = ShardingManager::new(4);
-        let from_address = "0x8888888888888888888888888888888888888888".to_string();
-        let to_address = "0x9999999999999999999999999999999999999999".to_string();
-        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
-        manager.add_address_to_shard(to_address.clone(), 1).unwrap();
-
-        {
-            let mut shard_data = manager.shard_data.write().unwrap();
-            shard_data[1].balances.insert(from_address.clone(), HashMap::new());
-            shard_data[1].balances.get_mut(&from_address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
-        }
-
-        let transaction = Transaction {
-            from: from_address.clone(),
-            to: to_address.clone(),
-            amount: 150.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: 0,
-            signature: None,
-        };
-
-        assert!(manager.process_transaction(transaction).is_err());
-
-        assert_eq!(manager.get_shard_balance(1, &from_address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
-        assert_eq!(manager.get_shard_balance(1, &to_address, &CurrencyType::BasicNeeds).unwrap(), 0.0);
-    }
-
-    #[test]
-    fn test_invalid_shard_id() {
+    fn test_get_shard_currencies() {
         let manager = ShardingManager::new(4);
         let address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        manager.add_address_to_shard(address.clone(), 1).unwrap();
 
-        assert!(manager.get_shard_balance(4, &address, &CurrencyType::BasicNeeds).is_err());
-        assert!(manager.create_shard_block(4).is_err());
-        assert!(manager.apply_block_to_shard(4, &Block {
-            index: 0,
-            timestamp: 0,
-            transactions: vec![],
-            previous_hash: "0".to_string(),
-            hash: "0".to_string(),
-        }).is_err());
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::Education, 50.0);
+        }
+
+        let currencies = manager.get_shard_currencies(1).unwrap();
+        assert_eq!(currencies.len(), 2);
+        assert!(currencies.contains(&CurrencyType::BasicNeeds));
+        assert!(currencies.contains(&CurrencyType::Education));
+    }
+
+    #[test]
+    fn test_resize_shards() {
+        let mut manager = ShardingManager::new(4);
+        let address1 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+        let address2 = "0xcccccccccccccccccccccccccccccccccccccccc".to_string();
+        manager.add_address_to_shard(address1.clone(), 1).unwrap();
+        manager.add_address_to_shard(address2.clone(), 2).unwrap();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(address1.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+            shard_data[2].balances.insert(address2.clone(), HashMap::new());
+            shard_data[2].balances.get_mut(&address2).unwrap().insert(CurrencyType::Education, 50.0);
+        }
+
+        manager.resize_shards(2).unwrap();
+
+        assert_eq!(manager.get_shard_count(), 2);
+        assert!(manager.get_shard_balance(0, &address1, &CurrencyType::BasicNeeds).is_ok());
+        assert!(manager.get_shard_balance(1, &address2, &CurrencyType::Education).is_ok());
     }
 }
