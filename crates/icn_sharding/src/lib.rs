@@ -446,7 +446,77 @@ mod tests {
         manager.resize_shards(2).unwrap();
 
         assert_eq!(manager.get_shard_count(), 2);
-        assert!(manager.get_shard_balance(0, &address1, &CurrencyType::BasicNeeds).is_ok());
-        assert!(manager.get_shard_balance(1, &address2, &CurrencyType::Education).is_ok());
+        
+        // Check if balances are preserved after resizing
+        let new_shard1 = manager.get_shard_for_address(&address1);
+        let new_shard2 = manager.get_shard_for_address(&address2);
+        
+        assert_eq!(manager.get_shard_balance(new_shard1, &address1, &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert_eq!(manager.get_shard_balance(new_shard2, &address2, &CurrencyType::Education).unwrap(), 50.0);
+    }
+
+    #[test]
+    fn test_invalid_shard_operations() {
+        let manager = ShardingManager::new(4);
+        
+        // Test invalid shard ID
+        assert!(manager.get_shard_balance(5, "address", &CurrencyType::BasicNeeds).is_err());
+        assert!(manager.get_shard_transactions(5).is_err());
+        assert!(manager.get_shard_addresses(5).is_err());
+        assert!(manager.get_shard_currencies(5).is_err());
+        
+        // Test invalid address to shard assignment
+        assert!(manager.add_address_to_shard("address".to_string(), 5).is_err());
+    }
+
+    #[test]
+    fn test_insufficient_balance() {
+        let manager = ShardingManager::new(4);
+        let from_address = "0xdddddddddddddddddddddddddddddddddddddddd".to_string();
+        let to_address = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string();
+        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
+        manager.add_address_to_shard(to_address.clone(), 1).unwrap();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(from_address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&from_address).unwrap().insert(CurrencyType::BasicNeeds, 50.0);
+        }
+
+        let transaction = Transaction {
+            from: from_address.clone(),
+            to: to_address.clone(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        assert!(manager.process_transaction(transaction).is_err());
+    }
+
+    #[test]
+    fn test_multiple_currencies() {
+        let manager = ShardingManager::new(4);
+        let address = "0xffffffffffffffffffffffffffffffffffffffff".to_string();
+        manager.add_address_to_shard(address.clone(), 1).unwrap();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(address.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::Education, 50.0);
+            shard_data[1].balances.get_mut(&address).unwrap().insert(CurrencyType::Environmental, 25.0);
+        }
+
+        assert_eq!(manager.get_shard_balance(1, &address, &CurrencyType::BasicNeeds).unwrap(), 100.0);
+        assert_eq!(manager.get_shard_balance(1, &address, &CurrencyType::Education).unwrap(), 50.0);
+        assert_eq!(manager.get_shard_balance(1, &address, &CurrencyType::Environmental).unwrap(), 25.0);
+
+        let currencies = manager.get_shard_currencies(1).unwrap();
+        assert_eq!(currencies.len(), 3);
+        assert!(currencies.contains(&CurrencyType::BasicNeeds));
+        assert!(currencies.contains(&CurrencyType::Education));
+        assert!(currencies.contains(&CurrencyType::Environmental));
     }
 }
