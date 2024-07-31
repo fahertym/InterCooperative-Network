@@ -1,7 +1,7 @@
 // File: crates/icn_blockchain/src/lib.rs
 
 use chrono::{DateTime, Utc};
-use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
+use icn_common::{IcnResult, IcnError, CurrencyType};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -83,6 +83,16 @@ impl Block {
             self.hash = self.calculate_hash();
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transaction {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub currency_type: CurrencyType,
+    pub timestamp: i64,
+    pub signature: Option<Vec<u8>>,
 }
 
 pub struct Blockchain {
