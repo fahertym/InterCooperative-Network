@@ -7,6 +7,7 @@ use chrono::{Duration, Utc};
 use log::{info, warn, error};
 use uuid::Uuid;
 use std::collections::HashMap;
+use tokio;
 
 #[tokio::main]
 async fn main() -> IcnResult<()> {
@@ -68,37 +69,14 @@ fn print_help() {
 async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new transaction...");
     
-    print!("From: ");
-    io::stdout().flush()?;
-    let mut from = String::new();
-    io::stdin().read_line(&mut from)?;
-    
-    print!("To: ");
-    io::stdout().flush()?;
-    let mut to = String::new();
-    io::stdin().read_line(&mut to)?;
-    
-    print!("Amount: ");
-    io::stdout().flush()?;
-    let mut amount_str = String::new();
-    io::stdin().read_line(&mut amount_str)?;
-    let amount: f64 = amount_str.trim().parse()?;
-
-    print!("Currency type (BasicNeeds, Education, Environmental, Community): ");
-    io::stdout().flush()?;
-    let mut currency_type_str = String::new();
-    io::stdin().read_line(&mut currency_type_str)?;
-    let currency_type = match currency_type_str.trim() {
-        "BasicNeeds" => CurrencyType::BasicNeeds,
-        "Education" => CurrencyType::Education,
-        "Environmental" => CurrencyType::Environmental,
-        "Community" => CurrencyType::Community,
-        _ => return Err(icn_common::IcnError::InvalidInput("Invalid currency type".to_string())),
-    };
+    let from = get_input("From: ")?;
+    let to = get_input("To: ")?;
+    let amount: f64 = get_input("Amount: ")?.parse()?;
+    let currency_type = get_currency_type()?;
 
     let transaction = Transaction {
-        from: from.trim().to_string(),
-        to: to.trim().to_string(),
+        from,
+        to,
         amount,
         currency_type,
         timestamp: Utc::now().timestamp(),
@@ -113,48 +91,17 @@ async fn process_transaction(node: &IcnNode) -> IcnResult<()> {
 async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new proposal...");
     
-    print!("Title: ");
-    io::stdout().flush()?;
-    let mut title = String::new();
-    io::stdin().read_line(&mut title)?;
-    
-    print!("Description: ");
-    io::stdout().flush()?;
-    let mut description = String::new();
-    io::stdin().read_line(&mut description)?;
-    
-    print!("Proposer: ");
-    io::stdout().flush()?;
-    let mut proposer = String::new();
-    io::stdin().read_line(&mut proposer)?;
-
-    print!("Proposal type (Constitutional, EconomicAdjustment, NetworkUpgrade): ");
-    io::stdout().flush()?;
-    let mut proposal_type_str = String::new();
-    io::stdin().read_line(&mut proposal_type_str)?;
-    let proposal_type = match proposal_type_str.trim() {
-        "Constitutional" => ProposalType::Constitutional,
-        "EconomicAdjustment" => ProposalType::EconomicAdjustment,
-        "NetworkUpgrade" => ProposalType::NetworkUpgrade,
-        _ => return Err(icn_common::IcnError::InvalidInput("Invalid proposal type".to_string())),
-    };
-
-    print!("Proposal category (Economic, Technical, Social): ");
-    io::stdout().flush()?;
-    let mut category_str = String::new();
-    io::stdin().read_line(&mut category_str)?;
-    let category = match category_str.trim() {
-        "Economic" => ProposalCategory::Economic,
-        "Technical" => ProposalCategory::Technical,
-        "Social" => ProposalCategory::Social,
-        _ => return Err(icn_common::IcnError::InvalidInput("Invalid proposal category".to_string())),
-    };
+    let title = get_input("Title: ")?;
+    let description = get_input("Description: ")?;
+    let proposer = get_input("Proposer: ")?;
+    let proposal_type = get_proposal_type()?;
+    let category = get_proposal_category()?;
 
     let proposal = Proposal {
         id: Uuid::new_v4().to_string(),
-        title: title.trim().to_string(),
-        description: description.trim().to_string(),
-        proposer: proposer.trim().to_string(),
+        title,
+        description,
+        proposer,
         created_at: Utc::now(),
         voting_ends_at: Utc::now() + Duration::days(7),
         status: ProposalStatus::Active,
@@ -170,24 +117,10 @@ async fn create_proposal(node: &IcnNode) -> IcnResult<()> {
 }
 
 async fn check_balance(node: &IcnNode) -> IcnResult<()> {
-    print!("Enter address: ");
-    io::stdout().flush()?;
-    let mut address = String::new();
-    io::stdin().read_line(&mut address)?;
-
-    print!("Enter currency type (BasicNeeds, Education, Environmental, Community): ");
-    io::stdout().flush()?;
-    let mut currency_type_str = String::new();
-    io::stdin().read_line(&mut currency_type_str)?;
-    let currency_type = match currency_type_str.trim() {
-        "BasicNeeds" => CurrencyType::BasicNeeds,
-        "Education" => CurrencyType::Education,
-        "Environmental" => CurrencyType::Environmental,
-        "Community" => CurrencyType::Community,
-        _ => return Err(icn_common::IcnError::InvalidInput("Invalid currency type".to_string())),
-    };
+    let address = get_input("Enter address: ")?;
+    let currency_type = get_currency_type()?;
     
-    let balance = node.get_balance(address.trim(), &currency_type).await?;
+    let balance = node.get_balance(&address, &currency_type).await?;
     println!("Balance: {} {:?}", balance, currency_type);
     Ok(())
 }
@@ -195,13 +128,10 @@ async fn check_balance(node: &IcnNode) -> IcnResult<()> {
 async fn create_identity(node: &IcnNode) -> IcnResult<()> {
     println!("Creating a new identity...");
     
-    print!("Enter name: ");
-    io::stdout().flush()?;
-    let mut name = String::new();
-    io::stdin().read_line(&mut name)?;
+    let name = get_input("Enter name: ")?;
     
     let mut attributes = HashMap::new();
-    attributes.insert("name".to_string(), name.trim().to_string());
+    attributes.insert("name".to_string(), name);
     
     let identity_id = node.create_identity(attributes).await?;
     println!("Identity created successfully. ID: {}", identity_id);
@@ -211,18 +141,10 @@ async fn create_identity(node: &IcnNode) -> IcnResult<()> {
 async fn allocate_resource(node: &IcnNode) -> IcnResult<()> {
     println!("Allocating a resource...");
 
-    print!("Enter resource type: ");
-    io::stdout().flush()?;
-    let mut resource_type = String::new();
-    io::stdin().read_line(&mut resource_type)?;
+    let resource_type = get_input("Enter resource type: ")?;
+    let amount: u64 = get_input("Enter amount: ")?.parse()?;
 
-    print!("Enter amount: ");
-    io::stdout().flush()?;
-    let mut amount_str = String::new();
-    io::stdin().read_line(&mut amount_str)?;
-    let amount: u64 = amount_str.trim().parse()?;
-
-    node.allocate_resource(resource_type.trim(), amount).await?;
+    node.allocate_resource(&resource_type, amount).await?;
     println!("Resource allocated successfully");
     Ok(())
 }
@@ -234,4 +156,56 @@ async fn get_network_stats(node: &IcnNode) -> IcnResult<()> {
     println!("  Total Transactions: {}", stats.total_transactions);
     println!("  Active Proposals: {}", stats.active_proposals);
     Ok(())
+}
+
+fn get_input(prompt: &str) -> IcnResult<String> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
+
+fn get_currency_type() -> IcnResult<CurrencyType> {
+    println!("Select currency type:");
+    println!("1. BasicNeeds");
+    println!("2. Education");
+    println!("3. Environmental");
+    println!("4. Community");
+    let choice: u32 = get_input("Enter choice (1-4): ")?.parse()?;
+    match choice {
+        1 => Ok(CurrencyType::BasicNeeds),
+        2 => Ok(CurrencyType::Education),
+        3 => Ok(CurrencyType::Environmental),
+        4 => Ok(CurrencyType::Community),
+        _ => Err(IcnError::InvalidInput("Invalid currency type choice".to_string())),
+    }
+}
+
+fn get_proposal_type() -> IcnResult<ProposalType> {
+    println!("Select proposal type:");
+    println!("1. Constitutional");
+    println!("2. EconomicAdjustment");
+    println!("3. NetworkUpgrade");
+    let choice: u32 = get_input("Enter choice (1-3): ")?.parse()?;
+    match choice {
+        1 => Ok(ProposalType::Constitutional),
+        2 => Ok(ProposalType::EconomicAdjustment),
+        3 => Ok(ProposalType::NetworkUpgrade),
+        _ => Err(IcnError::InvalidInput("Invalid proposal type choice".to_string())),
+    }
+}
+
+fn get_proposal_category() -> IcnResult<ProposalCategory> {
+    println!("Select proposal category:");
+    println!("1. Economic");
+    println!("2. Technical");
+    println!("3. Social");
+    let choice: u32 = get_input("Enter choice (1-3): ")?.parse()?;
+    match choice {
+        1 => Ok(ProposalCategory::Economic),
+        2 => Ok(ProposalCategory::Technical),
+        3 => Ok(ProposalCategory::Social),
+        _ => Err(IcnError::InvalidInput("Invalid proposal category choice".to_string())),
+    }
 }

@@ -176,6 +176,34 @@ impl IcnNode {
         let balance = self.get_total_balance(address, currency_type).await?;
         Ok(balance >= amount)
     }
+
+    pub async fn get_node_reputation(&self, node_id: &str) -> IcnResult<f64> {
+        self.consensus.read().await.get_node_reputation(node_id)
+    }
+
+    pub async fn update_node_reputation(&self, node_id: &str, change: f64) -> IcnResult<()> {
+        self.consensus.write().await.update_node_reputation(node_id, change)
+    }
+
+    pub async fn get_shard_for_address(&self, address: &str) -> u64 {
+        self.sharding_manager.read().await.get_shard_for_address(address)
+    }
+
+    pub async fn create_smart_contract(&self, code: String) -> IcnResult<String> {
+        self.smart_contract_executor.write().await.create_contract(code)
+    }
+
+    pub async fn get_smart_contract(&self, contract_id: &str) -> IcnResult<Option<String>> {
+        self.smart_contract_executor.read().await.get_contract(contract_id)
+    }
+
+    pub async fn update_smart_contract(&self, contract_id: &str, new_code: String) -> IcnResult<()> {
+        self.smart_contract_executor.write().await.update_contract(contract_id, new_code)
+    }
+
+    pub async fn delete_smart_contract(&self, contract_id: &str) -> IcnResult<()> {
+        self.smart_contract_executor.write().await.delete_contract(contract_id)
+    }
 }
 
 #[cfg(test)]
@@ -374,5 +402,57 @@ mod tests {
         // Test check_sufficient_balance
         assert!(node.check_sufficient_balance("Alice", 50.0, &CurrencyType::BasicNeeds).await.unwrap());
         assert!(!node.check_sufficient_balance("Alice", 150.0, &CurrencyType::BasicNeeds).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_reputation_management() {
+        let node = create_test_node().await;
+        let node_id = "test_node";
+
+        // Initial reputation should be 0 or a default value
+        let initial_reputation = node.get_node_reputation(node_id).await.unwrap();
+        assert_eq!(initial_reputation, 0.0);
+
+        // Update reputation
+        node.update_node_reputation(node_id, 0.5).await.unwrap();
+        let updated_reputation = node.get_node_reputation(node_id).await.unwrap();
+        assert_eq!(updated_reputation, 0.5);
+    }
+
+    #[tokio::test]
+    async fn test_sharding() {
+        let node = create_test_node().await;
+        let address = "test_address";
+
+        let shard_id = node.get_shard_for_address(address).await;
+        assert!(shard_id < node.get_shard_count().await);
+    }
+
+    #[tokio::test]
+    async fn test_smart_contract_management() {
+        let node = create_test_node().await;
+
+        // Create a smart contract
+        let contract_code = "function add(a, b) { return a + b; }".to_string();
+        let contract_id = node.create_smart_contract(contract_code.clone()).await.unwrap();
+
+        // Get the smart contract
+        let retrieved_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(retrieved_code, Some(contract_code));
+
+        // Update the smart contract
+        let new_contract_code = "function add(a, b) { return a + b + 1; }".to_string();
+        node.update_smart_contract(&contract_id, new_contract_code.clone()).await.unwrap();
+
+        // Verify the update
+        let updated_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(updated_code, Some(new_contract_code));
+
+        // Delete the smart contract
+        node.delete_smart_contract(&contract_id).await.unwrap();
+
+        // Verify deletion
+        let deleted_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(deleted_code, None);
     }
 }
