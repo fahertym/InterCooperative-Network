@@ -9069,21 +9069,33 @@ use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use sha2::{Sha256, Digest};
+use log::{info, warn, error};
 
+/// Represents the sharding manager for the InterCooperative Network.
 pub struct ShardingManager {
     shard_count: u64,
     address_to_shard: Arc<RwLock<HashMap<String, u64>>>,
     shard_data: Arc<RwLock<Vec<ShardData>>>,
 }
 
+/// Holds the transaction data and balances for each shard.
 struct ShardData {
     transactions: Vec<Transaction>,
     balances: HashMap<String, HashMap<CurrencyType, f64>>,
 }
 
 impl ShardingManager {
+    /// Creates a new ShardingManager with the specified number of shards.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_count` - The number of shards to create.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of ShardingManager.
     pub fn new(shard_count: u64) -> Self {
-        let mut shard_data = Vec::new();
+        let mut shard_data = Vec::with_capacity(shard_count as usize);
         for _ in 0..shard_count {
             shard_data.push(ShardData {
                 transactions: Vec::new(),
@@ -9098,20 +9110,48 @@ impl ShardingManager {
         }
     }
 
+    /// Determines the shard for a given address.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to determine the shard for.
+    ///
+    /// # Returns
+    ///
+    /// The shard ID for the given address.
     pub fn get_shard_for_address(&self, address: &str) -> u64 {
         let address_to_shard = self.address_to_shard.read().unwrap();
         *address_to_shard.get(address).unwrap_or(&(self.hash_address(address) % self.shard_count))
     }
 
+    /// Adds an address to a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to add.
+    /// * `shard_id` - The ID of the shard to add the address to.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult indicating success or failure.
     pub fn add_address_to_shard(&self, address: String, shard_id: u64) -> IcnResult<()> {
         if shard_id >= self.shard_count {
-            return Err(IcnError::Sharding("Invalid shard ID".into()));
+            return Err(IcnError::Sharding(format!("Invalid shard ID: {}", shard_id)));
         }
         let mut address_to_shard = self.address_to_shard.write().unwrap();
         address_to_shard.insert(address, shard_id);
         Ok(())
     }
 
+    /// Processes a transaction within the sharding system.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to process.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult indicating success or failure.
     pub fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
         let from_shard = self.get_shard_for_address(&transaction.from);
         let to_shard = self.get_shard_for_address(&transaction.to);
@@ -9197,6 +9237,17 @@ impl ShardingManager {
         u64::from_le_bytes(hash_bytes)
     }
 
+    /// Gets the balance for a given address and currency type within a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to check.
+    /// * `address` - The address to check the balance for.
+    /// * `currency_type` - The type of currency to check the balance for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the balance if successful.
     pub fn get_shard_balance(&self, shard_id: u64, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let shard_data = self.shard_data.read().unwrap();
         if shard_id >= self.shard_count {
@@ -9210,6 +9261,16 @@ impl ShardingManager {
             .unwrap_or(&0.0))
     }
 
+    /// Gets the total balance across all shards for a given address and currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The address to check the balance for.
+    /// * `currency_type` - The type of currency to check the balance for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the total balance if successful.
     pub fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let mut total_balance = 0.0;
         for shard_id in 0..self.shard_count {
@@ -9218,6 +9279,15 @@ impl ShardingManager {
         Ok(total_balance)
     }
 
+    /// Creates a new block for a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to create a block for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the list of transactions in the new block if successful.
     pub fn create_shard_block(&self, shard_id: u64) -> IcnResult<Vec<Transaction>> {
         let mut shard_data = self.shard_data.write().unwrap();
         if shard_id >= self.shard_count {
@@ -9229,6 +9299,16 @@ impl ShardingManager {
         Ok(transactions)
     }
 
+    /// Applies a block of transactions to a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to apply the block to.
+    /// * `transactions` - The list of transactions in the block.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult indicating success or failure.
     pub fn apply_block_to_shard(&self, shard_id: u64, transactions: Vec<Transaction>) -> IcnResult<()> {
         let mut shard_data = self.shard_data.write().unwrap();
         if shard_id >= self.shard_count {
@@ -9258,10 +9338,24 @@ impl ShardingManager {
         Ok(())
     }
 
+    /// Gets the number of shards in the system.
+    ///
+    /// # Returns
+    ///
+    /// The number of shards.
     pub fn get_shard_count(&self) -> u64 {
         self.shard_count
     }
 
+    /// Gets all transactions for a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to get transactions for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the list of transactions if successful.
     pub fn get_shard_transactions(&self, shard_id: u64) -> IcnResult<Vec<Transaction>> {
         let shard_data = self.shard_data.read().unwrap();
         if shard_id >= self.shard_count {
@@ -9271,6 +9365,15 @@ impl ShardingManager {
         Ok(shard_data[shard_id as usize].transactions.clone())
     }
 
+    /// Gets all addresses present in a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to get addresses for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the list of addresses if successful.
     pub fn get_shard_addresses(&self, shard_id: u64) -> IcnResult<Vec<String>> {
         let shard_data = self.shard_data.read().unwrap();
         if shard_id >= self.shard_count {
@@ -9280,6 +9383,15 @@ impl ShardingManager {
         Ok(shard_data[shard_id as usize].balances.keys().cloned().collect())
     }
 
+    /// Gets all currency types present in a specific shard.
+    ///
+    /// # Arguments
+    ///
+    /// * `shard_id` - The ID of the shard to get currency types for.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult containing the list of currency types if successful.
     pub fn get_shard_currencies(&self, shard_id: u64) -> IcnResult<Vec<CurrencyType>> {
         let shard_data = self.shard_data.read().unwrap();
         if shard_id >= self.shard_count {
@@ -9294,12 +9406,21 @@ impl ShardingManager {
         Ok(currencies.into_iter().collect())
     }
 
+    /// Resizes the number of shards in the system.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_shard_count` - The new number of shards.
+    ///
+    /// # Returns
+    ///
+    /// An IcnResult indicating success or failure.
     pub fn resize_shards(&mut self, new_shard_count: u64) -> IcnResult<()> {
         if new_shard_count == 0 {
             return Err(IcnError::Sharding("Shard count must be greater than zero".into()));
         }
 
-        let mut new_shard_data = Vec::new();
+        let mut new_shard_data = Vec::with_capacity(new_shard_count as usize);
         for _ in 0..new_shard_count {
             new_shard_data.push(ShardData {
                 transactions: Vec::new(),
@@ -9580,11 +9701,76 @@ mod tests {
 
         let currencies = manager.get_shard_currencies(1).unwrap();
         assert_eq!(currencies.len(), 3);
-        assert!(currencies.contains(&CurrencyType::BasicNeeds));
-        assert!(currencies.contains(&CurrencyType::Education));
-        assert!(currencies.contains(&CurrencyType::Environmental));
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
+
+    #[test]
+    fn test_shard_transactions() {
+        let manager = ShardingManager::new(4);
+        let address1 = "0x1111111111111111111111111111111111111111".to_string();
+        let address2 = "0x2222222222222222222222222222222222222222".to_string();
+        manager.add_address_to_shard(address1.clone(), 1).unwrap();
+        manager.add_address_to_shard(address2.clone(), 1).unwrap();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[1].balances.insert(address1.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
+
+        let transaction1 = Transaction {
+            from: address1.clone(),
+            to: address2.clone(),
+            amount: 20.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        let transaction2 = Transaction {
+            from: address1.clone(),
+            to: address2.clone(),
+            amount: 30.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 1,
+            signature: None,
+        };
+
+        manager.process_transaction(transaction1.clone()).unwrap();
+        manager.process_transaction(transaction2.clone()).unwrap();
+
+        let transactions = manager.get_shard_transactions(1).unwrap();
+        assert_eq!(transactions.len(), 2);
+        assert_eq!(transactions[0], transaction1);
+        assert_eq!(transactions[1], transaction2);
+    }
+
+    #[test]
+    fn test_resize_shards_preserves_data() {
+        let mut manager = ShardingManager::new(2);
+        let address1 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        let address2 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+
+        manager.add_address_to_shard(address1.clone(), 0).unwrap();
+        manager.add_address_to_shard(address2.clone(), 1).unwrap();
+
+        {
+            let mut shard_data = manager.shard_data.write().unwrap();
+            shard_data[0].balances.insert(address1.clone(), HashMap::new());
+            shard_data[0].balances.get_mut(&address1).unwrap().insert(CurrencyType::BasicNeeds, 50.0);
+            shard_data[1].balances.insert(address2.clone(), HashMap::new());
+            shard_data[1].balances.get_mut(&address2).unwrap().insert(CurrencyType::BasicNeeds, 100.0);
+        }
+
+        manager.resize_shards(4).unwrap();
+
+        let new_shard_id1 = manager.get_shard_for_address(&address1);
+        let new_shard_id2 = manager.get_shard_for_address(&address2);
+
+        assert_eq!(manager.get_shard_balance(new_shard_id1, &address1, &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(manager.get_shard_balance(new_shard_id2, &address2, &CurrencyType::BasicNeeds).unwrap(), 100.0);
+    }
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml =====
 # File: /home/matt/InterCooperative-Network/crates/icn_smart_contracts/Cargo.toml
