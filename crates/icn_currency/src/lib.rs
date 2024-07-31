@@ -1,10 +1,11 @@
-// File: icn_currency/src/lib.rs
+// File: crates/icn_currency/src/lib.rs
 
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Currency {
     pub currency_type: CurrencyType,
     pub total_supply: f64,
@@ -153,6 +154,7 @@ impl CurrencySystem {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -198,5 +200,84 @@ mod tests {
         let basic_needs_info = system.get_currency_info(&CurrencyType::BasicNeeds).unwrap();
         assert_eq!(basic_needs_info.total_supply, 1050.0);
         assert_eq!(basic_needs_info.issuance_rate, 0.02);
+    }
+
+    #[test]
+    fn test_currency_operations() {
+        let mut currency = Currency::new(CurrencyType::BasicNeeds, 1000.0, 0.01);
+
+        // Test minting
+        assert!(currency.mint(100.0).is_ok());
+        assert_eq!(currency.total_supply, 1100.0);
+
+        // Test burning
+        assert!(currency.burn(50.0).is_ok());
+        assert_eq!(currency.total_supply, 1050.0);
+
+        // Test minting negative amount
+        assert!(currency.mint(-100.0).is_err());
+
+        // Test burning negative amount
+        assert!(currency.burn(-50.0).is_err());
+
+        // Test burning more than available
+        assert!(currency.burn(2000.0).is_err());
+    }
+
+    #[test]
+    fn test_currency_system_edge_cases() {
+        let mut system = CurrencySystem::new();
+
+        // Test adding duplicate currency
+        assert!(system.add_currency(CurrencyType::BasicNeeds, 1000.0, 0.01).is_ok());
+        assert!(system.add_currency(CurrencyType::BasicNeeds, 2000.0, 0.02).is_err());
+
+        // Test operations on non-existent currency
+        assert!(system.mint(&CurrencyType::Education, 100.0).is_err());
+        assert!(system.burn(&CurrencyType::Education, 50.0).is_err());
+        assert!(system.get_total_supply(&CurrencyType::Education).is_err());
+        assert!(system.get_issuance_rate(&CurrencyType::Education).is_err());
+        assert!(system.update_issuance_rate(&CurrencyType::Education, 0.03).is_err());
+        assert!(system.get_currency_info(&CurrencyType::Education).is_err());
+
+        // Test transfer with non-existent currency
+        assert!(system.transfer("Alice", "Bob", &CurrencyType::Education, 50.0).is_err());
+
+        // Test transfer with negative amount
+        assert!(system.transfer("Alice", "Bob", &CurrencyType::BasicNeeds, -50.0).is_err());
+    }
+
+    #[test]
+    fn test_currency_system_process_transaction() {
+        let mut system = CurrencySystem::new();
+        system.add_currency(CurrencyType::BasicNeeds, 1000.0, 0.01).unwrap();
+
+        // Initialize balance for Alice
+        system.update_balance("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(system.process_transaction(&transaction).is_ok());
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(system.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+
+        // Test processing invalid transaction
+        let invalid_transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0, // More than Alice's balance
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(system.process_transaction(&invalid_transaction).is_err());
     }
 }

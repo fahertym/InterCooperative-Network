@@ -1,6 +1,6 @@
-// crates/icn_blockchain/src/lib.rs
+// File: crates/icn_blockchain/src/lib.rs
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
@@ -195,6 +195,12 @@ impl Blockchain {
         }
 
         // Additional validation logic can be added here (e.g., signature verification)
+        if let Some(signature) = &transaction.signature {
+            // Implement signature verification logic here
+            // For now, we'll assume all signatures are valid
+            // In a real implementation, you would verify the signature against the transaction data
+            // using the sender's public key
+        }
 
         Ok(true)
     }
