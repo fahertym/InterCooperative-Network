@@ -1,4 +1,4 @@
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
@@ -288,8 +288,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: icn_governance::ProposalType::Constitutional,
-            category: icn_governance::ProposalCategory::Economic,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };
@@ -407,8 +407,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: icn_governance::ProposalType::Constitutional,
-            category: icn_governance::ProposalCategory::Economic,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };

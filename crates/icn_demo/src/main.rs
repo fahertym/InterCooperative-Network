@@ -1,7 +1,7 @@
 // File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};

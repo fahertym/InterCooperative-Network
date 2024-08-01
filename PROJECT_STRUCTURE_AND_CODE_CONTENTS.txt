@@ -2531,7 +2531,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;===== END OF /home/matt/InterCooperative-Network/crates/icn_core/src/error.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_core/src/lib.rs =====
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
@@ -2821,8 +2821,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: icn_governance::ProposalType::Constitutional,
-            category: icn_governance::ProposalCategory::Economic,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };
@@ -2940,8 +2940,8 @@ mod tests {
             created_at: Utc::now(),
             voting_ends_at: Utc::now() + Duration::days(7),
             status: ProposalStatus::Active,
-            proposal_type: icn_governance::ProposalType::Constitutional,
-            category: icn_governance::ProposalCategory::Economic,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
             required_quorum: 0.51,
             execution_timestamp: None,
         };
@@ -4717,7 +4717,7 @@ uuid = { version = "1.0", features = ["v4"] }===== END OF /home/matt/InterCooper
 // File: crates/icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
-use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult};
+use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};
 use std::io::{self, Write};
 use chrono::{Duration, Utc};
 use log::{info, warn, error};
