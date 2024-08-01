@@ -1,4 +1,4 @@
-// File: crates/icn_demo/src/main.rs
+// File: icn_demo/src/main.rs
 
 use icn_core::{IcnNode, Config};
 use icn_common::{Transaction, Proposal, ProposalType, ProposalCategory, CurrencyType, ProposalStatus, IcnResult, IcnError};

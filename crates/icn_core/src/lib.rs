@@ -1,4 +1,4 @@
-// File: crates/icn_core/src/lib.rs
+// File: icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
@@ -423,27 +423,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reputation_management() {
+    async fn test_zkp_operations() {
         let node = create_test_node().await;
-        let node_id = "test_node";
 
-        // Initial reputation should be 0 or a default value
-        let initial_reputation = node.get_node_reputation(node_id).await.unwrap();
-        assert_eq!(initial_reputation, 0.0);
+        // Create a transaction
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
 
-        // Update reputation
-        node.update_node_reputation(node_id, 0.5).await.unwrap();
-        let updated_reputation = node.get_node_reputation(node_id).await.unwrap();
-        assert_eq!(updated_reputation, 0.5);
-    }
+        // Create a ZKP for the transaction
+        let (proof, committed_values) = node.create_zkp(&transaction).await.unwrap();
 
-    #[tokio::test]
-    async fn test_sharding() {
-        let node = create_test_node().await;
-        let address = "test_address";
+        // Verify the ZKP
+        let is_valid = node.verify_zkp(&proof, &committed_values).await.unwrap();
+        assert!(is_valid);
 
-        let shard_id = node.get_shard_for_address(address).await;
-        assert!(shard_id < node.get_shard_count().await);
+        // Test with tampered data
+        let mut tampered_values = committed_values.clone();
+        tampered_values[0] ^= 1; // Flip a bit
+        let is_invalid = node.verify_zkp(&proof, &tampered_values).await.unwrap();
+        assert!(!is_invalid);
     }
 
     #[tokio::test]
@@ -475,30 +479,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_zkp_operations() {
+    async fn test_reputation_management() {
         let node = create_test_node().await;
+        let node_id = "test_node";
 
-        // Create a transaction
-        let transaction = Transaction {
-            from: "Alice".to_string(),
-            to: "Bob".to_string(),
-            amount: 100.0,
-            currency_type: CurrencyType::BasicNeeds,
-            timestamp: Utc::now().timestamp(),
-            signature: None,
-        };
+        // Initial reputation should be 0 or a default value
+        let initial_reputation = node.get_node_reputation(node_id).await.unwrap();
+        assert_eq!(initial_reputation, 0.0);
 
-        // Create a ZKP for the transaction
-        let (proof, committed_values) = node.create_zkp(&transaction).await.unwrap();
+        // Update reputation
+        node.update_node_reputation(node_id, 0.5).await.unwrap();
+        let updated_reputation = node.get_node_reputation(node_id).await.unwrap();
+        assert_eq!(updated_reputation, 0.5);
+    }
 
-        // Verify the ZKP
-        let is_valid = node.verify_zkp(&proof, &committed_values).await.unwrap();
-        assert!(is_valid);
+    #[tokio::test]
+    async fn test_sharding() {
+        let node = create_test_node().await;
+        let address = "test_address";
 
-        // Test with tampered data
-        let mut tampered_values = committed_values.clone();
-        tampered_values[0] ^= 1; // Flip a bit
-        let is_invalid = node.verify_zkp(&proof, &tampered_values).await.unwrap();
-        assert!(!is_invalid);
+        let shard_id = node.get_shard_for_address(address).await;
+        assert!(shard_id < node.get_shard_count().await);
     }
 }
