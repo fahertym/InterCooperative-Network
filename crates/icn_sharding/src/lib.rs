@@ -1,4 +1,4 @@
-//file: crates/icn_sharding/src/lib.rs
+// File: crates/icn_sharding/src/lib.rs
 
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::{HashMap, HashSet};

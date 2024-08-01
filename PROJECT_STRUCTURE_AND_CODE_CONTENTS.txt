@@ -9063,7 +9063,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/cross_shard_transaction_manager.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_sharding/src/lib.rs =====
-//file: crates/icn_sharding/src/lib.rs
+// File: crates/icn_sharding/src/lib.rs
 
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::{HashMap, HashSet};
