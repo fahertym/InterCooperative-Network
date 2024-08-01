@@ -1,4 +1,4 @@
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
