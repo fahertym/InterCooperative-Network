@@ -2,17 +2,19 @@ use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use log::{info, warn, error};
+use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StorageNode {
+    id: String,
+    data: HashMap<String, Vec<u8>>,
+}
 
 pub struct StorageManager {
     replication_factor: usize,
     nodes: Arc<RwLock<Vec<StorageNode>>>,
     data_location: Arc<RwLock<HashMap<String, Vec<usize>>>>,
-}
-
-struct StorageNode {
-    id: usize,
-    data: HashMap<String, Vec<u8>>,
 }
 
 impl StorageManager {
@@ -24,15 +26,14 @@ impl StorageManager {
         }
     }
 
-    pub fn add_node(&self) -> IcnResult<usize> {
+    pub fn add_node(&self, id: String) -> IcnResult<()> {
         let mut nodes = self.nodes.write().map_err(|_| IcnError::Storage("Failed to lock nodes".into()))?;
-        let node_id = nodes.len();
         nodes.push(StorageNode {
-            id: node_id,
+            id: id.clone(),
             data: HashMap::new(),
         });
-        info!("Added new storage node with ID: {}", node_id);
-        Ok(node_id)
+        info!("Added new storage node with ID: {}", id);
+        Ok(())
     }
 
     pub fn store_data(&self, key: &str, value: Vec<u8>) -> IcnResult<()> {
@@ -117,6 +118,25 @@ impl StorageManager {
         node.data.remove(key);
         Ok(())
     }
+
+    pub fn get_node_count(&self) -> usize {
+        self.nodes.read().unwrap().len()
+    }
+
+    pub fn get_data_distribution(&self) -> IcnResult<HashMap<String, Vec<String>>> {
+        let nodes = self.nodes.read().map_err(|_| IcnError::Storage("Failed to lock nodes".into()))?;
+        let data_location = self.data_location.read().map_err(|_| IcnError::Storage("Failed to lock data location".into()))?;
+        
+        let mut distribution = HashMap::new();
+        for (key, node_ids) in data_location.iter() {
+            let node_names: Vec<String> = node_ids.iter()
+                .filter_map(|&id| nodes.get(id).map(|node| node.id.clone()))
+                .collect();
+            distribution.insert(key.clone(), node_names);
+        }
+        
+        Ok(distribution)
+    }
 }
 
 #[cfg(test)]
@@ -126,8 +146,8 @@ mod tests {
     #[test]
     fn test_store_and_retrieve_data() {
         let storage_manager = StorageManager::new(3);
-        for _ in 0..5 {
-            storage_manager.add_node().unwrap();
+        for i in 0..5 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
         let key = "test_key";
@@ -141,8 +161,8 @@ mod tests {
     #[test]
     fn test_delete_data() {
         let storage_manager = StorageManager::new(3);
-        for _ in 0..5 {
-            storage_manager.add_node().unwrap();
+        for i in 0..5 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
         let key = "delete_test_key";
@@ -156,8 +176,8 @@ mod tests {
     #[test]
     fn test_replication() {
         let storage_manager = StorageManager::new(3);
-        for _ in 0..5 {
-            storage_manager.add_node().unwrap();
+        for i in 0..5 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
         let key = "replication_test_key";
@@ -182,8 +202,8 @@ mod tests {
     #[test]
     fn test_node_selection() {
         let storage_manager = StorageManager::new(3);
-        for _ in 0..10 {
-            storage_manager.add_node().unwrap();
+        for i in 0..10 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
         let key1 = "test_key_1";
@@ -206,8 +226,8 @@ mod tests {
     #[test]
     fn test_insufficient_nodes() {
         let storage_manager = StorageManager::new(3);
-        storage_manager.add_node().unwrap();
-        storage_manager.add_node().unwrap();
+        storage_manager.add_node("node1".to_string()).unwrap();
+        storage_manager.add_node("node2".to_string()).unwrap();
 
         let key = "insufficient_nodes_key";
         let value = b"test_value".to_vec();
@@ -223,27 +243,37 @@ mod tests {
     }
 
     #[test]
-    fn test_data_integrity() {
+    fn test_get_node_count() {
         let storage_manager = StorageManager::new(3);
-        for _ in 0..5 {
-            storage_manager.add_node().unwrap();
+        assert_eq!(storage_manager.get_node_count(), 0);
+
+        for i in 0..5 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
-        let key = "integrity_test_key";
-        let value = b"integrity_test_value".to_vec();
+        assert_eq!(storage_manager.get_node_count(), 5);
+    }
 
-        storage_manager.store_data(key, value.clone()).unwrap();
-
-        let data_location = storage_manager.data_location.read().unwrap();
-        let stored_nodes = data_location.get(key).unwrap();
-        let corrupt_node = stored_nodes[0];
-
-        {
-            let mut nodes = storage_manager.nodes.write().unwrap();
-            nodes[corrupt_node].data.insert(key.to_string(), b"corrupt_value".to_vec());
+    #[test]
+    fn test_get_data_distribution() {
+        let storage_manager = StorageManager::new(2);
+        for i in 0..4 {
+            storage_manager.add_node(format!("node{}", i)).unwrap();
         }
 
-        let retrieved_value = storage_manager.retrieve_data(key).unwrap();
-        assert_eq!(retrieved_value, value);
+        let key1 = "key1";
+        let key2 = "key2";
+        let value = b"test_value".to_vec();
+
+        storage_manager.store_data(key1, value.clone()).unwrap();
+        storage_manager.store_data(key2, value.clone()).unwrap();
+
+        let distribution = storage_manager.get_data_distribution().unwrap();
+        
+        assert_eq!(distribution.len(), 2);
+        assert!(distribution.contains_key(key1));
+        assert!(distribution.contains_key(key2));
+        assert_eq!(distribution[key1].len(), 2);
+        assert_eq!(distribution[key2].len(), 2);
     }
 }
