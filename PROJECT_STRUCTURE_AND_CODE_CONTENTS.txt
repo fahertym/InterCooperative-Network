@@ -1263,6 +1263,7 @@ mod tests {
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
 use chrono::Utc;
+use ed25519_dalek::{PublicKey, Signature, Verifier};
 
 /// Trait for validating transactions within a blockchain context.
 pub trait TransactionValidator {
@@ -1328,7 +1329,15 @@ impl TransactionValidator for DefaultTransactionValidator {
     }
 
     fn validate_signature(transaction: &Transaction) -> IcnResult<bool> {
-        transaction.verify().map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))
+        if let (Some(signature), Some(public_key_bytes)) = (&transaction.signature, &transaction.from_public_key) {
+            let public_key = PublicKey::from_bytes(public_key_bytes)?;
+            let signature = Signature::from_bytes(signature)?;
+            public_key.verify(transaction.to_bytes().as_slice(), &signature)
+                .map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))?;
+            Ok(true)
+        } else {
+            Err(IcnError::Identity("Missing signature or public key".to_string()))
+        }
     }
 
     fn validate_timestamp(transaction: &Transaction) -> bool {
