@@ -1,4 +1,14 @@
-async fn handle_create_proposal(proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+// File: icn_api/src/lib.rs
+
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use warp::{Filter, Rejection};
+use serde::Deserialize;
+use crate::ApiLayer;
+use icn_common::{Transaction, Proposal, CurrencyType};
+use serde_json::json;
+
+async fn handle_create_proposal(proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.create_proposal(proposal).await {
         Ok(id) => Ok(warp::reply::json(&json!({"status": "success", "proposal_id": id}))),
@@ -6,7 +16,7 @@ async fn handle_create_proposal(proposal: Proposal, api_layer: Arc<RwLock<ApiLay
     }
 }
 
-async fn handle_vote_on_proposal(vote: VoteRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_vote_on_proposal(vote: VoteRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.vote_on_proposal(&vote.proposal_id, vote.voter, vote.in_favor, vote.weight).await {
         Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
@@ -14,7 +24,7 @@ async fn handle_vote_on_proposal(vote: VoteRequest, api_layer: Arc<RwLock<ApiLay
     }
 }
 
-async fn handle_finalize_proposal(request: FinalizeProposalRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_finalize_proposal(request: FinalizeProposalRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.finalize_proposal(&request.proposal_id).await {
         Ok(status) => Ok(warp::reply::json(&json!({"status": "success", "proposal_status": status}))),
@@ -22,7 +32,7 @@ async fn handle_finalize_proposal(request: FinalizeProposalRequest, api_layer: A
     }
 }
 
-async fn handle_get_balance(query: GetBalanceQuery, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_get_balance(query: GetBalanceQuery, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.get_balance(&query.address, &query.currency_type).await {
         Ok(balance) => Ok(warp::reply::json(&json!({"status": "success", "balance": balance}))),
@@ -30,7 +40,7 @@ async fn handle_get_balance(query: GetBalanceQuery, api_layer: Arc<RwLock<ApiLay
     }
 }
 
-async fn handle_mint_currency(request: MintCurrencyRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_mint_currency(request: MintCurrencyRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.mint_currency(&request.address, &request.currency_type, request.amount).await {
         Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
@@ -38,7 +48,7 @@ async fn handle_mint_currency(request: MintCurrencyRequest, api_layer: Arc<RwLoc
     }
 }
 
-async fn handle_create_identity(attributes: HashMap<String, String>, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_create_identity(attributes: HashMap<String, String>, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.create_identity(attributes).await {
         Ok(id) => Ok(warp::reply::json(&json!({"status": "success", "identity_id": id}))),
@@ -46,7 +56,7 @@ async fn handle_create_identity(attributes: HashMap<String, String>, api_layer: 
     }
 }
 
-async fn handle_allocate_resource(request: AllocateResourceRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_allocate_resource(request: AllocateResourceRequest, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.allocate_resource(&request.resource_type, request.amount).await {
         Ok(_) => Ok(warp::reply::json(&json!({"status": "success"}))),
@@ -54,7 +64,7 @@ async fn handle_allocate_resource(request: AllocateResourceRequest, api_layer: A
     }
 }
 
-async fn handle_get_network_stats(api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, warp::Rejection> {
+async fn handle_get_network_stats(api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
     let api_layer = api_layer.read().await;
     match api_layer.get_network_stats().await {
         Ok(stats) => Ok(warp::reply::json(&json!({"status": "success", "stats": stats}))),
