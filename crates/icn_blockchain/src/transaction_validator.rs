@@ -1,13 +1,14 @@
-// File: icn_blockchain/src/transaction_validator.rs
+// File: icn_blockchain/src/asset_tokenization.rs
 
+use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
 use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
-use chrono::Utc;
-use ed25519_dalek::{PublicKey, Signature, Verifier};
 
-/// Trait for validating transactions within a blockchain context.
-pub trait TransactionValidator {
-    /// Validates a transaction.
+/// A struct for validating transactions.
+pub struct TransactionValidator;
+
+impl TransactionValidator {
+    /// Validates a transaction within the context of a blockchain.
     ///
     /// # Arguments
     ///
@@ -17,34 +18,11 @@ pub trait TransactionValidator {
     /// # Returns
     ///
     /// `IcnResult<()>` indicating whether the transaction is valid.
-    fn validate_transaction(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()>;
-}
-
-/// Default implementation of the `TransactionValidator` trait.
-pub struct DefaultTransactionValidator;
-
-impl TransactionValidator for DefaultTransactionValidator {
-    fn validate_transaction(&self, transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        if Self::is_double_spend(transaction, blockchain)? {
-            return Err(IcnError::Blockchain("Double spend detected".to_string()));
-        }
-
-        if !Self::validate_currency_and_amount(transaction) {
-            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
-        }
-
-        if !Self::check_sufficient_balance(transaction, blockchain)? {
-            return Err(IcnError::Currency("Insufficient balance".to_string()));
-        }
-
-        if !Self::validate_signature(transaction)? {
-            return Err(IcnError::Identity("Invalid signature".to_string()));
-        }
-
-        if !Self::validate_timestamp(transaction) {
-            return Err(IcnError::Blockchain("Transaction timestamp is not valid".to_string()));
-        }
-
+    pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
+        Self::is_double_spend(transaction, blockchain)?;
+        Self::validate_currency_and_amount(transaction)?;
+        Self::check_sufficient_balance(transaction, blockchain)?;
+        Self::validate_signature(transaction)?;
         Ok(())
     }
 
@@ -59,30 +37,40 @@ impl TransactionValidator for DefaultTransactionValidator {
         Ok(false)
     }
 
-    fn validate_currency_and_amount(transaction: &Transaction) -> bool {
-        transaction.amount > 0.0
-    }
-
-    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<bool> {
-        let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
-        Ok(balance >= transaction.amount + transaction.get_fee())
-    }
-
-    fn validate_signature(transaction: &Transaction) -> IcnResult<bool> {
-        if let (Some(signature), Some(public_key_bytes)) = (&transaction.signature, &transaction.from_public_key) {
-            let public_key = PublicKey::from_bytes(public_key_bytes)?;
-            let signature = Signature::from_bytes(signature)?;
-            public_key.verify(transaction.to_bytes().as_slice(), &signature)
-                .map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))?;
-            Ok(true)
-        } else {
-            Err(IcnError::Identity("Missing signature or public key".to_string()))
+    fn validate_currency_and_amount(transaction: &Transaction) -> IcnResult<()> {
+        if transaction.amount <= 0.0 {
+            return Err(IcnError::Currency("Invalid currency or amount".to_string()));
         }
+        Ok(())
     }
 
-    fn validate_timestamp(transaction: &Transaction) -> bool {
-        let current_time = Utc::now().timestamp();
-        transaction.timestamp <= current_time && transaction.timestamp >= (current_time - 60 * 60) // within the last hour
+    fn check_sufficient_balance(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
+        let balance = blockchain.get_balance(&transaction.from, &transaction.currency_type)?;
+        if balance < transaction.amount + transaction.get_fee() {
+            return Err(IcnError::Currency("Insufficient balance".to_string()));
+        }
+        Ok(())
+    }
+
+    fn validate_signature(transaction: &Transaction) -> IcnResult<()> {
+        if !transaction.verify().map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))? {
+            return Err(IcnError::Identity("Invalid signature".to_string()));
+        }
+        Ok(())
+    }
+
+    /// Checks if a transaction can be processed by the blockchain.
+    ///
+    /// # Arguments
+    ///
+    /// * `transaction` - The transaction to check.
+    /// * `blockchain` - The blockchain context.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<()>` indicating whether the transaction can be processed.
+    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
+        Self::validate_transaction(transaction, blockchain)
     }
 }
 
@@ -110,29 +98,29 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
+        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
     }
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -141,6 +129,6 @@ mod tests {
         blockchain.add_transaction(tx.clone()).unwrap();
         blockchain.create_block().unwrap();
 
-        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+        assert!(TransactionValidator::validate_transaction(&tx, &blockchain).is_err());
     }
 }

@@ -43,20 +43,29 @@ pub async fn start_web_server(api: Arc<ApiLayer>) {
 async fn handle_transaction(tx: Transaction, api: Arc<ApiLayer>) -> Result<impl warp::Reply, warp::Rejection> {
     match api.submit_transaction(tx).await {
         Ok(_) => Ok(warp::reply::with_status("Transaction submitted", StatusCode::OK)),
-        Err(e) => Err(warp::reject::custom(e)),
+        Err(e) => {
+            eprintln!("Error submitting transaction: {}", e);
+            Ok(warp::reply::with_status(format!("Transaction submission failed: {}", e), StatusCode::BAD_REQUEST))
+        }
     }
 }
 
 async fn handle_proposal(proposal: Proposal, api: Arc<ApiLayer>) -> Result<impl warp::Reply, warp::Rejection> {
     match api.create_proposal(proposal).await {
         Ok(response) => Ok(warp::reply::json(&response)),
-        Err(e) => Err(warp::reject::custom(e)),
+        Err(e) => {
+            eprintln!("Error creating proposal: {}", e);
+            Ok(warp::reply::with_status(format!("Proposal creation failed: {}", e), StatusCode::BAD_REQUEST))
+        }
     }
 }
 
 async fn handle_identity(identity: std::collections::HashMap<String, String>, api: Arc<ApiLayer>) -> Result<impl warp::Reply, warp::Rejection> {
     match api.create_identity(identity).await {
         Ok(response) => Ok(warp::reply::json(&response)),
-        Err(e) => Err(warp::reject::custom(e)),
+        Err(e) => {
+            eprintln!("Error creating identity: {}", e);
+            Ok(warp::reply::with_status(format!("Identity creation failed: {}", e), StatusCode::BAD_REQUEST))
+        }
     }
 }
