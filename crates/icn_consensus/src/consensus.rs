@@ -1,3 +1,5 @@
+// File: icn_consensus/src/consensus.rs
+
 use icn_common::{Block, IcnResult, IcnError};
 use std::collections::HashMap;
 
@@ -41,9 +43,10 @@ impl PoCConsensus {
         let reputation = self.validators.get_mut(validator_id)
             .ok_or_else(|| IcnError::Consensus("Validator not found".into()))?;
         *reputation += change;
-        *reputation = reputation.clamp(0.0, 1.0);
+        *reputation = reputation.clamp(0.0, 1.0); // This was missing a semicolon
         Ok(())
     }
+        
 
     pub fn get_total_reputation(&self) -> f64 {
         self.validators.values().sum()

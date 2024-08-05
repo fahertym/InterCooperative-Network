@@ -76,3 +76,62 @@ impl TransactionValidator for DefaultTransactionValidator {
         transaction.timestamp <= current_time && transaction.timestamp >= (current_time - 60 * 60) // within the last hour
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::currency::CurrencyType;
+    use icn_common::{Transaction, Blockchain};
+    use ed25519_dalek::Keypair;
+    use rand::rngs::OsRng;
+
+    fn create_signed_transaction(from: &str, to: &str, amount: f64) -> Transaction {
+        let mut tx = Transaction::new(
+            from.to_string(),
+            to.to_string(),
+            amount,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+        tx.sign(&keypair).unwrap();
+        tx
+    }
+
+    #[test]
+    fn test_validate_transaction() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 50.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
+    }
+
+    #[test]
+    fn test_insufficient_balance() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 150.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+    }
+
+    #[test]
+    fn test_double_spend() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 50.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        blockchain.add_transaction(tx.clone()).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+    }
+}

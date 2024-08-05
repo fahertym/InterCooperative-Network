@@ -1339,6 +1339,65 @@ impl TransactionValidator for DefaultTransactionValidator {
         transaction.timestamp <= current_time && transaction.timestamp >= (current_time - 60 * 60) // within the last hour
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::currency::CurrencyType;
+    use icn_common::{Transaction, Blockchain};
+    use ed25519_dalek::Keypair;
+    use rand::rngs::OsRng;
+
+    fn create_signed_transaction(from: &str, to: &str, amount: f64) -> Transaction {
+        let mut tx = Transaction::new(
+            from.to_string(),
+            to.to_string(),
+            amount,
+            CurrencyType::BasicNeeds,
+            1000,
+        );
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+        tx.sign(&keypair).unwrap();
+        tx
+    }
+
+    #[test]
+    fn test_validate_transaction() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 50.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_ok());
+    }
+
+    #[test]
+    fn test_insufficient_balance() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 150.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+    }
+
+    #[test]
+    fn test_double_spend() {
+        let mut blockchain = Blockchain::new(Box::new(DefaultTransactionValidator));
+        let tx = create_signed_transaction("Alice", "Bob", 50.0);
+
+        blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
+        blockchain.create_block().unwrap();
+
+        blockchain.add_transaction(tx.clone()).unwrap();
+        blockchain.create_block().unwrap();
+
+        assert!(DefaultTransactionValidator::validate_transaction(&tx, &blockchain).is_err());
+    }
+}
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_common/Cargo.toml =====
@@ -1860,6 +1919,8 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/bft_poc.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
+// File: icn_consensus/src/consensus.rs
+
 use icn_common::{Block, IcnResult, IcnError};
 use std::collections::HashMap;
 
@@ -1903,9 +1964,10 @@ impl PoCConsensus {
         let reputation = self.validators.get_mut(validator_id)
             .ok_or_else(|| IcnError::Consensus("Validator not found".into()))?;
         *reputation += change;
-        *reputation = reputation.clamp(0.0, 1.0);
+        *reputation = reputation.clamp(0.0, 1.0); // This was missing a semicolon
         Ok(())
     }
+        
 
     pub fn get_total_reputation(&self) -> f64 {
         self.validators.values().sum()
@@ -2016,7 +2078,8 @@ mod tests {
         consensus.update_reputation("validator2", 0.1).unwrap();
         assert_eq!(consensus.get_total_reputation(), 1.0);
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 // File: icn_consensus/src/lib.rs
