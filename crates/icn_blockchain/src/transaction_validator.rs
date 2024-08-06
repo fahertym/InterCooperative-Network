@@ -1,8 +1,7 @@
-// File: icn_blockchain/src/asset_tokenization.rs
+// File: icn_blockchain/src/transaction_validator.rs
 
-use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
-use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
+use crate::{Transaction, Blockchain};
 
 /// A struct for validating transactions.
 pub struct TransactionValidator;
@@ -19,7 +18,9 @@ impl TransactionValidator {
     ///
     /// `IcnResult<()>` indicating whether the transaction is valid.
     pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        Self::is_double_spend(transaction, blockchain)?;
+        if Self::is_double_spend(transaction, blockchain)? {
+            return Err(IcnError::Currency("Double spend detected".to_string()));
+        }
         Self::validate_currency_and_amount(transaction)?;
         Self::check_sufficient_balance(transaction, blockchain)?;
         Self::validate_signature(transaction)?;
@@ -58,27 +59,13 @@ impl TransactionValidator {
         }
         Ok(())
     }
-
-    /// Checks if a transaction can be processed by the blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to check.
-    /// * `blockchain` - The blockchain context.
-    ///
-    /// # Returns
-    ///
-    /// `IcnResult<()>` indicating whether the transaction can be processed.
-    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        Self::validate_transaction(transaction, blockchain)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::currency::CurrencyType;
-    use icn_common::{Transaction, Blockchain};
+    use crate::Blockchain;
+    use icn_common::CurrencyType;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 
@@ -98,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -109,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -120,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();

@@ -772,6 +772,9 @@ use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
+use std::sync::{Arc, RwLock};
+use crate::transaction_validator::TransactionValidator;
+use crate::consensus::ConsensusAlgorithm;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -817,7 +820,7 @@ impl PartialEq for Block {
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
-    transaction_validator: Arc<dyn TransactionValidator>,
+    transaction_validator: Arc<TransactionValidator>,
     consensus: Arc<RwLock<dyn ConsensusAlgorithm>>,
 }
 
@@ -828,7 +831,7 @@ impl Blockchain {
     ///
     /// * `transaction_validator` - A validator for verifying transactions.
     /// * `consensus` - The consensus algorithm.
-    pub fn new(transaction_validator: Arc<dyn TransactionValidator>, consensus: Arc<RwLock<dyn ConsensusAlgorithm>>) -> Self {
+    pub fn new(transaction_validator: Arc<TransactionValidator>, consensus: Arc<RwLock<dyn ConsensusAlgorithm>>) -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
@@ -927,6 +930,34 @@ impl Blockchain {
     /// The block if found, `None` otherwise.
     pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
         self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    /// Returns the balance of an account for a specific currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The account address.
+    /// * `currency_type` - The type of currency.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<f64>` representing the balance or an error.
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        // Simplified example; this should be handled through a currency system in a real implementation
+        let balance = self.chain.iter()
+            .flat_map(|block| block.transactions.iter())
+            .filter(|tx| tx.from == address || tx.to == address)
+            .fold(0.0, |acc, tx| {
+                if tx.from == address {
+                    acc - tx.amount
+                } else if tx.to == address {
+                    acc + tx.amount
+                } else {
+                    acc
+                }
+            });
+
+        Ok(balance)
     }
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
@@ -1278,11 +1309,10 @@ mod tests {
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
-// File: icn_blockchain/src/asset_tokenization.rs
+// File: icn_blockchain/src/transaction_validator.rs
 
-use icn_common::bit_utils::{BitVec, set_bit, clear_bit, toggle_bit, rotate_left, rotate_right};
-use crate::{Transaction, Blockchain};
 use icn_common::error::{IcnError, IcnResult};
+use crate::{Transaction, Blockchain};
 
 /// A struct for validating transactions.
 pub struct TransactionValidator;
@@ -1299,7 +1329,9 @@ impl TransactionValidator {
     ///
     /// `IcnResult<()>` indicating whether the transaction is valid.
     pub fn validate_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        Self::is_double_spend(transaction, blockchain)?;
+        if Self::is_double_spend(transaction, blockchain)? {
+            return Err(IcnError::Currency("Double spend detected".to_string()));
+        }
         Self::validate_currency_and_amount(transaction)?;
         Self::check_sufficient_balance(transaction, blockchain)?;
         Self::validate_signature(transaction)?;
@@ -1338,27 +1370,13 @@ impl TransactionValidator {
         }
         Ok(())
     }
-
-    /// Checks if a transaction can be processed by the blockchain.
-    ///
-    /// # Arguments
-    ///
-    /// * `transaction` - The transaction to check.
-    /// * `blockchain` - The blockchain context.
-    ///
-    /// # Returns
-    ///
-    /// `IcnResult<()>` indicating whether the transaction can be processed.
-    pub fn can_process_transaction(transaction: &Transaction, blockchain: &Blockchain) -> IcnResult<()> {
-        Self::validate_transaction(transaction, blockchain)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::currency::CurrencyType;
-    use icn_common::{Transaction, Blockchain};
+    use crate::Blockchain;
+    use icn_common::CurrencyType;
     use ed25519_dalek::Keypair;
     use rand::rngs::OsRng;
 
@@ -1378,7 +1396,7 @@ mod tests {
 
     #[test]
     fn test_validate_transaction() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -1389,7 +1407,7 @@ mod tests {
 
     #[test]
     fn test_insufficient_balance() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 150.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();
@@ -1400,7 +1418,7 @@ mod tests {
 
     #[test]
     fn test_double_spend() {
-        let mut blockchain = Blockchain::new(Box::new(MockTransactionValidator));
+        let mut blockchain = Blockchain::new(Arc::new(MockTransactionValidator::new()), Arc::new(RwLock::new(MockConsensus::new())));
         let tx = create_signed_transaction("Alice", "Bob", 50.0);
 
         blockchain.add_transaction(create_signed_transaction("Genesis", "Alice", 100.0)).unwrap();

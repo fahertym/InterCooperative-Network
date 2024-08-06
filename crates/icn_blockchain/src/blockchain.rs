@@ -4,6 +4,9 @@ use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use chrono::Utc;
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
+use std::sync::{Arc, RwLock};
+use crate::transaction_validator::TransactionValidator;
+use crate::consensus::ConsensusAlgorithm;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -49,7 +52,7 @@ impl PartialEq for Block {
 pub struct Blockchain {
     chain: Vec<Block>,
     pending_transactions: Vec<Transaction>,
-    transaction_validator: Arc<dyn TransactionValidator>,
+    transaction_validator: Arc<TransactionValidator>,
     consensus: Arc<RwLock<dyn ConsensusAlgorithm>>,
 }
 
@@ -60,7 +63,7 @@ impl Blockchain {
     ///
     /// * `transaction_validator` - A validator for verifying transactions.
     /// * `consensus` - The consensus algorithm.
-    pub fn new(transaction_validator: Arc<dyn TransactionValidator>, consensus: Arc<RwLock<dyn ConsensusAlgorithm>>) -> Self {
+    pub fn new(transaction_validator: Arc<TransactionValidator>, consensus: Arc<RwLock<dyn ConsensusAlgorithm>>) -> Self {
         Blockchain {
             chain: vec![Block::genesis()],
             pending_transactions: Vec::new(),
@@ -159,5 +162,33 @@ impl Blockchain {
     /// The block if found, `None` otherwise.
     pub fn get_block_by_hash(&self, hash: &str) -> Option<&Block> {
         self.chain.iter().find(|block| block.hash == hash)
+    }
+
+    /// Returns the balance of an account for a specific currency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - The account address.
+    /// * `currency_type` - The type of currency.
+    ///
+    /// # Returns
+    ///
+    /// `IcnResult<f64>` representing the balance or an error.
+    pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
+        // Simplified example; this should be handled through a currency system in a real implementation
+        let balance = self.chain.iter()
+            .flat_map(|block| block.transactions.iter())
+            .filter(|tx| tx.from == address || tx.to == address)
+            .fold(0.0, |acc, tx| {
+                if tx.from == address {
+                    acc - tx.amount
+                } else if tx.to == address {
+                    acc + tx.amount
+                } else {
+                    acc
+                }
+            });
+
+        Ok(balance)
     }
 }
