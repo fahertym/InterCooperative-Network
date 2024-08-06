@@ -1,4 +1,4 @@
-// File: crates/icn_sharding/src/lib.rs
+// File: icn_sharding/src/lib.rs
 
 use icn_common::{IcnResult, IcnError, Transaction, CurrencyType};
 use std::collections::{HashMap, HashSet};
@@ -42,15 +42,6 @@ impl ShardingManager {
     pub fn get_shard_for_address(&self, address: &str) -> u64 {
         let address_to_shard = self.address_to_shard.read().unwrap();
         *address_to_shard.get(address).unwrap_or(&(self.hash_address(address) % self.shard_count))
-    }
-
-    pub fn add_address_to_shard(&self, address: String, shard_id: u64) -> IcnResult<()> {
-        if shard_id >= self.shard_count {
-            return Err(IcnError::Sharding(format!("Invalid shard ID: {}", shard_id)));
-        }
-        let mut address_to_shard = self.address_to_shard.write().unwrap();
-        address_to_shard.insert(address, shard_id);
-        Ok(())
     }
 
     pub fn process_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
@@ -114,7 +105,7 @@ impl ShardingManager {
         Ok(())
     }
 
-    fn transfer_between_shards(&self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
+    pub fn transfer_between_shards(&self, from_shard: u64, to_shard: u64, transaction: &Transaction) -> IcnResult<()> {
         let mut shard_data = self.shard_data.write().unwrap();
 
         let to_shard_data = &mut shard_data[to_shard as usize];
@@ -257,7 +248,7 @@ mod tests {
         let shard_id = manager.get_shard_for_address(&address);
         assert!(shard_id < 4);
 
-        manager.add_address_to_shard(address.clone(), 2).unwrap();
+        manager.address_to_shard.write().unwrap().insert(address.clone(), 2);
         assert_eq!(manager.get_shard_for_address(&address), 2);
     }
 
@@ -266,8 +257,8 @@ mod tests {
         let manager = ShardingManager::new(4);
         let from_address = "0x1111111111111111111111111111111111111111".to_string();
         let to_address = "0x2222222222222222222222222222222222222222".to_string();
-        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
-        manager.add_address_to_shard(to_address.clone(), 1).unwrap();
+        manager.address_to_shard.write().unwrap().insert(from_address.clone(), 1);
+        manager.address_to_shard.write().unwrap().insert(to_address.clone(), 1);
 
         manager.initialize_balance(&from_address, &CurrencyType::BasicNeeds, 100.0).unwrap();
 
@@ -291,8 +282,8 @@ mod tests {
         let manager = ShardingManager::new(4);
         let from_address = "0x3333333333333333333333333333333333333333".to_string();
         let to_address = "0x4444444444444444444444444444444444444444".to_string();
-        manager.add_address_to_shard(from_address.clone(), 1).unwrap();
-        manager.add_address_to_shard(to_address.clone(), 2).unwrap();
+        manager.address_to_shard.write().unwrap().insert(from_address.clone(), 1);
+        manager.address_to_shard.write().unwrap().insert(to_address.clone(), 2);
 
         manager.initialize_balance(&from_address, &CurrencyType::BasicNeeds, 100.0).unwrap();
 
@@ -347,8 +338,8 @@ mod tests {
         let address1 = "0x8888888888888888888888888888888888888888".to_string();
         let address2 = "0x9999999999999999999999999999999999999999".to_string();
 
-        manager.add_address_to_shard(address1.clone(), 0).unwrap();
-        manager.add_address_to_shard(address2.clone(), 0).unwrap();
+        manager.address_to_shard.write().unwrap().insert(address1.clone(), 0);
+        manager.address_to_shard.write().unwrap().insert(address2.clone(), 0);
 
         manager.initialize_balance(&address1, &CurrencyType::BasicNeeds, 100.0).unwrap();
 
@@ -375,8 +366,11 @@ mod tests {
         let address1 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
         let address2 = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
 
-        manager.add_address_to_shard(address1.clone(), 0).unwrap();
-        manager.add_address_to_shard(address2.clone(), 0).unwrap();
+        manager.address_to_shard.write().unwrap().insert(address1.clone(), 0);
+        manager.address_to_shard.write().unwrap().insert(address2.clone(), 0);
+
+        manager.initialize_balance(&address1, &CurrencyType::BasicNeeds, 100.0).unwrap();
+        manager.initialize_balance(&address2, &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         let shard_addresses = manager.get_shard_addresses(0).unwrap();
         assert_eq!(shard_addresses.len(), 2);
@@ -389,7 +383,7 @@ mod tests {
         let manager = ShardingManager::new(2);
         let address = "0xcccccccccccccccccccccccccccccccccccccccc".to_string();
 
-        manager.add_address_to_shard(address.clone(), 0).unwrap();
+        manager.address_to_shard.write().unwrap().insert(address.clone(), 0);
         manager.initialize_balance(&address, &CurrencyType::BasicNeeds, 100.0).unwrap();
         manager.initialize_balance(&address, &CurrencyType::Education, 50.0).unwrap();
 
@@ -405,8 +399,8 @@ mod tests {
         let address1 = "0xdddddddddddddddddddddddddddddddddddddddd".to_string();
         let address2 = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string();
 
-        manager.add_address_to_shard(address1.clone(), 0).unwrap();
-        manager.add_address_to_shard(address2.clone(), 0).unwrap();
+        manager.address_to_shard.write().unwrap().insert(address1.clone(), 0);
+        manager.address_to_shard.write().unwrap().insert(address2.clone(), 0);
 
         manager.initialize_balance(&address1, &CurrencyType::BasicNeeds, 50.0).unwrap();
 

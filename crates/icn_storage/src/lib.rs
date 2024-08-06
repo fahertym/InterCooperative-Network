@@ -1,3 +1,5 @@
+// File: icn_storage/src/lib.rs
+
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -72,7 +74,7 @@ impl StorageManager {
         Err(IcnError::Storage("Failed to retrieve data from any node".into()))
     }
 
-    pub fn delete_data(&self, key: &str) -> IcnResult<()> {
+    pub fn remove_data(&self, key: &str) -> IcnResult<()> {
         let mut data_location = self.data_location.write().map_err(|_| IcnError::Storage("Failed to lock data location".into()))?;
         let node_ids = data_location.remove(key).ok_or_else(|| IcnError::Storage("Data not found".into()))?;
 
@@ -144,6 +146,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[test]
     fn test_store_and_retrieve_data() {
         let storage_manager = StorageManager::new(3);
         for i in 0..5 {
@@ -169,7 +172,7 @@ mod tests {
         let value = b"delete_test_value".to_vec();
 
         storage_manager.store_data(key, value).unwrap();
-        assert!(storage_manager.delete_data(key).is_ok());
+        assert!(storage_manager.remove_data(key).is_ok());
         assert!(storage_manager.retrieve_data(key).is_err());
     }
 
