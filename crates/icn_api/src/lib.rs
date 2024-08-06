@@ -4,8 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::{Filter, Rejection};
 use serde::Deserialize;
-use crate::ApiLayer;
-use icn_common::{Transaction, Proposal, CurrencyType};
+use icn_common::{IcnResult, IcnError, Transaction, Proposal, CurrencyType};
 use serde_json::json;
 
 async fn handle_create_proposal(proposal: Proposal, api_layer: Arc<RwLock<ApiLayer>>) -> Result<impl warp::Reply, Rejection> {
