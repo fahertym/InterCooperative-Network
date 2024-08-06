@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 
+/// Represents a currency in the system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Currency {
     pub currency_type: CurrencyType,
@@ -15,6 +16,7 @@ pub struct Currency {
 }
 
 impl Currency {
+    /// Creates a new currency with the specified initial supply and issuance rate.
     pub fn new(currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> Self {
         let now = Utc::now();
         Currency {
@@ -26,6 +28,7 @@ impl Currency {
         }
     }
 
+    /// Mints new currency, increasing the total supply.
     pub fn mint(&mut self, amount: f64) -> IcnResult<()> {
         if amount < 0.0 {
             return Err(IcnError::Currency("Cannot mint negative amount".into()));
@@ -35,6 +38,7 @@ impl Currency {
         Ok(())
     }
 
+    /// Burns currency, decreasing the total supply.
     pub fn burn(&mut self, amount: f64) -> IcnResult<()> {
         if amount < 0.0 {
             return Err(IcnError::Currency("Cannot burn negative amount".into()));
@@ -47,12 +51,14 @@ impl Currency {
     }
 }
 
+/// Manages multiple currencies and their associated balances.
 pub struct CurrencySystem {
     pub currencies: HashMap<CurrencyType, Currency>,
     balances: HashMap<String, HashMap<CurrencyType, f64>>,
 }
 
 impl CurrencySystem {
+    /// Creates a new, empty currency system.
     pub fn new() -> Self {
         CurrencySystem {
             currencies: HashMap::new(),
@@ -60,6 +66,7 @@ impl CurrencySystem {
         }
     }
 
+    /// Adds a new currency to the system with the specified initial supply and issuance rate.
     pub fn add_currency(&mut self, currency_type: CurrencyType, initial_supply: f64, issuance_rate: f64) -> IcnResult<()> {
         if self.currencies.contains_key(&currency_type) {
             return Err(IcnError::Currency("Currency already exists".into()));
@@ -69,18 +76,21 @@ impl CurrencySystem {
         Ok(())
     }
 
+    /// Mints new units of the specified currency.
     pub fn mint(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
         let currency = self.currencies.get_mut(currency_type)
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
         currency.mint(amount)
     }
 
+    /// Burns units of the specified currency.
     pub fn burn(&mut self, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
         let currency = self.currencies.get_mut(currency_type)
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
         currency.burn(amount)
     }
 
+    /// Processes a transaction by transferring currency between two accounts.
     pub fn process_transaction(&mut self, transaction: &Transaction) -> IcnResult<()> {
         self.transfer(
             &transaction.from,
@@ -90,6 +100,7 @@ impl CurrencySystem {
         )
     }
 
+    /// Transfers a specified amount of currency from one account to another.
     pub fn transfer(&mut self, from: &str, to: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
         if amount < 0.0 {
             return Err(IcnError::Currency("Cannot transfer negative amount".into()));
@@ -106,6 +117,7 @@ impl CurrencySystem {
         Ok(())
     }
 
+    /// Retrieves the balance of an account for a specified currency type.
     pub fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         Ok(*self.balances
             .get(address)
@@ -113,6 +125,7 @@ impl CurrencySystem {
             .unwrap_or(&0.0))
     }
 
+    /// Updates the balance of an account by a specified amount.
     fn update_balance(&mut self, address: &str, currency_type: &CurrencyType, amount: f64) -> IcnResult<()> {
         let balance = self.balances
             .entry(address.to_string())
@@ -123,18 +136,21 @@ impl CurrencySystem {
         Ok(())
     }
 
+    /// Retrieves the total supply of a specified currency.
     pub fn get_total_supply(&self, currency_type: &CurrencyType) -> IcnResult<f64> {
         self.currencies.get(currency_type)
             .map(|currency| currency.total_supply)
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))
     }
 
+    /// Retrieves the issuance rate of a specified currency.
     pub fn get_issuance_rate(&self, currency_type: &CurrencyType) -> IcnResult<f64> {
         self.currencies.get(currency_type)
             .map(|currency| currency.issuance_rate)
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))
     }
 
+    /// Updates the issuance rate of a specified currency.
     pub fn update_issuance_rate(&mut self, currency_type: &CurrencyType, new_rate: f64) -> IcnResult<()> {
         let currency = self.currencies.get_mut(currency_type)
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))?;
@@ -142,10 +158,12 @@ impl CurrencySystem {
         Ok(())
     }
 
+    /// Lists all available currencies in the system.
     pub fn list_currencies(&self) -> Vec<CurrencyType> {
         self.currencies.keys().cloned().collect()
     }
 
+    /// Retrieves information about a specific currency.
     pub fn get_currency_info(&self, currency_type: &CurrencyType) -> IcnResult<Currency> {
         self.currencies.get(currency_type)
             .cloned()
