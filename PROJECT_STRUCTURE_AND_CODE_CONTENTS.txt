@@ -8,6 +8,7 @@
 ├── crates
 │   ├── icn_api
 │   │   ├── Cargo.toml
+│   │   ├── README.md
 │   │   └── src
 │   │       ├── lib.rs
 │   │       └── web.rs
@@ -184,11 +185,12 @@
 ├── frontend
 │   ├── app.js
 │   └── index.html
+├── LICENSE.md
 ├── PROJECT_STRUCTURE_AND_CODE_CONTENTS.txt
 ├── README.md
 └── update_project.sh
 
-56 directories, 132 files
+56 directories, 134 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
