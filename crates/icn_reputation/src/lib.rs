@@ -1,127 +1,213 @@
-use std::collections::HashMap;
-use chrono::{DateTime, Utc};
+// File: crates/icn_common/src/lib.rs
+
+pub mod error;
+pub mod bit_utils;
+
+pub use crate::error::{IcnError, IcnResult};
+
 use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use ed25519_dalek::{Keypair, PublicKey, Signature, Signer, Verifier}; // Importing the necessary traits and types
+use rand_chacha::ChaCha20Rng;
+use rand::RngCore; // Importing necessary traits for random number generation
+use rand::SeedableRng;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReputationScore {
-    score: f64,
-    last_updated: DateTime<Utc>,
+pub struct Config {
+    pub shard_count: u64,
+    pub consensus_threshold: f64,
+    pub consensus_quorum: f64,
+    pub network_port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReputationEvent {
-    entity_id: String,
-    event_type: ReputationEventType,
-    value: f64,
-    timestamp: DateTime<Utc>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Transaction {
+    pub from: String,
+    pub to: String,
+    pub amount: f64,
+    pub currency_type: CurrencyType,
+    pub timestamp: i64,
+    pub signature: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ReputationEventType {
-    Contribution,
-    Participation,
-    Feedback,
-    Violation,
-}
-
-pub struct ReputationSystem {
-    scores: HashMap<String, ReputationScore>,
-    events: Vec<ReputationEvent>,
-    decay_rate: f64,
-    min_score: f64,
-    max_score: f64,
-}
-
-impl ReputationSystem {
-    pub fn new(decay_rate: f64, min_score: f64, max_score: f64) -> Self {
-        ReputationSystem {
-            scores: HashMap::new(),
-            events: Vec::new(),
-            decay_rate,
-            min_score,
-            max_score,
+impl Transaction {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
+        Transaction {
+            from,
+            to,
+            amount,
+            currency_type,
+            timestamp,
+            signature: None,
         }
     }
 
-    pub fn add_event(&mut self, event: ReputationEvent) {
-        self.events.push(event.clone());
-        self.update_score(&event.entity_id, event);
+    pub fn sign(&mut self, keypair: &Keypair) -> IcnResult<()> {
+        let message = format!("{}{}{}{}", self.from, self.to, self.amount, self.timestamp);
+        let signature = keypair.sign(message.as_bytes()).to_bytes().to_vec();
+        self.signature = Some(signature);
+        Ok(())
     }
 
-    pub fn get_score(&self, entity_id: &str) -> Option<f64> {
-        self.scores.get(entity_id).map(|score| score.score)
-    }
-
-    fn update_score(&mut self, entity_id: &str, event: ReputationEvent) {
-        let score = self.scores.entry(entity_id.to_string()).or_insert(ReputationScore {
-            score: 0.0,
-            last_updated: Utc::now(),
-        });
-
-        let time_diff = (Utc::now() - score.last_updated).num_days() as f64;
-        score.score *= (1.0 - self.decay_rate).powf(time_diff);
-
-        match event.event_type {
-            ReputationEventType::Contribution | ReputationEventType::Participation => {
-                score.score += event.value;
-            }
-            ReputationEventType::Feedback => {
-                score.score += event.value * 0.5;
-            }
-            ReputationEventType::Violation => {
-                score.score -= event.value;
-            }
+    pub fn verify(&self) -> IcnResult<bool> {
+        if let Some(signature) = &self.signature {
+            let message = format!("{}{}{}{}", self.from, self.to, self.amount, self.timestamp);
+            let public_key = PublicKey::from_bytes(&self.from.as_bytes())
+                .map_err(|e| IcnError::Identity(format!("PublicKey conversion failed: {}", e)))?;
+            let signature = Signature::from_bytes(signature)
+                .map_err(|e| IcnError::Identity(format!("Signature conversion failed: {}", e)))?;
+            public_key
+                .verify(message.as_bytes(), &signature)
+                .map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-
-        score.score = score.score.clamp(self.min_score, self.max_score);
-        score.last_updated = Utc::now();
     }
 
-    pub fn get_top_entities(&self, limit: usize) -> Vec<(String, f64)> {
-        let mut entities: Vec<(String, f64)> = self.scores
-            .iter()
-            .map(|(id, score)| (id.clone(), score.score))
-            .collect();
-        entities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        entities.truncate(limit);
-        entities
+    pub fn get_fee(&self) -> f64 {
+        // Simplified fee calculation; in a real implementation, fees would be more complex
+        0.01
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proposal {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub proposer: String,
+    pub created_at: DateTime<Utc>,
+    pub voting_ends_at: DateTime<Utc>,
+    pub status: ProposalStatus,
+    pub proposal_type: ProposalType,
+    pub category: ProposalCategory,
+    pub required_quorum: f64,
+    pub execution_timestamp: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vote {
+    pub voter: String,
+    pub proposal_id: String,
+    pub in_favor: bool,
+    pub weight: f64,
+    pub timestamp: i64,
+    pub zkp: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Passed,
+    Rejected,
+    Executed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalType {
+    Constitutional,
+    EconomicAdjustment,
+    NetworkUpgrade,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProposalCategory {
+    Economic,
+    Technical,
+    Social,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CurrencyType {
+    BasicNeeds,
+    Education,
+    Environmental,
+    Community,
+    Custom(String),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkStats {
+    pub node_count: usize,
+    pub total_transactions: usize,
+    pub active_proposals: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
+    use rand_chacha::ChaCha20Rng;
+    use rand::SeedableRng;
 
     #[test]
-    fn test_reputation_system() {
-        let mut system = ReputationSystem::new(0.01, 0.0, 100.0);
+    fn test_transaction_equality() {
+        let tx1 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
 
-        system.add_event(ReputationEvent {
-            entity_id: "Alice".to_string(),
-            event_type: ReputationEventType::Contribution,
-            value: 10.0,
-            timestamp: Utc::now(),
-        });
+        let tx2 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
 
-        system.add_event(ReputationEvent {
-            entity_id: "Bob".to_string(),
-            event_type: ReputationEventType::Participation,
-            value: 5.0,
-            timestamp: Utc::now(),
-        });
+        assert_eq!(tx1, tx2);
+    }
 
-        assert!(system.get_score("Alice").unwrap() > system.get_score("Bob").unwrap());
+    #[test]
+    fn test_currency_type_equality() {
+        assert_eq!(CurrencyType::BasicNeeds, CurrencyType::BasicNeeds);
+        assert_ne!(CurrencyType::BasicNeeds, CurrencyType::Education);
+    }
 
-        system.add_event(ReputationEvent {
-            entity_id: "Alice".to_string(),
-            event_type: ReputationEventType::Violation,
-            value: 3.0,
-            timestamp: Utc::now(),
-        });
+    #[test]
+    fn test_proposal_status() {
+        let status1 = ProposalStatus::Active;
+        let status2 = ProposalStatus::Passed;
+        assert_ne!(status1, status2);
+    }
 
-        let top = system.get_top_entities(2);
-        assert_eq!(top.len(), 2);
-        assert_eq!(top[0].0, "Alice");
-        assert_eq!(top[1].0, "Bob");
+    #[test]
+    fn test_network_stats() {
+        let stats = NetworkStats {
+            node_count: 5,
+            total_transactions: 100,
+            active_proposals: 3,
+        };
+        assert_eq!(stats.node_count, 5);
+        assert_eq!(stats.total_transactions, 100);
+        assert_eq!(stats.active_proposals, 3);
+    }
+
+    #[test]
+    fn test_transaction_signing_and_verification() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0); // Use a deterministic seed for testing
+        let keypair: Keypair = Keypair::generate(&mut rng);
+
+        let mut tx = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: 0,
+            signature: None,
+        };
+
+        tx.sign(&keypair).expect("Signing failed");
+        assert!(tx.signature.is_some());
+
+        let verified = tx.verify().expect("Verification failed");
+        assert!(verified);
     }
 }

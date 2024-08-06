@@ -49,9 +49,13 @@ impl Transaction {
     pub fn verify(&self) -> IcnResult<bool> {
         if let Some(signature) = &self.signature {
             let message = format!("{}{}{}{}", self.from, self.to, self.amount, self.timestamp);
-            let public_key = ed25519_dalek::PublicKey::from_bytes(&self.from.as_bytes())?;
-            let signature = ed25519_dalek::Signature::from_bytes(signature)?;
-            public_key.verify(message.as_bytes(), &signature)?;
+            let public_key = ed25519_dalek::PublicKey::from_bytes(&self.from.as_bytes())
+                .map_err(|e| IcnError::Identity(format!("PublicKey conversion failed: {}", e)))?;
+            let signature = ed25519_dalek::Signature::from_bytes(signature)
+                .map_err(|e| IcnError::Identity(format!("Signature conversion failed: {}", e)))?;
+            public_key
+                .verify(message.as_bytes(), &signature)
+                .map_err(|e| IcnError::Identity(format!("Signature verification failed: {}", e)))?;
             Ok(true)
         } else {
             Ok(false)
