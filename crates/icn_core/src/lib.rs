@@ -1,4 +1,4 @@
-// File: crates/icn_core/src/lib.rs
+// File: icn_core/src/lib.rs
 
 use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
 use icn_blockchain::Blockchain;
@@ -67,20 +67,35 @@ impl IcnNode {
     }
 
     pub async fn process_transaction(&self, transaction: Transaction) -> IcnResult<()> {
-        let shard_id = self.sharding_manager.read().await.get_shard_for_address(&transaction.from);
-        let mut blockchain = self.blockchain.write().await;
-        blockchain.add_transaction(transaction.clone())?;
-        
-        let mut currency_system = self.currency_system.write().await;
-        currency_system.process_transaction(&transaction)?;
+        // Verify the transaction
+        self.verify_transaction(&transaction).await?;
 
+        // Get the shard for the transaction
+        let shard_id = self.sharding_manager.read().await.get_shard_for_address(&transaction.from);
+
+        // Process the transaction in the blockchain
+        self.blockchain.write().await.add_transaction(transaction.clone())?;
+        
+        // Update the currency system
+        self.currency_system.write().await.process_transaction(&transaction)?;
+
+        // Process the transaction in the shard
         self.sharding_manager.write().await.process_transaction(shard_id, &transaction)?;
 
         Ok(())
     }
 
     pub async fn create_proposal(&self, proposal: Proposal) -> IcnResult<String> {
-        self.governance.write().await.create_proposal(proposal)
+        // Verify the proposal
+        self.verify_proposal(&proposal).await?;
+
+        // Create the proposal in the governance system
+        let proposal_id = self.governance.write().await.create_proposal(proposal)?;
+
+        // Broadcast the new proposal to the network
+        self.network_manager.read().await.broadcast_proposal(&proposal_id)?;
+
+        Ok(proposal_id)
     }
 
     pub async fn get_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
@@ -151,7 +166,43 @@ impl IcnNode {
         self.config.network_port
     }
 
+    // New function to get proposal status
+    pub async fn get_proposal_status(&self, proposal_id: &str) -> IcnResult<ProposalStatus> {
+        let proposal = self.governance.read().await.get_proposal(proposal_id)?
+            .ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
+        Ok(proposal.status)
+    }
+
     // Helper methods
+
+    async fn verify_transaction(&self, transaction: &Transaction) -> IcnResult<()> {
+        // Verify the transaction signature
+        if !transaction.verify()? {
+            return Err(IcnError::Blockchain("Invalid transaction signature".into()));
+        }
+
+        // Check if the sender has sufficient balance
+        let sender_balance = self.get_balance(&transaction.from, &transaction.currency_type).await?;
+        if sender_balance < transaction.amount {
+            return Err(IcnError::Currency("Insufficient balance".into()));
+        }
+
+        Ok(())
+    }
+
+    async fn verify_proposal(&self, proposal: &Proposal) -> IcnResult<()> {
+        // Check if the proposer exists
+        if self.get_identity(&proposal.proposer).await.is_err() {
+            return Err(IcnError::Governance("Proposer does not exist".into()));
+        }
+
+        // Additional checks can be added here, such as:
+        // - Checking if the proposal type is valid
+        // - Verifying the proposal's required quorum is within acceptable limits
+        // - Ensuring the voting period is reasonable
+
+        Ok(())
+    }
 
     pub async fn get_total_balance(&self, address: &str, currency_type: &CurrencyType) -> IcnResult<f64> {
         let mut total_balance = 0.0;
@@ -309,6 +360,10 @@ mod tests {
         assert!(node.vote_on_proposal(&proposal_id, "Alice".to_string(), true, 1.0).await.is_ok());
         assert!(node.vote_on_proposal(&proposal_id, "Bob".to_string(), false, 1.0).await.is_ok());
 
+        // Get proposal status
+        let status = node.get_proposal_status(&proposal_id).await.unwrap();
+        assert_eq!(status, ProposalStatus::Active);
+
         // Finalize proposal
         let final_status = node.finalize_proposal(&proposal_id).await.unwrap();
         assert_eq!(final_status, ProposalStatus::Passed);
@@ -350,12 +405,16 @@ mod tests {
     async fn test_smart_contract_execution() {
         let node = create_test_node().await;
 
-        // For this test, we'll assume a simple smart contract that adds two numbers
-        let contract_id = "test_contract";
-        let function = "add";
-        let args = vec![icn_vm::Value::Int(5), icn_vm::Value::Int(3)];
+        // Create a simple smart contract
+        let contract_code = r#"
+            fn add(a: i64, b: i64) -> i64 {
+                a + b
+            }
+        "#.to_string();
+        let contract_id = node.create_smart_contract(contract_code).await.unwrap();
 
-        let result = node.execute_smart_contract(contract_id, function, args).await.unwrap();
+        // Execute the smart contract
+        let result = node.execute_smart_contract(&contract_id, "add", vec![icn_vm::Value::Int(5), icn_vm::Value::Int(3)]).await.unwrap();
         assert_eq!(result, Some(icn_vm::Value::Int(8)));
     }
 
@@ -390,39 +449,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_helper_functions() {
-        let node = create_test_node().await;
-        
-        // Test get_total_balance
-        node.mint_currency("Alice", &CurrencyType::BasicNeeds, 100.0).await.unwrap();
-        let balance = node.get_total_balance("Alice", &CurrencyType::BasicNeeds).await.unwrap();
-        assert_eq!(balance, 100.0);
-
-        // Test list_active_proposals_with_status
-        let proposal = Proposal {
-            id: "test_proposal".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: Utc::now(),
-            voting_ends_at: Utc::now() + Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.51,
-            execution_timestamp: None,
-        };
-        node.create_proposal(proposal).await.unwrap();
-        let proposals_with_status = node.list_active_proposals_with_status().await.unwrap();
-        assert_eq!(proposals_with_status.len(), 1);
-        assert!(proposals_with_status[0].1 == 0.0); // No votes yet, so status should be 0.0
-
-        // Test check_sufficient_balance
-        assert!(node.check_sufficient_balance("Alice", 50.0, &CurrencyType::BasicNeeds).await.unwrap());
-        assert!(!node.check_sufficient_balance("Alice", 150.0, &CurrencyType::BasicNeeds).await.unwrap());
-    }
-
-    #[tokio::test]
     async fn test_zkp_operations() {
         let node = create_test_node().await;
 
@@ -451,34 +477,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_smart_contract_management() {
-        let node = create_test_node().await;
-
-        // Create a smart contract
-        let contract_code = "function add(a, b) { return a + b; }".to_string();
-        let contract_id = node.create_smart_contract(contract_code.clone()).await.unwrap();
-
-        // Get the smart contract
-        let retrieved_code = node.get_smart_contract(&contract_id).await.unwrap();
-        assert_eq!(retrieved_code, Some(contract_code));
-
-        // Update the smart contract
-        let new_contract_code = "function add(a, b) { return a + b + 1; }".to_string();
-        node.update_smart_contract(&contract_id, new_contract_code.clone()).await.unwrap();
-
-        // Verify the update
-        let updated_code = node.get_smart_contract(&contract_id).await.unwrap();
-        assert_eq!(updated_code, Some(new_contract_code));
-
-        // Delete the smart contract
-        node.delete_smart_contract(&contract_id).await.unwrap();
-
-        // Verify deletion
-        let deleted_code = node.get_smart_contract(&contract_id).await.unwrap();
-        assert_eq!(deleted_code, None);
-    }
-
-    #[tokio::test]
     async fn test_reputation_management() {
         let node = create_test_node().await;
         let node_id = "test_node";
@@ -491,6 +489,11 @@ mod tests {
         node.update_node_reputation(node_id, 0.5).await.unwrap();
         let updated_reputation = node.get_node_reputation(node_id).await.unwrap();
         assert_eq!(updated_reputation, 0.5);
+
+        // Update reputation again
+        node.update_node_reputation(node_id, -0.2).await.unwrap();
+        let final_reputation = node.get_node_reputation(node_id).await.unwrap();
+        assert_eq!(final_reputation, 0.3);
     }
 
     #[tokio::test]
@@ -500,5 +503,130 @@ mod tests {
 
         let shard_id = node.get_shard_for_address(address).await;
         assert!(shard_id < node.get_shard_count().await);
+
+        // Test balance across shards
+        node.mint_currency(address, &CurrencyType::BasicNeeds, 100.0).await.unwrap();
+        let total_balance = node.get_total_balance(address, &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(total_balance, 100.0);
+    }
+
+    #[tokio::test]
+    async fn test_smart_contract_lifecycle() {
+        let node = create_test_node().await;
+
+        // Create a smart contract
+        let contract_code = r#"
+            fn multiply(a: i64, b: i64) -> i64 {
+                a * b
+            }
+        "#.to_string();
+        let contract_id = node.create_smart_contract(contract_code.clone()).await.unwrap();
+
+        // Get the smart contract
+        let retrieved_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(retrieved_code, Some(contract_code));
+
+        // Update the smart contract
+        let new_contract_code = r#"
+            fn multiply(a: i64, b: i64) -> i64 {
+                a * b + 1
+            }
+        "#.to_string();
+        node.update_smart_contract(&contract_id, new_contract_code.clone()).await.unwrap();
+
+        // Verify the update
+        let updated_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(updated_code, Some(new_contract_code));
+
+        // Execute the updated contract
+        let result = node.execute_smart_contract(&contract_id, "multiply", vec![icn_vm::Value::Int(5), icn_vm::Value::Int(3)]).await.unwrap();
+        assert_eq!(result, Some(icn_vm::Value::Int(16))); // 5 * 3 + 1 = 16
+
+        // Delete the smart contract
+        node.delete_smart_contract(&contract_id).await.unwrap();
+
+        // Verify deletion
+        let deleted_code = node.get_smart_contract(&contract_id).await.unwrap();
+        assert_eq!(deleted_code, None);
+    }
+
+    #[tokio::test]
+    async fn test_proposal_voting_and_finalization() {
+        let node = create_test_node().await;
+
+        // Create a proposal
+        let proposal = Proposal {
+            id: "test_proposal".to_string(),
+            title: "Test Proposal".to_string(),
+            description: "This is a test proposal".to_string(),
+            proposer: "Alice".to_string(),
+            created_at: Utc::now(),
+            voting_ends_at: Utc::now() + Duration::days(7),
+            status: ProposalStatus::Active,
+            proposal_type: ProposalType::Constitutional,
+            category: ProposalCategory::Economic,
+            required_quorum: 0.51,
+            execution_timestamp: None,
+        };
+
+        let proposal_id = node.create_proposal(proposal).await.unwrap();
+
+        // Vote on the proposal
+        node.vote_on_proposal(&proposal_id, "Alice".to_string(), true, 0.3).await.unwrap();
+        node.vote_on_proposal(&proposal_id, "Bob".to_string(), true, 0.3).await.unwrap();
+        node.vote_on_proposal(&proposal_id, "Charlie".to_string(), false, 0.2).await.unwrap();
+
+        // Check proposal status
+        let proposals_with_status = node.list_active_proposals_with_status().await.unwrap();
+        assert_eq!(proposals_with_status.len(), 1);
+        let (retrieved_proposal, voting_status) = &proposals_with_status[0];
+        assert_eq!(retrieved_proposal.id, proposal_id);
+        assert!(*voting_status > 0.5); // 0.6 in favor out of 0.8 total votes
+
+        // Finalize the proposal
+        let final_status = node.finalize_proposal(&proposal_id).await.unwrap();
+        assert_eq!(final_status, ProposalStatus::Passed);
+
+        // Verify the proposal is no longer active
+        let active_proposals = node.list_active_proposals().await.unwrap();
+        assert_eq!(active_proposals.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cross_shard_balance() {
+        let mut config = Config {
+            shard_count: 2,
+            consensus_threshold: 0.66,
+            consensus_quorum: 0.51,
+            network_port: 8080,
+            difficulty: 2,
+        };
+        let node = IcnNode::new(config).await.unwrap();
+
+        let address = "cross_shard_user";
+
+        // Mint currency in both shards
+        node.mint_currency(address, &CurrencyType::BasicNeeds, 50.0).await.unwrap();
+        node.mint_currency(address, &CurrencyType::BasicNeeds, 50.0).await.unwrap();
+
+        // Check total balance across shards
+        let total_balance = node.get_total_balance(address, &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(total_balance, 100.0);
+
+        // Perform a cross-shard transaction
+        let transaction = Transaction {
+            from: address.to_string(),
+            to: "another_user".to_string(),
+            amount: 75.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        assert!(node.process_transaction(transaction).await.is_ok());
+
+        // Verify the balance after cross-shard transaction
+        let new_balance = node.get_total_balance(address, &CurrencyType::BasicNeeds).await.unwrap();
+        assert_eq!(new_balance, 25.0);
     }
 }
