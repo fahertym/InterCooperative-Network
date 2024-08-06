@@ -26,6 +26,7 @@ pub struct IcnNode {
     sharding_manager: Arc<RwLock<ShardingManager>>,
     smart_contract_executor: Arc<RwLock<SmartContractExecutor>>,
     zkp_manager: Arc<RwLock<ZKPManager>>,
+    proposals: Arc<RwLock<HashMap<String, Proposal>>>, // Added for proposal management
 }
 
 impl IcnNode {
@@ -39,6 +40,7 @@ impl IcnNode {
         let sharding_manager = Arc::new(RwLock::new(ShardingManager::new(config.shard_count)));
         let smart_contract_executor = Arc::new(RwLock::new(SmartContractExecutor::new()));
         let zkp_manager = Arc::new(RwLock::new(ZKPManager::new(64))); // Assuming 64-bit range proofs
+        let proposals = Arc::new(RwLock::new(HashMap::new())); // Initialize proposals
 
         Ok(Self {
             config,
@@ -51,6 +53,7 @@ impl IcnNode {
             sharding_manager,
             smart_contract_executor,
             zkp_manager,
+            proposals, // Include proposals map
         })
     }
 
