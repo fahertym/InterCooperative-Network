@@ -50,6 +50,9 @@ pub enum IcnError {
     #[error("Zero-Knowledge Proof error: {0}")]
     Zkp(String),
 
+    #[error("Validation error: {0}")]
+    Validation(String),
+
     #[error("Unknown error: {0}")]
     Unknown(String),
 }

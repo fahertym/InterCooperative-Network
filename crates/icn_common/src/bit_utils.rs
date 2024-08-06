@@ -1,4 +1,4 @@
-//! Custom bit vector and manipulation utilities for the InterCooperative Network project.
+// File: crates/icn_common/src/bit_utils.rs
 
 /// A custom bit vector implementation.
 #[derive(Clone, Debug)]
@@ -53,6 +53,22 @@ impl BitVec {
         assert!(index < self.len, "Index out of bounds");
         let (word_index, bit_index) = (index / 64, index % 64);
         (self.storage[word_index] & (1 << bit_index)) != 0
+    }
+
+    /// Sets a range of bits to 1.
+    pub fn set_range(&mut self, start: usize, end: usize) {
+        assert!(start <= end && end < self.len, "Index out of bounds");
+        for index in start..=end {
+            self.set(index);
+        }
+    }
+
+    /// Clears a range of bits.
+    pub fn clear_range(&mut self, start: usize, end: usize) {
+        assert!(start <= end && end < self.len, "Index out of bounds");
+        for index in start..=end {
+            self.clear(index);
+        }
     }
 
     /// Counts the number of set bits in the bit vector.
@@ -111,12 +127,22 @@ mod tests {
         bv.clear(50);
         assert!(!bv.get(50));
 
-        assert_eq!(bv.count_ones(), 0);
+        bv.set_range(10, 20);
+        for i in 10..=20 {
+            assert!(bv.get(i));
+        }
+
+        bv.clear_range(15, 18);
+        for i in 15..=18 {
+            assert!(!bv.get(i));
+        }
+
+        assert_eq!(bv.count_ones(), 10);
 
         bv.set(10);
         bv.set(20);
         bv.set(30);
-        assert_eq!(bv.count_ones(), 3);
+        assert_eq!(bv.count_ones(), 12);
     }
 
     #[test]

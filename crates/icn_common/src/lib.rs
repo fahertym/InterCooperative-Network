@@ -1,11 +1,13 @@
-// File: icn_common/src/lib.rs
+// File: crates/icn_common/src/lib.rs
 
 pub mod error;
+pub mod bit_utils;
 
 pub use crate::error::{IcnError, IcnResult};
 
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -23,6 +25,43 @@ pub struct Transaction {
     pub currency_type: CurrencyType,
     pub timestamp: i64,
     pub signature: Option<Vec<u8>>,
+}
+
+impl Transaction {
+    pub fn new(from: String, to: String, amount: f64, currency_type: CurrencyType, timestamp: i64) -> Self {
+        Transaction {
+            from,
+            to,
+            amount,
+            currency_type,
+            timestamp,
+            signature: None,
+        }
+    }
+
+    pub fn sign(&mut self, keypair: &ed25519_dalek::Keypair) -> IcnResult<()> {
+        let message = format!("{}{}{}{}", self.from, self.to, self.amount, self.timestamp);
+        let signature = keypair.sign(message.as_bytes()).to_bytes().to_vec();
+        self.signature = Some(signature);
+        Ok(())
+    }
+
+    pub fn verify(&self) -> IcnResult<bool> {
+        if let Some(signature) = &self.signature {
+            let message = format!("{}{}{}{}", self.from, self.to, self.amount, self.timestamp);
+            let public_key = ed25519_dalek::PublicKey::from_bytes(&self.from.as_bytes())?;
+            let signature = ed25519_dalek::Signature::from_bytes(signature)?;
+            public_key.verify(message.as_bytes(), &signature)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn get_fee(&self) -> f64 {
+        // Simplified fee calculation; in a real implementation, fees would be more complex
+        0.01
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
