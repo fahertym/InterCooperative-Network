@@ -53,7 +53,13 @@ impl IdentityService {
 
     pub fn create_identity(&mut self, attributes: HashMap<String, String>) -> IcnResult<DecentralizedIdentity> {
         let (identity, _) = DecentralizedIdentity::new(attributes);
-        self.identities.insert(identity.id.clone(), identity.clone());
+
+        if self.identities.contains_key(&identity.id) {
+            return Err(IcnError::Identity("Identity already exists".into()));
+        }
+
+        let id = identity.id.clone();
+        self.identities.insert(id, identity.clone());
         Ok(identity)
     }
 
@@ -73,7 +79,12 @@ impl IdentityService {
     pub fn update_reputation(&mut self, id: &str, change: f64) -> IcnResult<()> {
         let identity = self.identities.get_mut(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        
         identity.reputation += change;
+        
+        // Ensure reputation stays within a reasonable range (e.g., 0 to 100)
+        identity.reputation = identity.reputation.max(0.0).min(100.0);
+        
         Ok(())
     }
 
@@ -158,6 +169,19 @@ mod tests {
         service.update_reputation(&identity.id, 0.5).unwrap();
         let updated_identity = service.get_identity(&identity.id).unwrap();
         assert_eq!(updated_identity.reputation, 1.5);
+
+        service.update_reputation(&identity.id, -0.2).unwrap();
+        let updated_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 1.3);
+
+        // Testing reputation range enforcement
+        service.update_reputation(&identity.id, 99.0).unwrap();
+        let updated_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 100.0);
+
+        service.update_reputation(&identity.id, -200.0).unwrap();
+        let updated_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.reputation, 0.0);
     }
 
     #[test]
