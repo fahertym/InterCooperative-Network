@@ -6344,6 +6344,23 @@ mod tests {
         let result2 = gov_system.finalize_proposal("test_proposal_2").unwrap();
         assert_eq!(result2, ProposalStatus::Passed); // Passed due to meeting quorum and majority
     }
+
+    #[test]
+    fn test_get_votes() {
+        let mut gov_system = GovernanceSystem::new();
+        let proposal = create_test_proposal();
+        gov_system.create_proposal(proposal).unwrap();
+
+        gov_system.vote_on_proposal("test_proposal", "Alice".to_string(), true, 1.0).unwrap();
+        gov_system.vote_on_proposal("test_proposal", "Bob".to_string(), false, 1.0).unwrap();
+
+        let votes = gov_system.get_votes("test_proposal").unwrap();
+        assert_eq!(votes.len(), 2);
+        assert!(votes.iter().any(|v| v.voter == "Alice" && v.in_favor));
+        assert!(votes.iter().any(|v| v.voter == "Bob" && !v.in_favor));
+
+        assert!(gov_system.get_votes("non_existent").is_err());
+    }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/proposal.rs =====
