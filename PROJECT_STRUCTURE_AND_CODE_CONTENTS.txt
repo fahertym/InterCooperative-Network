@@ -1386,8 +1386,8 @@ impl Block {
     }
 
     pub fn mine(&mut self, difficulty: usize) {
-        let target = vec![0; difficulty];
-        while &self.hash[..difficulty] != &target[..] {
+        let target = "0".repeat(difficulty);
+        while &self.hash[..difficulty] != target {
             self.nonce += 1;
             self.hash = self.calculate_hash();
         }
@@ -1459,7 +1459,7 @@ impl Blockchain {
         Ok(())
     }
 
-    fn add_block(&mut self, mut block: Block) -> IcnResult<()> {
+    pub fn add_block(&mut self, mut block: Block) -> IcnResult<()> {
         block.mine(self.difficulty);
         self.chain.push(block);
         self.update_balances()?;
@@ -1648,6 +1648,32 @@ mod tests {
 
         let bob_transactions = blockchain.get_transactions("Bob");
         assert_eq!(bob_transactions.len(), 2);
+    }
+
+    #[test]
+    fn test_get_block_by_hash_and_index() {
+        let mut blockchain = Blockchain::new(2);
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert!(blockchain.add_transaction(transaction).is_ok());
+        assert!(blockchain.mine_pending_transactions("Miner").is_ok());
+
+        let latest_block = blockchain.get_latest_block();
+        let block_by_hash = blockchain.get_block_by_hash(&latest_block.hash);
+        assert!(block_by_hash.is_some());
+        assert_eq!(block_by_hash.unwrap().hash, latest_block.hash);
+
+        let block_by_index = blockchain.get_block_by_index(1);
+        assert!(block_by_index.is_some());
+        assert_eq!(block_by_index.unwrap().index, 1);
     }
 }===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
