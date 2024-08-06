@@ -2516,15 +2516,17 @@ use std::sync::{Arc, RwLock};
 use log::{info, warn, error};
 use chrono::Utc;
 
+/// Struct representing the Proof of Cooperation (PoC) consensus mechanism.
 pub struct PoCConsensus {
-    threshold: f64,
-    quorum: f64,
-    validators: HashMap<String, f64>,
-    pending_blocks: Vec<Block>,
-    blockchain: Arc<RwLock<Vec<Block>>>,
+    threshold: f64,                // The consensus threshold (e.g., 0.66 for 66% agreement)
+    quorum: f64,                   // The required quorum for decision making (e.g., 0.51 for 51% participation)
+    validators: HashMap<String, f64>,  // Map of validators and their reputation scores
+    pending_blocks: Vec<Block>,    // Queue of blocks waiting for consensus
+    blockchain: Arc<RwLock<Vec<Block>>>,  // Shared blockchain state
 }
 
 impl PoCConsensus {
+    /// Creates a new instance of PoCConsensus.
     pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
         if !(0.0..=1.0).contains(&threshold) || !(0.0..=1.0).contains(&quorum) {
             return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
@@ -2539,29 +2541,40 @@ impl PoCConsensus {
         })
     }
 
+    /// Starts the PoC consensus mechanism.
     pub fn start(&self) -> IcnResult<()> {
         info!("PoC Consensus mechanism started");
         Ok(())
     }
 
+    /// Stops the PoC consensus mechanism.
     pub fn stop(&self) -> IcnResult<()> {
         info!("PoC Consensus mechanism stopped");
         Ok(())
     }
 
+    /// Adds a new validator with a reputation score.
     pub fn add_validator(&mut self, id: String, reputation: f64) -> IcnResult<()> {
         if !(0.0..=1.0).contains(&reputation) {
             return Err(IcnError::Consensus("Invalid initial reputation".into()));
         }
+        if self.validators.contains_key(&id) {
+            warn!("Validator with id {} already exists", id);
+            return Err(IcnError::Consensus("Validator already exists".into()));
+        }
         self.validators.insert(id, reputation);
+        info!("Added validator {} with reputation {}", id, reputation);
         Ok(())
     }
 
+    /// Processes a new block by adding it to the pending blocks queue and attempting to reach consensus.
     pub fn process_new_block(&mut self, block: Block) -> IcnResult<()> {
         self.pending_blocks.push(block);
+        info!("Added new block to pending queue, attempting to reach consensus");
         self.try_reach_consensus()
     }
 
+    /// Attempts to reach consensus on the pending blocks.
     fn try_reach_consensus(&mut self) -> IcnResult<()> {
         let total_reputation: f64 = self.validators.values().sum();
         let quorum_reputation = total_reputation * self.quorum;
@@ -2581,8 +2594,9 @@ impl PoCConsensus {
                 if total_votes >= quorum_reputation {
                     if votes_for / total_votes >= self.threshold {
                         blocks_to_add.push(block.clone());
+                        info!("Block {} approved by consensus", block.index);
                     } else {
-                        warn!("Block rejected by consensus: {:?}", block);
+                        warn!("Block {} rejected by consensus", block.index);
                         return Err(IcnError::Consensus("Block rejected by consensus".into()));
                     }
                 }
@@ -2598,60 +2612,87 @@ impl PoCConsensus {
         Ok(())
     }
 
+    /// Validates a block according to consensus rules.
     fn validate_block(&self, block: &Block) -> IcnResult<bool> {
         // Check if the block's previous hash matches the last block in the chain
-        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
-        let last_block = blockchain.last().ok_or_else(|| IcnError::Consensus("Blockchain is empty".into()))?;
+        let blockchain = self.blockchain.read().map_err(|e| {
+            error!("Failed to read blockchain: {}", e);
+            IcnError::Consensus("Failed to read blockchain".into())
+        })?;
+        
+        let last_block = blockchain.last().ok_or_else(|| {
+            error!("Blockchain is empty");
+            IcnError::Consensus("Blockchain is empty".into())
+        })?;
         
         if block.previous_hash != last_block.hash {
+            warn!("Block validation failed: previous hash does not match last block's hash");
             return Ok(false);
         }
 
         // Verify block hash
         if block.hash != block.calculate_hash() {
+            warn!("Block validation failed: hash does not match calculated hash");
             return Ok(false);
         }
 
         // Validate transactions
         for transaction in &block.transactions {
             if !self.validate_transaction(transaction)? {
+                warn!("Block validation failed: invalid transaction {:?}", transaction);
                 return Ok(false);
             }
         }
 
+        info!("Block validation succeeded for block {}", block.index);
         Ok(true)
     }
 
+    /// Validates a transaction within a block.
     fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
         // Check if the transaction amount is positive
         if transaction.amount <= 0.0 {
+            warn!("Transaction validation failed: amount is not positive");
             return Ok(false);
         }
 
         // Check if the sender has sufficient balance
-        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        let blockchain = self.blockchain.read().map_err(|e| {
+            error!("Failed to read blockchain: {}", e);
+            IcnError::Consensus("Failed to read blockchain".into())
+        })?;
         let sender_balance = self.get_balance(&blockchain, &transaction.from, &transaction.currency_type);
         
         if sender_balance < transaction.amount {
+            warn!("Transaction validation failed: insufficient balance for {}", transaction.from);
             return Ok(false);
         }
 
-        // Add more transaction validation rules as needed
-
+        info!("Transaction validation succeeded for transaction from {}", transaction.from);
         Ok(true)
     }
 
+    /// Adds a block to the blockchain.
     fn add_block_to_chain(&mut self, block: Block) -> IcnResult<()> {
-        let mut blockchain = self.blockchain.write().map_err(|_| IcnError::Consensus("Failed to write to blockchain".into()))?;
+        let mut blockchain = self.blockchain.write().map_err(|e| {
+            error!("Failed to write to blockchain: {}", e);
+            IcnError::Consensus("Failed to write to blockchain".into())
+        })?;
         blockchain.push(block);
+        info!("Block added to blockchain");
         Ok(())
     }
 
+    /// Retrieves the current state of the blockchain.
     pub fn get_blockchain(&self) -> IcnResult<Vec<Block>> {
-        let blockchain = self.blockchain.read().map_err(|_| IcnError::Consensus("Failed to read blockchain".into()))?;
+        let blockchain = self.blockchain.read().map_err(|e| {
+            error!("Failed to read blockchain: {}", e);
+            IcnError::Consensus("Failed to read blockchain".into())
+        })?;
         Ok(blockchain.clone())
     }
 
+    /// Calculates the balance of an address in a specific currency type.
     fn get_balance(&self, blockchain: &[Block], address: &str, currency_type: &CurrencyType) -> f64 {
         let mut balance = 0.0;
         for block in blockchain {
@@ -2673,6 +2714,8 @@ impl PoCConsensus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use icn_common::Block;
+    use chrono::Utc;
 
     fn create_test_block(index: u64, previous_hash: &str) -> Block {
         Block::new(
@@ -2793,7 +2836,8 @@ mod tests {
         let blockchain = consensus.get_blockchain().unwrap();
         assert_eq!(blockchain.len(), 4);  // Genesis block + 3 new blocks
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/proof_of_cooperation.rs =====
 use icn_utils::{error::IcnError, IcnResult};
