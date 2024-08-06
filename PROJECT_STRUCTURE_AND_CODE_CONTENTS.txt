@@ -179,7 +179,8 @@
 │   ├── index.html
 │   ├── README.md
 │   ├── script.js
-│   └── style.css
+│   ├── style.css
+│   └── temp_logo.png
 ├── examples
 │   └── voting_contract.coop
 ├── frontend
@@ -190,7 +191,7 @@
 ├── README.md
 └── update_project.sh
 
-56 directories, 134 files
+56 directories, 135 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
