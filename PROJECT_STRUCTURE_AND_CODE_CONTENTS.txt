@@ -1568,7 +1568,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/blockchain.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
-// File: icn_blockchain/src/lib.rs
+// File: crates/icn_blockchain/src/blockchain.rs
 
 use chrono::{DateTime, Utc};
 use icn_common::{IcnResult, IcnError, CurrencyType};
@@ -1722,6 +1722,25 @@ impl Blockchain {
     }
 
     pub fn add_block(&mut self, mut block: Block) -> IcnResult<()> {
+        // Check that the block's timestamp is not in the future
+        let current_time = Utc::now().timestamp();
+        if block.timestamp > current_time {
+            return Err(IcnError::Blockchain("Block timestamp is in the future".into()));
+        }
+
+        // Verify all transactions in the block
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction)? {
+                return Err(IcnError::Blockchain("Invalid transaction in block".into()));
+            }
+        }
+
+        // Ensure the block's Merkle root matches the calculated root from transactions
+        let calculated_merkle_root = block.calculate_merkle_root();
+        if block.merkle_root != calculated_merkle_root {
+            return Err(IcnError::Blockchain("Invalid Merkle root".into()));
+        }
+
         block.mine(self.difficulty);
         self.chain.push(block);
         self.update_balances()?;
@@ -1812,6 +1831,76 @@ impl Blockchain {
     pub fn get_block_by_index(&self, index: u64) -> Option<&Block> {
         self.chain.get(index as usize)
     }
+
+    pub fn handle_fork(&mut self, new_chain: Vec<Block>) -> IcnResult<()> {
+        if new_chain.len() <= self.chain.len() || !self.is_valid_chain(&new_chain) {
+            return Err(IcnError::Blockchain("Invalid fork chain".into()));
+        }
+
+        let fork_point = self.find_fork_point(&new_chain)?;
+
+        // Roll back transactions from the current chain
+        for block in self.chain.iter().rev().take(self.chain.len() - fork_point) {
+            self.rollback_transactions(block)?;
+        }
+
+        // Apply transactions from the new chain
+        for block in new_chain.iter().skip(fork_point) {
+            self.apply_transactions(block)?;
+        }
+
+        // Replace the current chain with the new chain
+        self.chain = new_chain;
+
+        Ok(())
+    }
+
+    fn is_valid_chain(&self, chain: &[Block]) -> bool {
+        for i in 1..chain.len() {
+            let current_block = &chain[i];
+            let previous_block = &chain[i - 1];
+
+            if current_block.hash != current_block.calculate_hash() {
+                return false;
+            }
+
+            if current_block.previous_hash != previous_block.hash {
+                return false;
+            }
+
+            if current_block.merkle_root != current_block.calculate_merkle_root() {
+                return false;
+            }
+
+            if !self.validate_block_transactions(current_block) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn find_fork_point(&self, new_chain: &[Block]) -> IcnResult<usize> {
+        for (i, (old_block, new_block)) in self.chain.iter().zip(new_chain.iter()).enumerate() {
+            if old_block.hash != new_block.hash {
+                return Ok(i);
+            }
+        }
+        Err(IcnError::Blockchain("No fork point found".into()))
+    }
+
+    fn rollback_transactions(&mut self, block: &Block) -> IcnResult<()> {
+        for transaction in &block.transactions {
+            self.currency_system.reverse_transaction(transaction)?;
+        }
+        Ok(())
+    }
+
+    fn apply_transactions(&mut self, block: &Block) -> IcnResult<()> {
+        for transaction in &block.transactions {
+            self.currency_system.process_transaction(transaction)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1837,7 +1926,7 @@ mod tests {
             signature: None,
         };
 
-        // Add initial balance for Alice
+        // Initialize Alice's balance
         blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
 
         assert!(blockchain.add_transaction(transaction).is_ok());
@@ -1937,8 +2026,59 @@ mod tests {
         assert!(block_by_index.is_some());
         assert_eq!(block_by_index.unwrap().index, 1);
     }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
+
+    #[test]
+    fn test_handle_fork() {
+        let mut blockchain = Blockchain::new(2);
+        
+        // Create the original chain
+        let transaction1 = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 50.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        blockchain.currency_system.mint("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+        assert!(blockchain.add_transaction(transaction1).is_ok());
+        assert!(blockchain.mine_pending_transactions("Miner").is_ok());
+
+        // Create a forked chain
+        let mut forked_chain = blockchain.chain.clone();
+        let transaction2 = Transaction {
+            from: "Charlie".to_string(),
+            to: "David".to_string(),
+            amount: 30.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        let transaction3 = Transaction {
+            from: "Eve".to_string(),
+            to: "Frank".to_string(),
+            amount: 20.0,
+            currency_type: CurrencyType::BasicNeeds,
+            timestamp: Utc::now().timestamp(),
+            signature: None,
+        };
+
+        let mut new_block = Block::new(2, vec![transaction2, transaction3], &forked_chain.last().unwrap().hash);
+        new_block.mine(blockchain.difficulty);
+        forked_chain.push(new_block);
+
+        // Handle the fork
+        assert!(blockchain.handle_fork(forked_chain).is_ok());
+
+        // Verify the blockchain state after handling the fork
+        assert_eq!(blockchain.chain.len(), 3);
+        assert_eq!(blockchain.get_balance("Bob", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(blockchain.get_balance("David", &CurrencyType::BasicNeeds).unwrap(), 30.0);
+        assert_eq!(blockchain.get_balance("Frank", &CurrencyType::BasicNeeds).unwrap(), 20.0);
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_blockchain/src/transaction_validator.rs =====
 // File: icn_blockchain/src/transaction_validator.rs
