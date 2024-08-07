@@ -1,6 +1,6 @@
-// File: icn_core/src/lib.rs
+// File: crates/icn_core/src/lib.rs
 
-use icn_common::{Config, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, IcnResult, IcnError, NetworkStats};
+use icn_common::{IcnResult, IcnError, Transaction, Proposal, ProposalStatus, Vote, CurrencyType, NetworkStats};
 use icn_blockchain::Blockchain;
 use icn_consensus::PoCConsensus;
 use icn_currency::CurrencySystem;
@@ -10,11 +10,11 @@ use icn_network::NetworkManager;
 use icn_sharding::ShardingManager;
 use icn_vm::SmartContractExecutor;
 use icn_zkp::ZKPManager;
+use icn_storage::StorageManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 use chrono::{DateTime, Utc};
-use icn_zkp::{ZKPManager, RangeProofWrapper};
 
 pub struct IcnNode {
     config: Config,
@@ -27,8 +27,8 @@ pub struct IcnNode {
     sharding_manager: Arc<RwLock<ShardingManager>>,
     smart_contract_executor: Arc<RwLock<SmartContractExecutor>>,
     zkp_manager: Arc<RwLock<ZKPManager>>,
-    proposals: Arc<RwLock<HashMap<String, Proposal>>>, // Added for proposal management
-    zkp_manager: ZKPManager,
+    proposals: Arc<RwLock<HashMap<String, Proposal>>>,
+    storage_manager: Arc<RwLock<StorageManager>>,
 }
 
 pub async fn new(config: Config) -> IcnResult<Self> {
