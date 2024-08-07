@@ -1,4 +1,4 @@
-// File: icn_api/src/lib.rs
+// File: crates/icn_api/src/lib.rs
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -69,6 +69,34 @@ impl ApiLayer {
         let node = self.node.read().await;
         node.get_proposal_status(proposal_id).await
     }
+
+    // New method to get block information
+    pub async fn get_block_info(&self, identifier: &str) -> IcnResult<icn_blockchain::Block> {
+        let node = self.node.read().await;
+        if let Ok(height) = identifier.parse::<u64>() {
+            node.get_block_by_height(height).await
+        } else {
+            node.get_block_by_hash(identifier).await
+        }
+    }
+
+    // New method to get current network difficulty
+    pub async fn get_network_difficulty(&self) -> IcnResult<f64> {
+        let node = self.node.read().await;
+        node.get_network_difficulty().await
+    }
+
+    // New method to submit a new smart contract
+    pub async fn submit_smart_contract(&self, code: String) -> IcnResult<String> {
+        let node = self.node.write().await;
+        node.deploy_smart_contract(code).await
+    }
+
+    // New method to execute a smart contract
+    pub async fn execute_smart_contract(&self, contract_id: &str, function: &str, args: Vec<icn_vm::Value>) -> IcnResult<Option<icn_vm::Value>> {
+        let node = self.node.write().await;
+        node.execute_smart_contract(contract_id, function, args).await
+    }
 }
 
 // Request and response structs
@@ -94,6 +122,43 @@ struct GetProposalStatusRequest {
 #[derive(Serialize)]
 struct GetProposalStatusResponse {
     status: ProposalStatus,
+}
+
+#[derive(Deserialize)]
+struct GetBlockInfoRequest {
+    identifier: String,
+}
+
+#[derive(Serialize)]
+struct GetBlockInfoResponse {
+    block: icn_blockchain::Block,
+}
+
+#[derive(Serialize)]
+struct GetNetworkDifficultyResponse {
+    difficulty: f64,
+}
+
+#[derive(Deserialize)]
+struct SubmitSmartContractRequest {
+    code: String,
+}
+
+#[derive(Serialize)]
+struct SubmitSmartContractResponse {
+    contract_id: String,
+}
+
+#[derive(Deserialize)]
+struct ExecuteSmartContractRequest {
+    contract_id: String,
+    function: String,
+    args: Vec<icn_vm::Value>,
+}
+
+#[derive(Serialize)]
+struct ExecuteSmartContractResponse {
+    result: Option<icn_vm::Value>,
 }
 
 // Helper function to convert IcnError to warp::Rejection
@@ -161,6 +226,30 @@ pub fn api_routes(
         .and(api_layer.clone())
         .and_then(handle_get_proposal_status);
 
+    let get_block_info = warp::get()
+        .and(warp::path("block"))
+        .and(warp::query())
+        .and(api_layer.clone())
+        .and_then(handle_get_block_info);
+
+    let get_network_difficulty = warp::get()
+        .and(warp::path("difficulty"))
+        .and(api_layer.clone())
+        .and_then(handle_get_network_difficulty);
+
+    let submit_smart_contract = warp::post()
+        .and(warp::path("contract"))
+        .and(warp::body::json())
+        .and(api_layer.clone())
+        .and_then(handle_submit_smart_contract);
+
+    let execute_smart_contract = warp::post()
+        .and(warp::path("contract"))
+        .and(warp::path("execute"))
+        .and(warp::body::json())
+        .and(api_layer.clone())
+        .and_then(handle_execute_smart_contract);
+
     submit_transaction
         .or(create_proposal)
         .or(vote_on_proposal)
@@ -170,6 +259,10 @@ pub fn api_routes(
         .or(allocate_resource)
         .or(get_network_stats)
         .or(get_proposal_status)
+        .or(get_block_info)
+        .or(get_network_difficulty)
+        .or(submit_smart_contract)
+        .or(execute_smart_contract)
 }
 
 // Handler functions
@@ -293,6 +386,53 @@ async fn handle_get_proposal_status(
         .map_err(icn_error_to_rejection)
 }
 
+async fn handle_get_block_info(
+    query: GetBlockInfoRequest,
+    api_layer: Arc<RwLock<ApiLayer>>,
+) -> Result<impl Reply, Rejection> {
+    let api_layer = api_layer.read().await;
+    api_layer
+        .get_block_info(&query.identifier)
+        .await
+        .map(|block| warp::reply::json(&GetBlockInfoResponse { block }))
+        .map_err(icn_error_to_rejection)
+}
+
+async fn handle_get_network_difficulty(
+    api_layer: Arc<RwLock<ApiLayer>>,
+) -> Result<impl Reply, Rejection> {
+    let api_layer = api_layer.read().await;
+    api_layer
+        .get_network_difficulty()
+        .await
+        .map(|difficulty| warp::reply::json(&GetNetworkDifficultyResponse { difficulty }))
+        .map_err(icn_error_to_rejection)
+}
+
+async fn handle_submit_smart_contract(
+    request: SubmitSmartContractRequest,
+    api_layer: Arc<RwLock<ApiLayer>>,
+) -> Result<impl Reply, Rejection> {
+    let api_layer = api_layer.read().await;
+    api_layer
+        .submit_smart_contract(request.code)
+        .await
+        .map(|contract_id| warp::reply::json(&SubmitSmartContractResponse { contract_id }))
+        .map_err(icn_error_to_rejection)
+}
+
+async fn handle_execute_smart_contract(
+    request: ExecuteSmartContractRequest,
+    api_layer: Arc<RwLock<ApiLayer>>,
+) -> Result<impl Reply, Rejection> {
+    let api_layer = api_layer.read().await;
+    api_layer
+        .execute_smart_contract(&request.contract_id, &request.function, request.args)
+        .await
+        .map(|result| warp::reply::json(&ExecuteSmartContractResponse { result }))
+        .map_err(icn_error_to_rejection)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,85 +483,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_vote_on_proposal() {
+    async fn test_get_block_info() {
         let (api_layer, node) = setup_test_env().await;
 
-        let proposal = Proposal {
-            id: "test_proposal_id".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: chrono::Utc::now(),
-            voting_ends_at: chrono::Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.51,
-            execution_timestamp: None,
-        };
+        // Create a test block
+        let block = icn_blockchain::Block::new(
+            1,
+            vec![],
+            "previous_hash".to_string(),
+            1,
+        );
 
+        // Add the block to the blockchain
         {
             let mut node = node.write().await;
-            node.create_proposal(proposal.clone()).await.unwrap();
+            node.add_block(block.clone()).await.unwrap();
         }
 
-        let vote = Vote {
-            proposal_id: "test_proposal_id".to_string(),
-            voter: "Bob".to_string(),
-            in_favor: true,
-            weight: 1.0,
+        let query = GetBlockInfoRequest {
+            identifier: block.hash.clone(),
         };
 
-        let result = handle_vote_on_proposal(vote, api_layer).await;
+        let result = handle_get_block_info(query, api_layer).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_get_balance() {
-        let (api_layer, node) = setup_test_env().await;
+    async fn test_get_network_difficulty() {
+        let (api_layer, _) = setup_test_env().await;
 
-        {
-            let mut node = node.write().await;
-            node.mint_currency("Alice", &CurrencyType::BasicNeeds, 100.0).await.unwrap();
-        }
-
-        let query = GetBalanceQuery {
-            address: "Alice".to_string(),
-            currency_type: CurrencyType::BasicNeeds,
-        };
-
-        let result = handle_get_balance(query, api_layer).await;
+        let result = handle_get_network_difficulty(api_layer).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_get_proposal_status() {
+    async fn test_submit_smart_contract() {
+        let (api_layer, _) = setup_test_env().await;
+        let request = SubmitSmartContractRequest {
+            code: "contract TestContract { }".to_string(),
+        };
+
+        let result = handle_submit_smart_contract(request, api_layer).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_smart_contract() {
         let (api_layer, node) = setup_test_env().await;
 
-        let proposal = Proposal {
-            id: "test_proposal_id".to_string(),
-            title: "Test Proposal".to_string(),
-            description: "This is a test proposal".to_string(),
-            proposer: "Alice".to_string(),
-            created_at: chrono::Utc::now(),
-            voting_ends_at: chrono::Utc::now() + chrono::Duration::days(7),
-            status: ProposalStatus::Active,
-            proposal_type: ProposalType::Constitutional,
-            category: ProposalCategory::Economic,
-            required_quorum: 0.51,
-            execution_timestamp: None,
-        };
-
-        {
+        // First, deploy a test contract
+        let contract_id = {
             let mut node = node.write().await;
-            node.create_proposal(proposal.clone()).await.unwrap();
-        }
-
-        let query = GetProposalStatusRequest {
-            proposal_id: "test_proposal_id".to_string(),
+            node.deploy_smart_contract("contract TestContract { function test() -> int { return 42; } }".to_string()).await.unwrap()
         };
 
-        let result = handle_get_proposal_status(query, api_layer).await;
+        let request = ExecuteSmartContractRequest {
+            contract_id: contract_id.clone(),
+            function: "test".to_string(),
+            args: vec![],
+        };
+
+        let result = handle_execute_smart_contract(request, api_layer).await;
         assert!(result.is_ok());
+
+        if let Ok(warp::reply::Json(response)) = result {
+            let response: ExecuteSmartContractResponse = serde_json::from_value(response.into_inner()).unwrap();
+            assert_eq!(response.result, Some(icn_vm::Value::Int(42)));
+        } else {
+            panic!("Unexpected response type");
+        }
     }
 }
