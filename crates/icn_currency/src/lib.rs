@@ -169,6 +169,46 @@ impl CurrencySystem {
             .cloned()
             .ok_or_else(|| IcnError::Currency("Currency not found".into()))
     }
+
+    /// Exchanges currency from one type to another.
+    pub fn exchange_currency(&mut self, from: &str, source_currency: &CurrencyType, target_currency: &CurrencyType, amount: f64) -> IcnResult<()> {
+        // Check if both currencies exist
+        if !self.currencies.contains_key(source_currency) || !self.currencies.contains_key(target_currency) {
+            return Err(IcnError::Currency("Invalid currency type".into()));
+        }
+
+        // Check if the user has sufficient balance
+        let source_balance = self.get_balance(from, source_currency)?;
+        if source_balance < amount {
+            return Err(IcnError::Currency("Insufficient balance for exchange".into()));
+        }
+
+        // Calculate exchange rate (simplified for demonstration)
+        let exchange_rate = match (source_currency, target_currency) {
+            (CurrencyType::BasicNeeds, CurrencyType::Education) => 1.2,
+            (CurrencyType::Education, CurrencyType::BasicNeeds) => 0.8,
+            (CurrencyType::BasicNeeds, CurrencyType::Environmental) => 1.5,
+            (CurrencyType::Environmental, CurrencyType::BasicNeeds) => 0.6,
+            (CurrencyType::Education, CurrencyType::Environmental) => 1.3,
+            (CurrencyType::Environmental, CurrencyType::Education) => 0.7,
+            _ => 1.0, // Default to 1:1 for other combinations or same currency
+        };
+
+        let target_amount = amount * exchange_rate;
+
+        // Perform the exchange
+        self.update_balance(from, source_currency, -amount)?;
+        self.update_balance(from, target_currency, target_amount)?;
+
+        // Update currency supplies
+        let source_currency = self.currencies.get_mut(source_currency).unwrap();
+        source_currency.burn(amount)?;
+
+        let target_currency = self.currencies.get_mut(target_currency).unwrap();
+        target_currency.mint(target_amount)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -296,5 +336,23 @@ mod tests {
         };
 
         assert!(system.process_transaction(&invalid_transaction).is_err());
+    }
+
+    #[test]
+    fn test_exchange_currency() {
+        let mut system = CurrencySystem::new();
+        system.add_currency(CurrencyType::BasicNeeds, 1000.0, 0.01).unwrap();
+        system.add_currency(CurrencyType::Education, 1000.0, 0.01).unwrap();
+        system.update_balance("Alice", &CurrencyType::BasicNeeds, 100.0).unwrap();
+
+        assert!(system.exchange_currency("Alice", &CurrencyType::BasicNeeds, &CurrencyType::Education, 50.0).is_ok());
+        assert_eq!(system.get_balance("Alice", &CurrencyType::BasicNeeds).unwrap(), 50.0);
+        assert_eq!(system.get_balance("Alice", &CurrencyType::Education).unwrap(), 60.0); // 50 * 1.2
+
+        // Test insufficient balance
+        assert!(system.exchange_currency("Alice", &CurrencyType::BasicNeeds, &CurrencyType::Education, 100.0).is_err());
+
+        // Test invalid currency
+        assert!(system.exchange_currency("Alice", &CurrencyType::BasicNeeds, &CurrencyType::Environmental, 10.0).is_err());
     }
 }
