@@ -1,4 +1,4 @@
-// File: icn_storage/src/lib.rs
+// File: crates/icn_storage/src/lib.rs
 
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
@@ -139,13 +139,36 @@ impl StorageManager {
         
         Ok(distribution)
     }
+
+    // New helper function to check if a key exists in the storage
+    pub fn key_exists(&self, key: &str) -> IcnResult<bool> {
+        let data_location = self.data_location.read().map_err(|_| IcnError::Storage("Failed to lock data location".into()))?;
+        Ok(data_location.contains_key(key))
+    }
+
+    // New helper function to get the total size of stored data
+    pub fn get_total_storage_size(&self) -> IcnResult<usize> {
+        let nodes = self.nodes.read().map_err(|_| IcnError::Storage("Failed to lock nodes".into()))?;
+        Ok(nodes.iter().map(|node| node.data.values().map(|v| v.len()).sum::<usize>()).sum())
+    }
+
+    // New helper function to get the number of keys stored
+    pub fn get_key_count(&self) -> IcnResult<usize> {
+        let data_location = self.data_location.read().map_err(|_| IcnError::Storage("Failed to lock data location".into()))?;
+        Ok(data_location.len())
+    }
+
+    // New helper function to list all keys
+    pub fn list_keys(&self) -> IcnResult<Vec<String>> {
+        let data_location = self.data_location.read().map_err(|_| IcnError::Storage("Failed to lock data location".into()))?;
+        Ok(data_location.keys().cloned().collect())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
     #[test]
     fn test_store_and_retrieve_data() {
         let storage_manager = StorageManager::new(3);
@@ -278,5 +301,72 @@ mod tests {
         assert!(distribution.contains_key(key2));
         assert_eq!(distribution[key1].len(), 2);
         assert_eq!(distribution[key2].len(), 2);
+    }
+
+    #[test]
+    fn test_key_exists() {
+        let storage_manager = StorageManager::new(3);
+        storage_manager.add_node("node1".to_string()).unwrap();
+
+        let key = "test_key";
+        let value = b"test_value".to_vec();
+
+        assert!(!storage_manager.key_exists(key).unwrap());
+        storage_manager.store_data(key, value).unwrap();
+        assert!(storage_manager.key_exists(key).unwrap());
+    }
+
+    #[test]
+    fn test_get_total_storage_size() {
+        let storage_manager = StorageManager::new(3);
+        storage_manager.add_node("node1".to_string()).unwrap();
+
+        let key1 = "test_key1";
+        let key2 = "test_key2";
+        let value1 = b"test_value1".to_vec();
+        let value2 = b"test_value2".to_vec();
+
+        assert_eq!(storage_manager.get_total_storage_size().unwrap(), 0);
+
+        storage_manager.store_data(key1, value1.clone()).unwrap();
+        storage_manager.store_data(key2, value2.clone()).unwrap();
+
+        let expected_size = value1.len() + value2.len();
+        assert_eq!(storage_manager.get_total_storage_size().unwrap(), expected_size);
+    }
+
+    #[test]
+    fn test_get_key_count() {
+        let storage_manager = StorageManager::new(3);
+        storage_manager.add_node("node1".to_string()).unwrap();
+
+        assert_eq!(storage_manager.get_key_count().unwrap(), 0);
+
+        storage_manager.store_data("key1", b"value1".to_vec()).unwrap();
+        storage_manager.store_data("key2", b"value2".to_vec()).unwrap();
+        storage_manager.store_data("key3", b"value3".to_vec()).unwrap();
+
+        assert_eq!(storage_manager.get_key_count().unwrap(), 3);
+
+        storage_manager.remove_data("key2").unwrap();
+
+        assert_eq!(storage_manager.get_key_count().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_list_keys() {
+        let storage_manager = StorageManager::new(3);
+        storage_manager.add_node("node1".to_string()).unwrap();
+
+        let keys = vec!["key1", "key2", "key3"];
+        for key in &keys {
+            storage_manager.store_data(key, b"value".to_vec()).unwrap();
+        }
+
+        let listed_keys = storage_manager.list_keys().unwrap();
+        assert_eq!(listed_keys.len(), 3);
+        for key in keys {
+            assert!(listed_keys.contains(&key.to_string()));
+        }
     }
 }
