@@ -1,4 +1,4 @@
-// File: icn_identity/src/lib.rs
+// File: crates/icn_identity/src/lib.rs
 
 use icn_common::{IcnResult, IcnError};
 use std::collections::HashMap;
@@ -14,6 +14,7 @@ pub struct DecentralizedIdentity {
     pub created_at: DateTime<Utc>,
     pub reputation: f64,
     pub attributes: HashMap<String, String>,
+    pub revoked: bool,
 }
 
 impl DecentralizedIdentity {
@@ -30,6 +31,7 @@ impl DecentralizedIdentity {
                 created_at: Utc::now(),
                 reputation: 1.0,
                 attributes,
+                revoked: false,
             },
             keypair,
         )
@@ -117,6 +119,37 @@ impl IdentityService {
         let identity = self.identities.get_mut(id)
             .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
         identity.attributes.insert(key, value);
+        Ok(())
+    }
+
+    pub fn revoke_identity(&mut self, id: &str) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        
+        if identity.revoked {
+            return Err(IcnError::Identity("Identity is already revoked".into()));
+        }
+
+        identity.revoked = true;
+        self.broadcast_revocation(id)?;
+        Ok(())
+    }
+
+    pub fn update_identity(&mut self, id: &str, attributes: HashMap<String, String>) -> IcnResult<()> {
+        let identity = self.identities.get_mut(id)
+            .ok_or_else(|| IcnError::Identity("Identity not found".into()))?;
+        
+        if identity.revoked {
+            return Err(IcnError::Identity("Cannot update a revoked identity".into()));
+        }
+
+        identity.attributes.extend(attributes);
+        Ok(())
+    }
+
+    fn broadcast_revocation(&self, id: &str) -> IcnResult<()> {
+        // This is a placeholder for the actual network broadcast implementation
+        println!("Broadcasting revocation of identity: {}", id);
         Ok(())
     }
 }
@@ -237,5 +270,49 @@ mod tests {
         
         service.set_attribute(&identity.id, "email".to_string(), "alice@example.com".to_string()).unwrap();
         assert_eq!(service.get_attribute(&identity.id, "email").unwrap(), Some("alice@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_revoke_identity() {
+        let mut service = IdentityService::new();
+        
+        let attributes = HashMap::new();
+        let identity = service.create_identity(attributes).unwrap();
+        
+        assert!(!identity.revoked);
+        
+        service.revoke_identity(&identity.id).unwrap();
+        
+        let revoked_identity = service.get_identity(&identity.id).unwrap();
+        assert!(revoked_identity.revoked);
+        
+        // Trying to revoke an already revoked identity should fail
+        assert!(service.revoke_identity(&identity.id).is_err());
+    }
+
+    #[test]
+    fn test_update_identity() {
+        let mut service = IdentityService::new();
+        
+        let mut attributes = HashMap::new();
+        attributes.insert("name".to_string(), "Alice".to_string());
+        
+        let identity = service.create_identity(attributes).unwrap();
+        
+        let mut new_attributes = HashMap::new();
+        new_attributes.insert("email".to_string(), "alice@example.com".to_string());
+        
+        service.update_identity(&identity.id, new_attributes).unwrap();
+        
+        let updated_identity = service.get_identity(&identity.id).unwrap();
+        assert_eq!(updated_identity.attributes.get("name"), Some(&"Alice".to_string()));
+        assert_eq!(updated_identity.attributes.get("email"), Some(&"alice@example.com".to_string()));
+        
+        // Revoking the identity
+        service.revoke_identity(&identity.id).unwrap();
+        
+        // Trying to update a revoked identity should fail
+        let another_update = HashMap::new();
+        assert!(service.update_identity(&identity.id, another_update).is_err());
     }
 }
