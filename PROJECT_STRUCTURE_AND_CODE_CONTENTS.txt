@@ -6452,7 +6452,7 @@ mod tests {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/governance.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
-// File: icn_governance/src/lib.rs
+// File: crates/icn_governance/src/lib.rs
 
 use icn_common::{IcnResult, IcnError};
 use chrono::{DateTime, Utc, Duration};
@@ -6608,6 +6608,47 @@ impl GovernanceSystem {
 
         proposal.status = ProposalStatus::Executed;
         proposal.execution_timestamp = Some(Utc::now());
+        Ok(())
+    }
+
+    pub fn execute_proposal(&mut self, proposal_id: &str) -> IcnResult<()> {
+        let proposal = self.proposals.get_mut(proposal_id)
+            .ok_or_else(|| IcnError::Governance("Proposal not found".into()))?;
+
+        if proposal.status != ProposalStatus::Passed {
+            return Err(IcnError::Governance("Proposal has not passed".into()));
+        }
+
+        match proposal.proposal_type {
+            ProposalType::Constitutional => self.execute_constitutional_proposal(proposal),
+            ProposalType::EconomicAdjustment => self.execute_economic_adjustment_proposal(proposal),
+            ProposalType::NetworkUpgrade => self.execute_network_upgrade_proposal(proposal),
+        }?;
+
+        proposal.status = ProposalStatus::Executed;
+        proposal.execution_timestamp = Some(Utc::now());
+
+        Ok(())
+    }
+
+    fn execute_constitutional_proposal(&self, proposal: &Proposal) -> IcnResult<()> {
+        // Implementation for constitutional changes
+        println!("Executing constitutional proposal: {}", proposal.title);
+        // Add logic for updating constitutional parameters
+        Ok(())
+    }
+
+    fn execute_economic_adjustment_proposal(&self, proposal: &Proposal) -> IcnResult<()> {
+        // Implementation for economic adjustments
+        println!("Executing economic adjustment proposal: {}", proposal.title);
+        // Add logic for adjusting economic parameters
+        Ok(())
+    }
+
+    fn execute_network_upgrade_proposal(&self, proposal: &Proposal) -> IcnResult<()> {
+        // Implementation for network upgrades
+        println!("Executing network upgrade proposal: {}", proposal.title);
+        // Add logic for implementing network upgrades
         Ok(())
     }
 
@@ -6785,7 +6826,75 @@ mod tests {
 
         assert!(gov_system.get_votes("non_existent").is_err());
     }
-}===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
+
+    #[test]
+    fn test_create_and_execute_proposal() {
+        let mut gov_system = GovernanceSystem::new();
+        let proposal = create_test_proposal();
+        let proposal_id = gov_system.create_proposal(proposal).unwrap();
+
+        // Simulate voting
+        gov_system.vote_on_proposal(&proposal_id, "Alice".to_string(), true, 0.3).unwrap();
+        gov_system.vote_on_proposal(&proposal_id, "Bob".to_string(), true, 0.3).unwrap();
+
+        // Fast-forward time to end voting period
+        let proposal = gov_system.proposals.get_mut(&proposal_id).unwrap();
+        proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+
+        // Finalize the proposal
+        let status = gov_system.finalize_proposal(&proposal_id).unwrap();
+        assert_eq!(status, ProposalStatus::Passed);
+
+        // Execute the proposal
+        gov_system.execute_proposal(&proposal_id).unwrap();
+
+        let executed_proposal = gov_system.get_proposal(&proposal_id).unwrap();
+        assert_eq!(executed_proposal.status, ProposalStatus::Executed);
+        assert!(executed_proposal.execution_timestamp.is_some());
+    }
+
+    #[test]
+    fn test_execute_proposal_not_passed() {
+        let mut gov_system = GovernanceSystem::new();
+        let proposal = create_test_proposal();
+        let proposal_id = gov_system.create_proposal(proposal).unwrap();
+
+        // Try to execute without passing
+        let result = gov_system.execute_proposal(&proposal_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_different_proposal_types() {
+        let mut gov_system = GovernanceSystem::new();
+
+        let proposal_types = vec![
+            ProposalType::Constitutional,
+            ProposalType::EconomicAdjustment,
+            ProposalType::NetworkUpgrade,
+        ];
+
+        for proposal_type in proposal_types {
+            let mut proposal = create_test_proposal();
+            proposal.proposal_type = proposal_type.clone();
+            let proposal_id = gov_system.create_proposal(proposal).unwrap();
+
+            // Simulate voting and passing
+            gov_system.vote_on_proposal(&proposal_id, "Alice".to_string(), true, 0.6).unwrap();
+            let proposal = gov_system.proposals.get_mut(&proposal_id).unwrap();
+            proposal.voting_ends_at = Utc::now() - Duration::hours(1);
+            gov_system.finalize_proposal(&proposal_id).unwrap();
+
+            // Execute the proposal
+            let result = gov_system.execute_proposal(&proposal_id);
+            assert!(result.is_ok());
+
+            let executed_proposal = gov_system.get_proposal(&proposal_id).unwrap();
+            assert_eq!(executed_proposal.status, ProposalStatus::Executed);
+        }
+    }
+}
+===== END OF /home/matt/InterCooperative-Network/crates/icn_governance/src/lib.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_governance/src/proposal.rs =====
 use chrono::{DateTime, Utc, Duration};
