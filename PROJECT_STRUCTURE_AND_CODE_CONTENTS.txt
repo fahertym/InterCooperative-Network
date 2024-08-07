@@ -97,8 +97,11 @@
 │   │   └── src
 │   │       ├── entities.rs
 │   │       ├── lib.rs
+│   │       ├── market_maker.rs
 │   │       ├── market.rs
 │   │       ├── market_tests.rs
+│   │       ├── matching_engine.rs
+│   │       ├── order_book.rs
 │   │       └── transaction.rs
 │   ├── icn_network
 │   │   ├── Cargo.toml
@@ -191,7 +194,7 @@
 ├── README.md
 └── update_project.sh
 
-56 directories, 135 files
+56 directories, 138 files
 ===== END OF FILE STRUCTURE =====
 
 ===== START OF /home/matt/InterCooperative-Network/Cargo.toml =====
@@ -7665,14 +7668,133 @@ pub struct Labor {
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/entities.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/lib.rs =====
+// File: crates/icn_market/src/lib.rs
+
 pub mod entities;
 pub mod market;
 pub mod transaction;
+pub mod order_book;
+pub mod matching_engine;
+pub mod market_maker;
+pub mod price_discovery;
+pub mod risk_management;
+pub mod analytics;
 
 pub use entities::*;
 pub use market::*;
 pub use transaction::*;
-===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/lib.rs =====
+pub use order_book::*;
+pub use matching_engine::*;
+pub use market_maker::*;
+pub use price_discovery::*;
+pub use risk_management::*;
+pub use analytics::*;===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/lib.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/market_maker.rs =====
+// File: crates/icn_market/src/market_maker.rs
+
+use crate::entities::Resource;
+use crate::order_book::Order;
+use crate::matching_engine::MatchingEngine;
+use std::collections::HashMap;
+
+pub struct MarketMaker {
+    id: String,
+    inventory: HashMap<Resource, f64>,
+    spread: f64,
+}
+
+impl MarketMaker {
+    pub fn new(id: String, spread: f64) -> Self {
+        MarketMaker {
+            id,
+            inventory: HashMap::new(),
+            spread,
+        }
+    }
+
+    pub fn update_inventory(&mut self, resource: Resource, quantity: f64) {
+        *self.inventory.entry(resource).or_insert(0.0) += quantity;
+    }
+
+    pub fn generate_orders(&self, resource: &Resource, current_price: f64, quantity: f64) -> Vec<Order> {
+        let mut orders = Vec::new();
+
+        let bid_price = current_price * (1.0 - self.spread / 2.0);
+        let ask_price = current_price * (1.0 + self.spread / 2.0);
+
+        orders.push(Order {
+            id: format!("bid_{}", self.id),
+            trader_id: self.id.clone(),
+            resource: resource.clone(),
+            quantity,
+            price: bid_price,
+            is_buy: true,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        });
+
+        orders.push(Order {
+            id: format!("ask_{}", self.id),
+            trader_id: self.id.clone(),
+            resource: resource.clone(),
+            quantity,
+            price: ask_price,
+            is_buy: false,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+        });
+
+        orders
+    }
+
+    pub fn adjust_inventory(&mut self, engine: &mut MatchingEngine, target_inventory: f64) {
+        for (resource, &current_inventory) in &self.inventory {
+            let inventory_difference = target_inventory - current_inventory;
+            if inventory_difference.abs() > 1e-6 {
+                let order = Order {
+                    id: format!("adjust_{}", self.id),
+                    trader_id: self.id.clone(),
+                    resource: resource.clone(),
+                    quantity: inventory_difference.abs(),
+                    price: 0.0, // Market order
+                    is_buy: inventory_difference > 0.0,
+                    timestamp: chrono::Utc::now().timestamp() as u64,
+                };
+                engine.process_order(order);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_market_maker() {
+        let mut market_maker = MarketMaker::new("MM1".to_string(), 0.01);
+        let resource = Resource {
+            name: "TestResource".to_string(),
+            quantity: 1000.0,
+            unit: "units".to_string(),
+        };
+
+        market_maker.update_inventory(resource.clone(), 100.0);
+        assert_eq!(*market_maker.inventory.get(&resource).unwrap(), 100.0);
+
+        let orders = market_maker.generate_orders(&resource, 10.0, 5.0);
+        assert_eq!(orders.len(), 2);
+        assert!(orders[0].is_buy);
+        assert!(!orders[1].is_buy);
+        assert!(orders[0].price < 10.0);
+        assert!(orders[1].price > 10.0);
+
+        let mut engine = MatchingEngine::new();
+        market_maker.adjust_inventory(&mut engine, 150.0);
+        // Note: We can't directly test the result of adjust_inventory here
+        // as it depends on the MatchingEngine's state. In a real scenario,
+        // we would need to set up the engine with some opposing orders first.
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/market_maker.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/market.rs =====
 use crate::entities::{Cooperative, Community, Member, Resource, Labor};
@@ -7838,6 +7960,165 @@ fn test_exchange_labor_between_members() {
     assert!(market.exchange_labor("member1", "member2", labor).is_ok());
 }
 ===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/market_tests.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/matching_engine.rs =====
+// File: crates/icn_market/src/matching_engine.rs
+
+use crate::order_book::{OrderBook, Order};
+use crate::transaction::Transaction;
+
+pub struct MatchingEngine {
+    order_book: OrderBook,
+}
+
+impl MatchingEngine {
+    pub fn new() -> Self {
+        MatchingEngine {
+            order_book: OrderBook::new(),
+        }
+    }
+
+    pub fn process_order(&mut self, order: Order) -> Vec<Transaction> {
+        let mut transactions = Vec::new();
+
+        if order.is_buy {
+            self.match_buy_order(order, &mut transactions);
+        } else {
+            self.match_sell_order(order, &mut transactions);
+        }
+
+        transactions
+    }
+
+    fn match_buy_order(&mut self, mut buy_order: Order, transactions: &mut Vec<Transaction>) {
+        while let Some(best_ask) = self.order_book.get_best_ask() {
+            if buy_order.price < best_ask.price || buy_order.quantity <= 0.0 {
+                break;
+            }
+
+            let matched_quantity = buy_order.quantity.min(best_ask.quantity);
+            let transaction = Transaction::new(
+                best_ask.trader_id.clone(),
+                buy_order.trader_id.clone(),
+                matched_quantity,
+                best_ask.price,
+                buy_order.resource.clone(),
+            );
+
+            transactions.push(transaction);
+
+            buy_order.quantity -= matched_quantity;
+            let mut sell_order = self.order_book.remove_order(&best_ask.id, false).unwrap();
+            sell_order.quantity -= matched_quantity;
+
+            if sell_order.quantity > 0.0 {
+                self.order_book.add_order(sell_order);
+            }
+        }
+
+        if buy_order.quantity > 0.0 {
+            self.order_book.add_order(buy_order);
+        }
+    }
+
+    fn match_sell_order(&mut self, mut sell_order: Order, transactions: &mut Vec<Transaction>) {
+        while let Some(best_bid) = self.order_book.get_best_bid() {
+            if sell_order.price > best_bid.price || sell_order.quantity <= 0.0 {
+                break;
+            }
+
+            let matched_quantity = sell_order.quantity.min(best_bid.quantity);
+            let transaction = Transaction::new(
+                sell_order.trader_id.clone(),
+                best_bid.trader_id.clone(),
+                matched_quantity,
+                best_bid.price,
+                sell_order.resource.clone(),
+            );
+
+            transactions.push(transaction);
+
+            sell_order.quantity -= matched_quantity;
+            let mut buy_order = self.order_book.remove_order(&best_bid.id, true).unwrap();
+            buy_order.quantity -= matched_quantity;
+
+            if buy_order.quantity > 0.0 {
+                self.order_book.add_order(buy_order);
+            }
+        }
+
+        if sell_order.quantity > 0.0 {
+            self.order_book.add_order(sell_order);
+        }
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/matching_engine.rs =====
+
+===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/order_book.rs =====
+// File: crates/icn_market/src/order_book.rs
+
+use std::collections::{BTreeMap, VecDeque};
+use crate::entities::Resource;
+use crate::transaction::Transaction;
+
+#[derive(Debug, Clone)]
+pub struct Order {
+    pub id: String,
+    pub trader_id: String,
+    pub resource: Resource,
+    pub quantity: f64,
+    pub price: f64,
+    pub is_buy: bool,
+    pub timestamp: u64,
+}
+
+pub struct OrderBook {
+    buy_orders: BTreeMap<f64, VecDeque<Order>>,
+    sell_orders: BTreeMap<f64, VecDeque<Order>>,
+}
+
+impl OrderBook {
+    pub fn new() -> Self {
+        OrderBook {
+            buy_orders: BTreeMap::new(),
+            sell_orders: BTreeMap::new(),
+        }
+    }
+
+    pub fn add_order(&mut self, order: Order) {
+        let orders = if order.is_buy {
+            &mut self.buy_orders
+        } else {
+            &mut self.sell_orders
+        };
+
+        orders.entry(order.price)
+            .or_insert_with(VecDeque::new)
+            .push_back(order);
+    }
+
+    pub fn remove_order(&mut self, id: &str, is_buy: bool) -> Option<Order> {
+        let orders = if is_buy {
+            &mut self.buy_orders
+        } else {
+            &mut self.sell_orders
+        };
+
+        for (_, queue) in orders.iter_mut() {
+            if let Some(pos) = queue.iter().position(|order| order.id == id) {
+                return Some(queue.remove(pos).unwrap());
+            }
+        }
+        None
+    }
+
+    pub fn get_best_bid(&self) -> Option<&Order> {
+        self.buy_orders.iter().next_back().and_then(|(_, queue)| queue.front())
+    }
+
+    pub fn get_best_ask(&self) -> Option<&Order> {
+        self.sell_orders.iter().next().and_then(|(_, queue)| queue.front())
+    }
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_market/src/order_book.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_market/src/transaction.rs =====
 use crate::entities::{Resource, Labor};
