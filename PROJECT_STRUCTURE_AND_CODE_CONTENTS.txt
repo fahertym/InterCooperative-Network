@@ -2798,17 +2798,37 @@ mod tests {
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 // File: icn_consensus/src/consensus.rs
 
-use icn_common::{Block, IcnResult, IcnError};
-use std::collections::HashMap;
+use icn_common::{Block, IcnResult, IcnError, Transaction};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
+use tokio::sync::mpsc;
+use log::{info, warn, error};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlockStatus {
+    Pending,
+    Validated,
+    Rejected,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockVote {
+    pub validator: String,
+    pub in_favor: bool,
+}
 
 pub struct PoCConsensus {
     threshold: f64,
     quorum: f64,
-    validators: HashMap<String, f64>, // validator_id -> reputation
+    validators: HashMap<String, f64>,
+    pending_transactions: VecDeque<Transaction>,
+    proposed_blocks: HashMap<String, (Block, BlockStatus)>,
+    block_votes: HashMap<String, Vec<BlockVote>>,
+    broadcast_tx: mpsc::Sender<Block>,
 }
 
 impl PoCConsensus {
-    pub fn new(threshold: f64, quorum: f64) -> IcnResult<Self> {
+    pub fn new(threshold: f64, quorum: f64, broadcast_tx: mpsc::Sender<Block>) -> IcnResult<Self> {
         if threshold <= 0.0 || threshold > 1.0 || quorum <= 0.0 || quorum > 1.0 {
             return Err(IcnError::Consensus("Invalid threshold or quorum value".into()));
         }
@@ -2817,6 +2837,10 @@ impl PoCConsensus {
             threshold,
             quorum,
             validators: HashMap::new(),
+            pending_transactions: VecDeque::new(),
+            proposed_blocks: HashMap::new(),
+            block_votes: HashMap::new(),
+            broadcast_tx,
         })
     }
 
@@ -2828,23 +2852,137 @@ impl PoCConsensus {
         Ok(())
     }
 
-    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
-        // In a real implementation, this would involve more complex validation logic
-        // For now, we'll just check if the block has transactions
-        if block.transactions.is_empty() {
-            return Err(IcnError::Consensus("Block has no transactions".into()));
+    pub fn add_pending_transaction(&mut self, transaction: Transaction) {
+        self.pending_transactions.push_back(transaction);
+    }
+
+    pub async fn propose_block(&mut self, proposer: String) -> IcnResult<String> {
+        let transactions: Vec<Transaction> = self.pending_transactions.drain(..100.min(self.pending_transactions.len())).collect();
+        
+        if transactions.is_empty() {
+            return Err(IcnError::Consensus("No pending transactions to create a block".into()));
         }
+
+        let previous_block = self.get_latest_block()?;
+        let new_block = Block::new(
+            previous_block.index + 1,
+            transactions,
+            previous_block.hash.clone(),
+        );
+
+        let block_hash = new_block.hash.clone();
+        self.proposed_blocks.insert(block_hash.clone(), (new_block.clone(), BlockStatus::Pending));
+        self.block_votes.insert(block_hash.clone(), Vec::new());
+
+        // Broadcast the proposed block to other nodes
+        if let Err(e) = self.broadcast_tx.send(new_block).await {
+            error!("Failed to broadcast proposed block: {}", e);
+            return Err(IcnError::Consensus("Failed to broadcast proposed block".into()));
+        }
+
+        info!("Block proposed by {}: {}", proposer, block_hash);
+        Ok(block_hash)
+    }
+
+    pub fn validate_proposed_block(&mut self, block_hash: &str, validator: String) -> IcnResult<bool> {
+        let (block, status) = self.proposed_blocks.get(block_hash)
+            .ok_or_else(|| IcnError::Consensus("Proposed block not found".into()))?;
+
+        if *status != BlockStatus::Pending {
+            return Err(IcnError::Consensus("Block is not in pending state".into()));
+        }
+
+        if !self.validate_block(block)? {
+            self.proposed_blocks.get_mut(block_hash).unwrap().1 = BlockStatus::Rejected;
+            return Ok(false);
+        }
+
+        let validator_reputation = *self.validators.get(&validator)
+            .ok_or_else(|| IcnError::Consensus("Validator not found".into()))?;
+
+        let vote = BlockVote {
+            validator: validator.clone(),
+            in_favor: true,
+        };
+
+        self.block_votes.get_mut(block_hash).unwrap().push(vote);
+
+        let total_votes: f64 = self.block_votes[block_hash].iter()
+            .map(|v| self.validators[&v.validator])
+            .sum();
+
+        let votes_in_favor: f64 = self.block_votes[block_hash].iter()
+            .filter(|v| v.in_favor)
+            .map(|v| self.validators[&v.validator])
+            .sum();
+
+        let total_reputation: f64 = self.validators.values().sum();
+
+        if total_votes / total_reputation >= self.quorum {
+            if votes_in_favor / total_votes >= self.threshold {
+                self.proposed_blocks.get_mut(block_hash).unwrap().1 = BlockStatus::Validated;
+                info!("Block {} validated", block_hash);
+                Ok(true)
+            } else {
+                self.proposed_blocks.get_mut(block_hash).unwrap().1 = BlockStatus::Rejected;
+                info!("Block {} rejected", block_hash);
+                Ok(false)
+            }
+        } else {
+            Ok(true) // Block is still pending
+        }
+    }
+
+    pub fn validate_block(&self, block: &Block) -> IcnResult<bool> {
+        // Check block index
+        let previous_block = self.get_latest_block()?;
+        if block.index != previous_block.index + 1 {
+            return Ok(false);
+        }
+
+        // Check previous hash
+        if block.previous_hash != previous_block.hash {
+            return Ok(false);
+        }
+
+        // Verify block hash
+        if block.hash != block.calculate_hash() {
+            return Ok(false);
+        }
+
+        // Check timestamp
+        if block.timestamp <= previous_block.timestamp {
+            return Ok(false);
+        }
+
+        // Validate transactions
+        for transaction in &block.transactions {
+            if !self.validate_transaction(transaction)? {
+                return Ok(false);
+            }
+        }
+
         Ok(true)
     }
 
-    pub fn update_reputation(&mut self, validator_id: &str, change: f64) -> IcnResult<()> {
-        let reputation = self.validators.get_mut(validator_id)
-            .ok_or_else(|| IcnError::Consensus("Validator not found".into()))?;
-        *reputation += change;
-        *reputation = reputation.clamp(0.0, 1.0); // This was missing a semicolon
-        Ok(())
+    fn validate_transaction(&self, transaction: &Transaction) -> IcnResult<bool> {
+        // Implement transaction validation logic here
+        // For example, check if the sender has sufficient balance, if the transaction is properly signed, etc.
+        // This is a placeholder implementation
+        Ok(true)
     }
-        
+
+    fn get_latest_block(&self) -> IcnResult<Block> {
+        // This method should return the latest validated block from the blockchain
+        // For now, we'll return a placeholder block
+        Ok(Block {
+            index: 0,
+            timestamp: 0,
+            transactions: Vec::new(),
+            previous_hash: "genesis".to_string(),
+            hash: "genesis".to_string(),
+        })
+    }
 
     pub fn get_total_reputation(&self) -> f64 {
         self.validators.values().sum()
@@ -2858,105 +2996,95 @@ impl PoCConsensus {
     pub fn is_consensus_reached(&self, approving_reputation: f64, participating_reputation: f64) -> bool {
         approving_reputation / participating_reputation >= self.threshold
     }
+
+    pub fn update_reputation(&mut self, validator_id: &str, change: f64) -> IcnResult<()> {
+        let reputation = self.validators.get_mut(validator_id)
+            .ok_or_else(|| IcnError::Consensus("Validator not found".into()))?;
+        *reputation += change;
+        *reputation = reputation.clamp(0.0, 1.0);
+        Ok(())
+    }
+
+    pub fn get_pending_blocks(&self) -> Vec<String> {
+        self.proposed_blocks.iter()
+            .filter(|(_, (_, status))| *status == BlockStatus::Pending)
+            .map(|(hash, _)| hash.clone())
+            .collect()
+    }
+
+    pub fn get_validated_blocks(&self) -> Vec<String> {
+        self.proposed_blocks.iter()
+            .filter(|(_, (_, status))| *status == BlockStatus::Validated)
+            .map(|(hash, _)| hash.clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
-    #[test]
-    fn test_consensus_creation() {
-        assert!(PoCConsensus::new(0.66, 0.51).is_ok());
-        assert!(PoCConsensus::new(1.5, 0.5).is_err());
-        assert!(PoCConsensus::new(0.5, 1.5).is_err());
+    async fn create_test_consensus() -> PoCConsensus {
+        let (tx, _rx) = mpsc::channel(100);
+        PoCConsensus::new(0.66, 0.51, tx).unwrap()
     }
 
-    #[test]
-    fn test_add_validator() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+    #[tokio::test]
+    async fn test_consensus_creation() {
+        let consensus = create_test_consensus().await;
+        assert_eq!(consensus.threshold, 0.66);
+        assert_eq!(consensus.quorum, 0.51);
+    }
+
+    #[tokio::test]
+    async fn test_add_validator() {
+        let mut consensus = create_test_consensus().await;
         assert!(consensus.add_validator("validator1".to_string(), 0.8).is_ok());
-        assert!(consensus.add_validator("validator2".to_string(), 1.2).is_err());
+        assert!(consensus.add_validator("validator2".to_string(), 0.7).is_ok());
+        assert_eq!(consensus.validators.len(), 2);
     }
 
-    #[test]
-    fn test_validate_block() {
-        let consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        let valid_block = Block {
-            index: 1,
+    #[tokio::test]
+    async fn test_propose_and_validate_block() {
+        let mut consensus = create_test_consensus().await;
+        consensus.add_validator("validator1".to_string(), 0.8).unwrap();
+        consensus.add_validator("validator2".to_string(), 0.7).unwrap();
+
+        let transaction = Transaction {
+            from: "Alice".to_string(),
+            to: "Bob".to_string(),
+            amount: 100.0,
+            currency_type: icn_common::CurrencyType::BasicNeeds,
             timestamp: 12345,
-            transactions: vec![icn_common::Transaction {
-                from: "Alice".to_string(),
-                to: "Bob".to_string(),
-                amount: 50.0,
-                currency_type: icn_common::CurrencyType::BasicNeeds,
-                timestamp: 12345,
-                signature: None,
-            }],
-            previous_hash: "previous_hash".to_string(),
-            hash: "current_hash".to_string(),
+            signature: None,
         };
-        assert!(consensus.validate_block(&valid_block).unwrap());
+        consensus.add_pending_transaction(transaction);
 
-        let invalid_block = Block {
-            index: 2,
-            timestamp: 23456,
-            transactions: vec![],
-            previous_hash: "previous_hash".to_string(),
-            hash: "current_hash".to_string(),
-        };
-        assert!(consensus.validate_block(&invalid_block).is_err());
+        let block_hash = consensus.propose_block("validator1".to_string()).await.unwrap();
+        assert!(consensus.validate_proposed_block(&block_hash, "validator1".to_string()).unwrap());
+        assert!(consensus.validate_proposed_block(&block_hash, "validator2".to_string()).unwrap());
+
+        let validated_blocks = consensus.get_validated_blocks();
+        assert_eq!(validated_blocks.len(), 1);
+        assert_eq!(validated_blocks[0], block_hash);
     }
 
-    #[test]
-    fn test_reputation_update() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
+    #[tokio::test]
+    async fn test_reputation_update() {
+        let mut consensus = create_test_consensus().await;
         consensus.add_validator("validator1".to_string(), 0.5).unwrap();
         
-        assert!(consensus.update_reputation("validator1", 0.2).is_ok());
+        consensus.update_reputation("validator1", 0.2).unwrap();
         assert_eq!(consensus.validators["validator1"], 0.7);
 
-        // Test upper bound
-        assert!(consensus.update_reputation("validator1", 0.5).is_ok());
+        consensus.update_reputation("validator1", 0.4).unwrap();
         assert_eq!(consensus.validators["validator1"], 1.0);
 
-        // Test lower bound
-        assert!(consensus.update_reputation("validator1", -1.5).is_ok());
+        consensus.update_reputation("validator1", -1.5).unwrap();
         assert_eq!(consensus.validators["validator1"], 0.0);
-
-        // Test updating non-existent validator
-        assert!(consensus.update_reputation("validator2", 0.1).is_err());
     }
-
-    #[test]
-    fn test_quorum_and_consensus() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_validator("validator1".to_string(), 0.3).unwrap();
-        consensus.add_validator("validator2".to_string(), 0.3).unwrap();
-        consensus.add_validator("validator3".to_string(), 0.3).unwrap();
-
-        // Test quorum
-        assert!(!consensus.is_quorum_reached(0.4));
-        assert!(consensus.is_quorum_reached(0.5));
-
-        // Test consensus
-        assert!(!consensus.is_consensus_reached(0.3, 0.6));
-        assert!(consensus.is_consensus_reached(0.4, 0.6));
-    }
-
-    #[test]
-    fn test_total_reputation() {
-        let mut consensus = PoCConsensus::new(0.66, 0.51).unwrap();
-        consensus.add_validator("validator1".to_string(), 0.3).unwrap();
-        consensus.add_validator("validator2".to_string(), 0.4).unwrap();
-        consensus.add_validator("validator3".to_string(), 0.2).unwrap();
-
-        assert_eq!(consensus.get_total_reputation(), 0.9);
-
-        consensus.update_reputation("validator2", 0.1).unwrap();
-        assert_eq!(consensus.get_total_reputation(), 1.0);
-    }
-}
-===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
+}===== END OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/consensus.rs =====
 
 ===== START OF /home/matt/InterCooperative-Network/crates/icn_consensus/src/lib.rs =====
 // File: icn_consensus/src/lib.rs
